@@ -1,0 +1,25 @@
+%% Dynamic — Order checkout flow (neutral worked example)
+%% "Place order": the customer checks out; the platform authorizes payment and confirms.
+%%
+%% Each Rel is AUTO-NUMBERED in source order — that is the point of a dynamic view.
+%% Note the datastore write BEFORE the external payment call (pending order), and the
+%% status update AFTER authorization — the ordering is the story this diagram tells.
+C4Dynamic
+    title Dynamic diagram — order checkout
+
+    Person(customer, "Customer", "Completing checkout")
+    Container(spa, "Browser SPA", "React", "Cart and checkout UI")
+    Container(api, "API Server", "Node", "Order + payment orchestration")
+    ContainerDb(db, "Relational DB", "Postgres", "Orders and line items")
+    Container_Ext(payments, "Payment Gateway", "External", "Card authorization / capture")
+
+    Rel(customer, spa, "Clicks 'Place order' on the cart")
+    Rel(spa, api, "Submits the checkout request over", "HTTPS/JSON")
+    Rel(api, db, "Writes a pending order row via", "SQL")
+    Rel(api, payments, "Requests payment authorization from", "REST/JSON")
+    Rel(payments, api, "Returns the authorization result over", "REST/JSON")
+    Rel(api, db, "Marks the order confirmed via", "SQL")
+    Rel(api, spa, "Returns the confirmed order over", "HTTPS/JSON")
+    Rel(spa, customer, "Renders the order confirmation")
+
+    UpdateLayoutConfig($c4ShapeInRow="3")

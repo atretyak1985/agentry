@@ -1,0 +1,30 @@
+%% System Context — Orders Platform (neutral worked example)
+%% The customer, the Orders Platform, and its external dependencies.
+%%
+%% Boundary decision: the Payment Gateway and the Identity Provider are OTHER teams'
+%% systems that the platform depends on — owned and deployed elsewhere — so at Context
+%% level they are peer EXTERNAL systems, not containers of the platform.
+%%
+%% The platform's own database is deliberately NOT on this context diagram: the platform
+%% owns its schema, so it is a CONTAINER revealed at container level (see
+%% example-container.mmd), not a peer external system. Showing your own datastore at
+%% Context level is the classic C4 error.
+C4Context
+    title System Context diagram for the Orders Platform
+
+    Person(customer, "Customer", "Browses the catalog, places and tracks orders")
+    Person(ops, "Operations Staff", "Manages catalog, fulfils and refunds orders")
+
+    System(orders, "Orders Platform", "Catalog, cart, checkout, order history and fulfilment")
+
+    System_Ext(payments, "Payment Gateway", "Authorizes and captures card payments")
+    System_Ext(idp, "Identity Provider", "Customer and staff sign-in")
+    System_Ext(email, "Email Service", "Transactional order emails and receipts")
+
+    Rel(customer, orders, "Places and tracks orders using", "HTTPS")
+    Rel(ops, orders, "Manages catalog and fulfilment using", "HTTPS")
+    Rel(orders, payments, "Requests authorization / capture from", "REST/JSON")
+    Rel(orders, idp, "Authenticates users via", "OIDC")
+    Rel(orders, email, "Sends order emails via", "SMTP/REST")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

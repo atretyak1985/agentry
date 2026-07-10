@@ -1,0 +1,29 @@
+%% Container — Orders Platform (neutral worked example)
+%% Zooming into the platform: the browser SPA, the API server, and the database.
+%%
+%% Two containers, not one: the React SPA and the API server run in separate process
+%% spaces (browser vs server) and talk over HTTPS/JSON — per C4, a JS-heavy SPA plus
+%% its backend are two containers. The database is a container OF the platform here
+%% (the platform owns the schema): the ORM is the query layer only; versioned SQL
+%% migrations own the schema. The Payment Gateway and Identity Provider stay external.
+C4Container
+    title Container diagram for the Orders Platform
+
+    Person(customer, "Customer", "Places and tracks orders")
+
+    System_Boundary(platform, "Orders Platform") {
+        Container(spa, "Browser SPA", "React, TypeScript", "Catalog, cart, checkout and order-tracking UI")
+        Container(api, "API Server", "Node", "Order lifecycle, pricing, payment orchestration")
+        ContainerDb(db, "Relational DB", "Postgres (ORM queries / SQL migrations)", "Orders, line items, catalog, customers")
+    }
+
+    System_Ext(payments, "Payment Gateway", "Authorizes and captures card payments")
+    System_Ext(idp, "Identity Provider", "OIDC sign-in")
+
+    Rel(customer, spa, "Browses and checks out in", "HTTPS")
+    Rel(spa, api, "Calls the order and catalog API over", "HTTPS/JSON")
+    Rel(api, db, "Reads and writes order rows via", "SQL")
+    Rel(api, payments, "Requests authorization / capture from", "REST/JSON")
+    Rel(spa, idp, "Redirects for sign-in to", "OIDC")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

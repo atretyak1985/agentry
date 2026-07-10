@@ -1,0 +1,19 @@
+%% C4 Level 2 — Container  |  {{system-name}}
+%% Scope: the deployable units inside one software system + how they communicate. A "container"
+%% is a runtime unit (app or data store), NOT a Docker container. Every container needs a
+%% technology; every inter-container line needs a protocol. Fill every {{placeholder}}.
+%% Render with your project's Mermaid viewer (or the mmdc CLI). Mermaid 11.x C4 dialect: hex colors only, no sprites/!include.
+C4Container
+    title Container diagram for {{system-name}}
+
+    Person(user, "{{user-role}}", "{{what they do}}")
+
+    System_Boundary(b1, "{{system-name}}") {
+        Container(web, "{{web-app}}", "{{tech}}", "{{responsibility}}")
+        ContainerDb(db, "{{datastore}}", "{{tech}}", "{{what it stores}}")
+    }
+
+    Rel(user, web, "{{uses}}", "HTTPS")
+    Rel(web, db, "{{reads / writes}}", "{{protocol}}")
+
+    UpdateLayoutConfig($c4ShapeInRow="2", $c4BoundaryInRow="1")

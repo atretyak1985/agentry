@@ -1,0 +1,20 @@
+%% C4 Dynamic — {{flow-name}}
+%% Scope: how static elements collaborate at runtime for ONE feature / use case. Each Rel is
+%% AUTO-NUMBERED in source order — write plain-description labels, do NOT hand-number them.
+%% Use sparingly, for interesting or recurring flows. Fill every {{placeholder}}.
+%% Render with your project's Mermaid viewer (or the mmdc CLI). Mermaid 11.x C4 dialect: hex colors only, no sprites/!include.
+C4Dynamic
+    title Dynamic diagram — {{flow-name}}
+
+    Person(user, "{{user-role}}", "{{what they do}}")
+
+    System_Boundary(b1, "{{system-name}}") {
+        Container(web, "{{web-app}}", "{{tech}}", "{{responsibility}}")
+        Container(worker, "{{service}}", "{{tech}}", "{{responsibility}}")
+    }
+
+    Rel(user, web, "{{initiates action}}")
+    Rel(web, worker, "{{forwards request}}", "{{protocol}}")
+    Rel(worker, web, "{{returns result}}", "{{protocol}}")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
