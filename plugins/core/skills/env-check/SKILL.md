@@ -1,7 +1,7 @@
 ---
 name: env-check
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when a task involves adding, removing, or renaming environment variables across the project's repos OR verifying env var documentation before a release. Don't use it for runtime env introspection in a live cluster (that requires exec access to the running service)."
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob

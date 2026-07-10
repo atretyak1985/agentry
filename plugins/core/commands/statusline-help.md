@@ -27,7 +27,7 @@ terminal. Script: `agents/statusline/agents-statusline.sh` (wired via the
 | Line | Field | Meaning | Source |
 |------|-------|---------|--------|
 | **1 Header** | `Model · Style` | Active model + output style | JSON `.model.display_name`, `.output_style.name` |
-| **2 LOC** | `City` | Weather location (default from the script) | `AGENTRY_STATUSLINE_LOC` env → wttr.in |
+| **2 LOC** | `City` | Weather location (default from the script) | `SWARMERY_STATUSLINE_LOC` env → wttr.in |
 | | `HH:MM` | Local clock | recomputed each render |
 | | `+28°C Sunny` | Weather | wttr.in, cached 10m, background refresh |
 | **3 ENV** | `CC <ver>` | Claude Code version | JSON `.version` |
@@ -43,7 +43,7 @@ terminal. Script: `agents/statusline/agents-statusline.sh` (wired via the
 | **8 MEMORY** | `Memories/Tasks/Sessions` | Memory files · active task dirs · recorded sessions | filesystem under `memory/`, `.claude-workspace/working/`, the sessions dir |
 
 3. **Mention the knobs:**
-   - Change weather city: `export AGENTRY_STATUSLINE_LOC="Kyiv"` (or `""` for auto-by-IP).
+   - Change weather city: `export SWARMERY_STATUSLINE_LOC="Kyiv"` (or `""` for auto-by-IP).
    - Reliability tiers: instant-from-JSON (lines 1, 5, 6) · local compute (3, 4, 8, git) · external+cache (weather only). Nothing blocks the render.
    - Fresh session shows `CONTEXT 0%` / `SESSION $0` / no git block at workspace root — all expected.
 

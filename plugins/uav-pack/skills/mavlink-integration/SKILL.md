@@ -2,7 +2,7 @@
 name: mavlink-integration
 description: "Use this skill when a task involves MAVLink protocol communication via pymavlink, UART/UDP/TCP drone connections, ArduPilot SITL simulation, or telemetry message parsing in the edge service. Don't use it for raw UART hardware driver code without MAVLink framing (use embedded-systems), WebSocket transport to the web portal (use api-integration), or Docker builds (use docker-build)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Read, Bash, Grep, Glob
 ---
 

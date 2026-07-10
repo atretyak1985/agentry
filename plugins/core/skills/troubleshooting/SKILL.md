@@ -2,7 +2,7 @@
 name: troubleshooting
 description: "Use this skill when debugging a specific failure, investigating an incident, analyzing error logs, or diagnosing connectivity problems on the project's platform. Don't use it for proactive instrumentation (use monitoring or observability), writing tests (use testing), CI pipeline config (use deployment), or staging-environment-specific pod debugging (use the staging operations skill)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 ---
 
 # Purpose

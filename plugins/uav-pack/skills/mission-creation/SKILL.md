@@ -2,7 +2,7 @@
 name: mission-creation
 description: "Use this skill to create and drive a UAV mission end-to-end through the web UI with the Playwright MCP browser tools on LOCALDEV (https://<localdev-host>) — rebuild/redeploy, Keycloak login, the multi-step BY_ROUTE/REALTIME mission wizard, pre-flight, the Start-Mission FSM, AND the full per-drone flight-command lifecycle (arm → take-off → hover → start/fly → stop → observation divert → resume → home/land/disarm), per-tab verification, and cleanup. Use it for E2E UI verification (incl. verifying a controlbox/FSM change against real SITL), demos, or reproducing mission-flow bugs. Do NOT use it against staging or production (shared/real environments), for API-only or DB-seeded mission creation (no browser), or when localdev is not running."
 version: "2.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 ---
 
 # Purpose

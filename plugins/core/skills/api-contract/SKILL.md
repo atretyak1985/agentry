@@ -2,7 +2,7 @@
 name: api-contract
 description: "Verify field-level alignment between the ORM schema, Zod validation schemas, and route handler response shapes in the main app (project.json -> mainApp), or check that SQL migrations match the ORM table definitions. Don't use it for writing new API routes (use api-integration), reviewing code style or naming (use code-standards), or auditing function length and complexity (use code-quality)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Read, Grep, Glob
 disable-model-invocation: true
 ---

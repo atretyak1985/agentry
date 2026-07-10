@@ -2,7 +2,7 @@
 name: test-coverage
 description: "FIND test coverage gaps ONLY -- map source files to test files, identify untested modules with risk levels, and suggest what needs tests across the project's repos (project.json -> repos). Read-only analysis. NOT for writing, running, or debugging tests (use testing), and NOT for measuring actual coverage percentages (run the test suite with --coverage directly)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Bash
 color: teal

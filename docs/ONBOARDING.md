@@ -1,4 +1,4 @@
-# Onboarding a project onto agentry
+# Onboarding a project onto swarmery
 
 ## 1. Create the project's flavor config
 Copy `overlays/example/` as a model:
@@ -12,9 +12,9 @@ Keep the *real* filled-in configs in your project (or a private workspace repo) 
 Merge the snippet into the project's `.claude/settings.json`:
 ```jsonc
 {
-  "extraKnownMarketplaces": { "agentry": { "source": { "source": "github", "repo": "atretyak1985/agentry" } } },
-  "enabledPlugins": { "core@agentry": true, "<pack>@agentry": true },
-  "env": { "AGENT_PROJECT": "<project>", "AGENT_WORKSPACE_ROOT": "/path/to/agentry-workspace" }
+  "extraKnownMarketplaces": { "swarmery": { "source": { "source": "github", "repo": "atretyak1985/swarmery" } } },
+  "enabledPlugins": { "core@swarmery": true, "<pack>@swarmery": true },
+  "env": { "AGENT_PROJECT": "<project>", "AGENT_WORKSPACE_ROOT": "/path/to/swarmery-workspace" }
 }
 ```
 Deploy the flavor config to `<project>/.claude/project.json`.
@@ -32,4 +32,4 @@ Project agents in `.claude/agents/` override plugin agents by name (native base 
 1. Bump `plugins/core` minor version; push.
 2. In each consumer: `/plugin update`.
 3. Confirm the change lands in every project with **zero per-project file copying**.
-This is the whole reason agentry exists — verify it explicitly once ≥2 consumers are live.
+This is the whole reason swarmery exists — verify it explicitly once ≥2 consumers are live.

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "agentry project overlay config",
+  "title": "swarmery project overlay config",
   "description": "Per-project flavor config read by core agents/skills/hooks at runtime. Replaces the old token-rewrite (adapt) class: framework files reference these values instead of baking in project names.",
   "type": "object",
   "required": ["name", "codePath", "enabledPacks"],

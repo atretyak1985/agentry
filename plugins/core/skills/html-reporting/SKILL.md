@@ -1,7 +1,7 @@
 ---
 name: html-reporting
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when an agent must render a self-contained HTML report or dashboard — task summaries (Phase 8), code/operational audits (Phase 5), or any shareable artifact viewed outside the terminal. It provides one canonical dark-terminal shell so every report looks consistent. Don't use it for markdown-only output, for measuring metrics (it only formats numbers you supply), or for the mermaid viewer (use mermaid-viewer)."
 disable-model-invocation: true
 color: teal

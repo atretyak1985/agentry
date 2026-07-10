@@ -156,10 +156,10 @@ echo -e "${CYAN}${BOLD}╚══════════════════
 echo ""
 
 # ── Archive session log to workspace metrics ──────────────────────
-# Workspace resolution: agentry model (AGENT_PROJECT → sibling agentry-workspace) with
+# Workspace resolution: swarmery model (AGENT_PROJECT → sibling swarmery-workspace) with
 # legacy project-local .claude-workspace fallback.
 if [ -n "${AGENT_PROJECT:-}" ]; then
-  _WS="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/agentry-workspace}/${AGENT_PROJECT}/workspace"
+  _WS="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace"
 else
   _WS="${CLAUDE_PROJECT_DIR:-.}/.claude-workspace"
 fi
@@ -168,10 +168,10 @@ if [ -d "$METRICS_DIR" ] || mkdir -p "$METRICS_DIR" 2>/dev/null; then
   cp "$SESSION_FILE" "${METRICS_DIR}/session-${today}-$$.jsonl" 2>/dev/null || true
 fi
 
-# ── Structured diff log (.agentry/sessions/<date>.json) ───────────
+# ── Structured diff log (.swarmery/sessions/<date>.json) ───────────
 # Audit trail: which repos changed, what file list, diff stats. Used by
 # retrospective-agent and idea-auditor. Best-effort; never blocks the hook.
-SESSIONS_DIR="${CLAUDE_PROJECT_DIR:-.}/.agentry/sessions"
+SESSIONS_DIR="${CLAUDE_PROJECT_DIR:-.}/.swarmery/sessions"
 if mkdir -p "$SESSIONS_DIR" 2>/dev/null; then
   diff_json_file="${SESSIONS_DIR}/${today}-$$.json"
 
@@ -250,10 +250,10 @@ JSON
 fi
 
 # ── Workspace standard (2026-06-10): session mirror + task linking + INDEX ──
-# agentry model first (AGENT_PROJECT → sibling agentry-workspace); legacy walk-up fallback.
+# swarmery model first (AGENT_PROJECT → sibling swarmery-workspace); legacy walk-up fallback.
 WS_ROOT=""
-if [ -n "${AGENT_PROJECT:-}" ] && [ -d "${AGENT_WORKSPACE_ROOT:-/Volumes/Work/agentry-workspace}/${AGENT_PROJECT}/workspace" ]; then
-  WS_ROOT="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/agentry-workspace}/${AGENT_PROJECT}/workspace"
+if [ -n "${AGENT_PROJECT:-}" ] && [ -d "${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace" ]; then
+  WS_ROOT="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace"
 else
   _p="${CLAUDE_PROJECT_DIR:-$PWD}"
   while [ "$_p" != "/" ]; do

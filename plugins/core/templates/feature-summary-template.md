@@ -490,4 +490,4 @@ Before using this template:
 
 **Version**: 1.0
 **Last Updated**: January 23, 2026
-**Maintained by**: agentry-core
+**Maintained by**: swarmery-core

@@ -9,7 +9,7 @@ maxTurns: 15
 color: orange
 autonomy: auto
 version: 1.0.0
-owner: agentry-core
+owner: swarmery-core
 skills:
   - mavlink-integration
   - code-standards

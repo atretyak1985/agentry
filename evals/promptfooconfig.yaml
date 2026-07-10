@@ -1,9 +1,9 @@
-# agentry eval harness — golden regression tests for critical core agents.
+# swarmery eval harness — golden regression tests for critical core agents.
 # Run: cd evals && npx promptfoo@latest eval   (needs ANTHROPIC_API_KEY)
 # Purpose: editing plugins/core/agents/*.md must not silently break routing,
 # output contracts, or vendor-neutrality. Grow this corpus from real incidents.
 
-description: agentry core agent regression suite
+description: swarmery core agent regression suite
 
 prompts:
   - file://prompts/agent-chat.json

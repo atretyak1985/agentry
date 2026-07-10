@@ -164,4 +164,4 @@ Each comparison page should target specific search queries:
 
 **Version**: 1.0
 **Created**: April 2026
-**Maintained by**: agentry web-pack
+**Maintained by**: swarmery web-pack

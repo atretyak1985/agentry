@@ -1,7 +1,7 @@
 ---
 name: security-audit
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when a task involves reviewing or scanning application code for security vulnerabilities, evaluating OWASP Top 10 compliance for the project's apps, device/edge repo, or cloud service config, or scanning for hardcoded secrets. Don't use it for CI/CD pipeline hardening or SBOM generation (use supply-chain-security instead)."
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Bash

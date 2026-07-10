@@ -2,7 +2,7 @@
 name: embedded-systems
 description: "Use this skill when writing or reviewing Python code for Raspberry Pi 5 edge devices -- UART hardware drivers, camera streaming via picamera2, GPIO control, systemd services, or resource monitoring. Don't use it for MAVLink protocol parsing (use mavlink-integration), web portal server code, or Helm work."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Read, Edit, Bash, Grep, Glob
 ---
 

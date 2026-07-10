@@ -2,7 +2,7 @@
 name: code-quality
 description: "Use this skill for QUANTITATIVE structural metrics on TypeScript or Python source -- function length, cyclomatic complexity, nesting depth, duplication, code smells -- producing a scored report. NOT for conventions, naming, or `any`-type checks (use code-standards), API contract alignment (use api-contract), or deployment config (use deployment)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Read, Grep, Glob, Bash
 disable-model-invocation: true
 ---

@@ -1,7 +1,7 @@
 ---
 name: context-optimization
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when a task spans 3+ files or crosses repo boundaries and context usage must be managed. Don't use it for single-file edits or read-only queries."
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob

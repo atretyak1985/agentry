@@ -2,7 +2,7 @@
 name: migration-check
 description: "Validate SQL migration safety, check ORM-to-migration schema alignment, review new migration SQL files, or detect schema drift between the database and application Zod/DTO types. Do not use for deployment config validation (use deployment), identity-provider database issues (use the auth-domain skill), or IaC drift detection (use infrastructure-as-code)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Bash
 ---

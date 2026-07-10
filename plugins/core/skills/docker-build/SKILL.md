@@ -2,7 +2,7 @@
 name: docker-build
 description: "Use this skill when building or pushing Docker images for the project's services (the main app, the device service) to the cloud container registry. Don't use it for deploys (use deployment) or Dockerfile template editing without a build (use code-quality)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 ---
 
 # Purpose

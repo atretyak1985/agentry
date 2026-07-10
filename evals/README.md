@@ -1,4 +1,4 @@
-# agentry evals
+# swarmery evals
 
 Golden regression tests for critical core agents (promptfoo). Editing
 `plugins/core/agents/*.md` must not silently break routing, output contracts,

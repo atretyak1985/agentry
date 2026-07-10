@@ -1,6 +1,6 @@
-# Extending agentry: where project-specific things live
+# Extending swarmery: where project-specific things live
 
-agentry is **one global system + a thin native overlay per project** — never a separate
+swarmery is **one global system + a thin native overlay per project** — never a separate
 "sub-agent-system" inside a project. Claude Code merges both layers in every session:
 enabled plugins supply the global components; the project's own `.claude/` supplies local
 ones; **on a name collision the project-local component wins** (native base + overlay).
@@ -44,7 +44,7 @@ core agent instead of forking the framework.
 
 ```
 <project>/.claude/
-├── settings.json        # enables core@agentry + the packs it needs (+ AGENT_PROJECT env)
+├── settings.json        # enables core@swarmery + the packs it needs (+ AGENT_PROJECT env)
 ├── project.json         # the flavor config (schema: overlays/_schema/project.schema.json)
 ├── agents/              # project-unique agents + intentional overrides (often empty)
 ├── skills/              # project-unique skills (often just a few)

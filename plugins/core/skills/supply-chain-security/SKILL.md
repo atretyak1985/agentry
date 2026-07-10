@@ -2,7 +2,7 @@
 name: supply-chain-security
 description: "Audit and harden container supply-chain controls: image scanning, SBOM generation, immutable digest promotion, rollback retention, and image signing readiness. Not for application code vulnerabilities (use security-audit) or pipeline YAML structure (use deployment)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 ---
 
 # Purpose

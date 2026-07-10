@@ -1,8 +1,8 @@
 {
   "//": "Merge into your project's .claude/settings.json. Deploy project.json to .claude/project.json.",
   "extraKnownMarketplaces": {
-    "agentry": { "source": { "source": "github", "repo": "atretyak1985/agentry" } }
+    "swarmery": { "source": { "source": "github", "repo": "atretyak1985/swarmery" } }
   },
-  "enabledPlugins": { "core@agentry": true },
-  "env": { "AGENT_PROJECT": "example", "AGENT_WORKSPACE_ROOT": "/path/to/agentry-workspace" }
+  "enabledPlugins": { "core@swarmery": true },
+  "env": { "AGENT_PROJECT": "example", "AGENT_WORKSPACE_ROOT": "/path/to/swarmery-workspace" }
 }

@@ -2,7 +2,7 @@
 name: code-search
 description: "Select the right search tool (Grep, Glob, codebase-retrieval) to locate existing code, symbols, or files across the project's monorepo. Don't use it for creating new files, implementing features, or reviewing code quality."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Grep, Glob, Read
 disable-model-invocation: true
 ---

@@ -1,6 +1,6 @@
-# agentry
+# swarmery
 
-> The craft of agents. A vendor-neutral, multi-project **Claude Code** agent framework, distributed as a
+> The craft of agent swarms. A vendor-neutral, multi-project **Claude Code** agent framework, distributed as a
 > [plugin marketplace](https://code.claude.com/docs/en/plugins). One shared **`core`** plus
 > opt-in **domain packs** — a framework improvement is published once and adopted by every
 > consumer project via `/plugin update`, instead of being hand-ported between them.
@@ -8,7 +8,7 @@
 ## Why this exists
 
 Copying an agent system between projects with token-rewrites rots fast: mis-substitutions pile up,
-files drift, and every improvement has to be ported N times. agentry replaces that with the native
+files drift, and every improvement has to be ported N times. swarmery replaces that with the native
 Claude Code plugin/marketplace mechanism: **semver-versioned**, **namespaced** (`core:tech-lead`),
 and **updatable** (`/plugin update`). Projects pin a known-good version and adopt on bump —
 controlled blast-radius, no more manual porting.
@@ -38,11 +38,11 @@ In a project's `.claude/settings.json` (see `overlays/example/settings.snippet.j
 ```jsonc
 {
   "extraKnownMarketplaces": {
-    "agentry": { "source": { "source": "github", "repo": "atretyak1985/agentry" } }
+    "swarmery": { "source": { "source": "github", "repo": "atretyak1985/swarmery" } }
   },
   "enabledPlugins": {
-    "core@agentry": true,
-    "web-pack@agentry": true
+    "core@swarmery": true,
+    "web-pack@swarmery": true
   },
   "env": { "AGENT_PROJECT": "your-project" }
 }

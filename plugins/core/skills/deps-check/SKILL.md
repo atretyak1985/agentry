@@ -1,7 +1,7 @@
 ---
 name: deps-check
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when auditing dependency versions, checking for outdated packages, or scanning for security vulnerabilities across the project's repos. Don't use it for upgrading packages (that requires a separate implementation task) or for deployment config template issues (use deployment)."
 allowed-tools: Read, Bash, Glob, Grep
 disable-model-invocation: true

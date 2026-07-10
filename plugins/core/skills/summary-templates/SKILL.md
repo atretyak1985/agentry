@@ -1,7 +1,7 @@
 ---
 name: summary-templates
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 description: "Use this skill when a task involves summarizing completed work, writing a feature summary, documenting what changed, or creating a completion report for a task, feature, bug fix, or refactoring. Don't use it for writing documentation, changelogs, or postmortems."
 disable-model-invocation: true
 color: teal

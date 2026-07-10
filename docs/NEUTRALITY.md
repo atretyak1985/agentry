@@ -13,7 +13,7 @@ and is read at **runtime** by core agents, skills, and hooks.
 - Scripts/hooks read `${CLAUDE_PROJECT_DIR}/.claude/project.json`; never default to a hard-coded path.
 - Prose examples use neutral placeholders (`apps/<mainApp>`, `<device>`, `<envAlias>`) or neutral
   example domains (`orders/line-items`, `pipelines/job_runs`).
-- Frontmatter identity is `agentry-core`.
+- Frontmatter identity is `swarmery-core`.
 
 ## Checking
 

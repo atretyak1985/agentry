@@ -2,7 +2,7 @@
 name: git-commit
 description: "Generate conventional commit messages when staging files for commit in any of the project's repos. Do not use for git tag messages, merge commit messages, changelog entries, or automated version bump commits."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 disable-model-invocation: true
 color: teal
 ---

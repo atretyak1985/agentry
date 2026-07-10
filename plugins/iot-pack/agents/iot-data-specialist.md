@@ -172,4 +172,4 @@ const defaultRules: AlertRule[] = [
 
 **Version**: 1.0
 **Created**: April 2026
-**Maintained by**: agentry iot-pack
+**Maintained by**: swarmery iot-pack

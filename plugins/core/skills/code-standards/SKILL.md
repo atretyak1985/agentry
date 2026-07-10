@@ -2,7 +2,7 @@
 name: code-standards
 description: "Use this skill when reviewing TypeScript, Python, or infrastructure/service-config code against the project's CONVENTIONS -- type safety (`any` detection), naming, import ordering, Next.js patterns, and 12-factor build rules. NOT for quantitative complexity metrics -- function length, cyclomatic complexity, nesting depth belong to code-quality. NOT for API field alignment (use api-contract)."
 version: "1.0.0"
-owner: "agentry-core"
+owner: "swarmery-core"
 allowed-tools: Read, Grep, Glob, Bash
 ---
 
