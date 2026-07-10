@@ -115,7 +115,7 @@ Planner disambiguation:
 - Use @implementation-planner when: >3 phases of code work, monorepo coordination, or explicit >1 week estimate
 
 ### Phase 3.5: Design (Full mode only)
-Delegate to @architecture-designer, @api-designer, @database-designer, @ui-designer as needed
+Delegate to @architecture-designer, @api-designer, @database-designer, @ui-designer as needed. When the task needs durable C4 architecture documentation (system context / container / component / dynamic views), @architecture-designer carries the `c4-architecture-docs` skill for it.
 
 ### Phase 3.6: Pre-mortem Self-Correction (Tech Lead owns)
 1. Enumerate 5-7 failure modes (minimum 3), scored L/M/H x L/M/H

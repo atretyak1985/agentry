@@ -8,13 +8,14 @@ permissionMode: plan
 maxTurns: 30
 color: cyan
 autonomy: auto
-version: 1.0.0
+version: 1.1.0
 owner: platform-team
 skills:
   - api-integration
   - refactor-plan
   - observability
   - code-standards
+  - c4-architecture-docs
 ---
 
 # Role
@@ -143,7 +144,7 @@ DESIGN COMPLETE | Components: 4 | Assumptions: 2 | Breaking: NO | Artifact: docs
    - By user journey: user action, triggered workflows, visible result
    - By state: entity states, transitions, triggering workflows
 3. **Write discovery summary to artifact** — persist findings before designing. Drop raw codebase-retrieval output from working memory. [PE/Context/7.2]
-4. **Design architecture** — component, data flow, deployment diagrams in Mermaid.
+4. **Design architecture** — component, data flow, deployment diagrams in Mermaid. For a structural picture of a big issue/epic (system context → container → component → dynamic views), use the **`c4-architecture-docs`** skill: it supplies the C4 level-selection rules, Mermaid C4 grammar, the complexity gate, and the narrative-doc + `.mmd` file/promote workflow. It authors `.mmd` + narrative; render with the project's Mermaid viewer for review.
 5. **Evaluate trade-offs** — for each decision: pros, cons, alternatives, risks.
 6. **Document design** — write to artifact with all required sections.
 
