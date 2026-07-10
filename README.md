@@ -33,7 +33,13 @@ Each plugin holds its components (`agents/`, `skills/`, `commands/`, `hooks/`, `
 
 ## Consuming it (per project)
 
-In a project's `.claude/settings.json` (see `overlays/example/settings.snippet.json`):
+**One command** from the new project's root (see `docs/ONBOARDING.md` for details):
+
+```bash
+bash <swarmery-repo>/scripts/init.sh <project-slug> [pack ...]
+```
+
+Or manually — in the project's `.claude/settings.json` (see `overlays/example/settings.snippet.json`):
 
 ```jsonc
 {
