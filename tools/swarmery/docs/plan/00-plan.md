@@ -134,8 +134,13 @@ R7 `--port`/`SWARMERY_PORT`. New in v2:
 [phase-2-approvals/00-phase-2-plan.md](phase-2-approvals/00-phase-2-plan.md)) ← backlog from Gate 12 ·
 2.5. Reporter + Reports (narratives, self-filling checklists, live view, weekly
 digest → [phase-2.5-reporter-agent-d.md](phase-2.5-reporter-agent-d.md)) ·
-3. Agents registry read-only · 4. Editor + git versioning · 5. Tasks queue
-(headless `claude -p`) · 6. Rollups/Analytics, then Evals.
+3. Agents registry read-only ·
+3.5. Workspaces (read-only workspace ingester + task↔session linking, design §7 →
+[phase-3.5-workspaces-agent-e.md](phase-3.5-workspaces-agent-e.md); depends on MVP only —
+parallel-safe with phase 2) ·
+4. Editor + git versioning · 5. Tasks queue
+(headless `claude -p` on top of workspace tasks — task creation = `agent-work.sh init`) ·
+6. Rollups/Analytics, then Evals.
 
 ## Files Analyzed
 

@@ -357,6 +357,7 @@ CREATE TABLE eval_results (
 ● Overview        — пульс системи
 ● Approvals  (3)  — черга дозволів, бейдж
 ● Sessions        — живі і минулі сесії
+● Workspaces      — задачі/плани/артефакти по проєктах (фаза 3.5)
 ● Tasks           — черга задач
 ● Reports         — звіти: session / task / weekly digest / incident (фаза 2.5)
 ● Agents & Skills — реєстр + редактор
@@ -473,8 +474,11 @@ Reporter — теж агент системи, його робота видна 
 2.5. **Reporter + Reports**: narratives, reports, task_checklist_items; headless `claude -p` на Stop-hook; session/task-звіти, live view, weekly digest. (Agent D)
 
 3. **Agents registry read-only**: agents, skills, *_versions (скан файлової системи + fsnotify). Реєстр без редагування.
+
+3.5. **Workspaces** (розділ 7): workspace ingester (read-only), зшивка задача↔сесія, екран Workspaces. Наполовину заміняє п.5: workspace = system of record задач.
+
 4. **Editor + git**: запис файлів, версіонування, rollback, lint.
-5. **Tasks queue**: tasks + запуск headless-сесій (`claude -p --output-format stream-json`).
+5. **Tasks queue**: черга запуску headless-сесій ПОВЕРХ workspace-задач (створення задачі = `agent-work.sh init`).
 6. **Rollups + Analytics**, потім **Evals**.
 7. **Insights + MCP-памʼять** (розділ 5): loop detector → heatmap → MCP-сервер → mining.
 8. **Developer superpowers** (розділ 6): по одному, за ROI.
@@ -679,3 +683,133 @@ ALTER TABLE tasks ADD COLUMN playbook_id INTEGER REFERENCES playbooks(id);
 Пріоритет впровадження (за ROI, по одному): loop detector → conflict radar →
 session revert → MCP memory → quality gates → playbooks → model routing →
 relay handoff → mining → git/PR linkage.
+
+---
+
+## 7. Фаза 3.5: Workspaces — міст «намір ↔ телеметрія»
+
+Swarmery бачить телеметрію (сесії, події, вартість), але не бачить наміру:
+задачі, плани, фази й артефакти живуть у приватному workspace-репо
+(`$AGENT_WORKSPACE_ROOT`, ним керує `agent-work.sh` з plugins/core). Фаза 3.5
+зшиває ці два світи read-only інжестом. Розділ розміщено ПІСЛЯ §6, але в
+порядку імплементації (§4) це п.3.5 — між Agents registry і Editor + git.
+
+### 7.1 Принципи
+
+1. **Workspace = system of record задач.** Задачі народжуються і живуть
+   у workspace-репо (`agent-work.sh init|phase|complete`). Swarmery **НІКОЛИ
+   не пише у workspace** — власник стану `agent-work.sh`; Swarmery лише
+   читає, індексує і зшиває з телеметрією. Будь-яке «редагування задачі»
+   з UI — це зміна рядків у власній SQLite, не файлів у workspace.
+2. **Вміст файлів лишається на диску.** БД тримає шляхи, метадані та
+   content hash (`task_artifacts`); markdown віддається on-demand через API
+   із захистом від path-traversal (шлях береться ТІЛЬКИ з `task_artifacts`,
+   ніколи з запиту) і з тією самою редакцією секретів, що на ingest.
+3. **Project exclude-list діє і тут.** Проєкти, виключені з JSONL-колектора,
+   не інжестяться і workspace-сканером — один спільний exclude-helper
+   для обох колекторів.
+
+### 7.2 Схема (адитивна міграція)
+
+```sql
+-- ============ Workspaces (фаза 3.5): міст «намір ↔ телеметрія» ============
+
+CREATE TABLE workspaces (
+    id           INTEGER PRIMARY KEY,
+    slug         TEXT NOT NULL UNIQUE,       -- ім'я проєкту у workspace-репо
+    root_path    TEXT NOT NULL,              -- $AGENT_WORKSPACE_ROOT/<slug>
+    code_path    TEXT,                       -- overlay/project.json → codePath
+    project_id   INTEGER REFERENCES projects(id),  -- зшивка з реєстром проєктів
+                 -- (codePath ↔ projects.path, з нормалізацією symlink/слешів)
+    display_name TEXT,
+    last_scanned TEXT
+);
+
+-- workspace-задачі живуть у тій самій таблиці tasks (додаткові колонки):
+ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'queue';
+                 -- 'queue' (створена з дашборда) | 'workspace' (інжест з диска)
+ALTER TABLE tasks ADD COLUMN external_id TEXT;   -- yyyy-mm-dd-slug (task id картки)
+ALTER TABLE tasks ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id);
+ALTER TABLE tasks ADD COLUMN archived_at TEXT;   -- потрапила в archive/
+CREATE UNIQUE INDEX idx_tasks_workspace_external
+    ON tasks(workspace_id, external_id)
+    WHERE workspace_id IS NOT NULL;              -- UNIQUE(workspace_id, external_id)
+
+CREATE TABLE task_phases (
+    id           INTEGER PRIMARY KEY,
+    task_id      INTEGER NOT NULL REFERENCES tasks(id),
+    seq          INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',  -- pending | active | done
+    started_at   TEXT,
+    completed_at TEXT,
+    UNIQUE(task_id, seq)
+);
+
+CREATE TABLE task_artifacts (
+    id           INTEGER PRIMARY KEY,
+    task_id      INTEGER NOT NULL REFERENCES tasks(id),
+    kind         TEXT NOT NULL,               -- readme | summary | plan | report | log | trace
+    rel_path     TEXT NOT NULL,               -- відносно кореня task-директорії
+    title        TEXT,
+    mtime        TEXT,
+    content_hash TEXT,                        -- вміст лишається на диску (§7.1 п.2)
+    UNIQUE(task_id, rel_path)
+);
+
+CREATE TABLE task_sessions (
+    task_id     INTEGER NOT NULL REFERENCES tasks(id),
+    session_id  INTEGER NOT NULL REFERENCES sessions(id),
+    link_source TEXT NOT NULL,                -- explicit | heuristic
+    confidence  REAL,                         -- 0..1 для heuristic-звʼязків
+    PRIMARY KEY (task_id, session_id)
+);
+```
+
+### 7.3 Workspace ingester (read-only)
+
+- **Сканер + fsnotify + періодичний rescan** по
+  `$AGENT_WORKSPACE_ROOT/*/workspace/{working,archive}`; поява картки
+  в `archive/` виставляє `tasks.archived_at`.
+- **Директорія задачі**: `YYYY/MM/DD/<slug>` → `external_id = yyyy-mm-dd-slug`.
+- **README-картка** парситься за конвенцією `- **Field**: value`;
+  парсинг **толерантний**: відсутнє поле → NULL, зламана/нестандартна
+  картка → задача все одно індексується (title з заголовка або slug),
+  сканер ніколи не падає через один битий workspace.
+- **Мапінг на проєкт**: `overlay/project.json → codePath` зіставляється
+  з `projects.path` (нормалізація symlink-ів і trailing-slash) →
+  `workspaces.project_id`.
+
+### 7.4 Зшивка задача ↔ сесія
+
+- **Explicit**: SessionStart-hook дописує `session_uuid` у
+  `logs/sessions.md` активної картки — інжестер читає таблицю і створює
+  `task_sessions(link_source='explicit')`. Хук живе у **plugins/core**
+  (єдиний виняток із правила «Swarmery не пише у workspace» — пише не
+  Swarmery, а плагін, який і є власником стану); зміна однорядкова +
+  semver bump плагіна.
+- **Heuristic**: `sessions.cwd ∈ workspaces.code_path` ∧ перекриття
+  часового вікна сесії з активним вікном задачі → `link_source='heuristic'`
+  з `confidence` 0..1. Евристичні звʼязки в UI малюються **пунктиром**;
+  людина підтверджує або відхиляє (confirm → `link_source='explicit'`
+  у БД, workspace не чіпається).
+
+### 7.5 UI: екран Workspaces
+
+- **Список workspace-ів**: лічильники working/archive + витрати за 7 днів ($).
+- **Задачі проєкту**: список карток із phase stepper (`task_phases`);
+  вартість задачі = Σ вартості звʼязаних сесій (`task_sessions`).
+- **Картка задачі**: рендер README + SUMMARY, фази, deep-links на сесії
+  (Session Detail), артефакти (markdown on-demand, §7.1 п.2), trace —
+  завантажується on-demand.
+- **Зворотний звʼязок**: chip задачі в Session Detail — з сесії видно,
+  на яку задачу вона працювала.
+
+### 7.6 Що це відкриває
+
+- **Per-task метрики агентів і cost-per-task** — без ручного заповнення
+  `tasks`: телеметрія агрегується по `task_sessions`.
+- **Reporter (фаза 2.5) публікує наратив як артефакт задачі** через
+  `agent-work.sh complete` — звіт стає частиною system of record.
+- **MCP-памʼять (§5.3) шукає по планах і summary** з workspace, а не лише
+  по транскриптах — агенти отримують памʼять про наміри, не тільки про дії.
