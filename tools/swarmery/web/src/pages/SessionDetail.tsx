@@ -6,7 +6,7 @@
 // merges header state; event_appended is attributed via its sessionId and
 // appended (or, for refined durations, replaced in place) on the open detail.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { SessionDetail, SessionStatus, WSMessage } from '../api/types';
 import { fetchSession } from '../api';
@@ -66,6 +66,32 @@ export function SessionDetailPage(): JSX.Element {
     setDetail(null);
     load();
   }, [load]);
+
+  // The newest activity lives at the bottom — on tab switch (and first data
+  // load) jump the panel to the end so live sessions open on "now". When a
+  // rail file row was clicked, scroll to that file's diff group instead.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const diffTargetRef = useRef<string | null>(null);
+  const loaded = detail !== null;
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (panel === null || !loaded) return;
+    const target = diffTargetRef.current;
+    if (tab === 'diffs' && target !== null) {
+      diffTargetRef.current = null;
+      const group = panel.querySelector(`[data-diff-path="${CSS.escape(target)}"]`);
+      if (group !== null) {
+        (group as HTMLElement).scrollIntoView({ block: 'start' });
+        return;
+      }
+    }
+    panel.scrollTop = panel.scrollHeight;
+  }, [tab, loaded]);
+
+  const showDiffs = (path?: string): void => {
+    diffTargetRef.current = path ?? null;
+    setTab('diffs');
+  };
 
   const onMessage = useCallback((msg: WSMessage): void => {
     setDetail((prev) => {
@@ -192,6 +218,7 @@ export function SessionDetailPage(): JSX.Element {
 
           <div
             role="tabpanel"
+            ref={panelRef}
             className="min-h-0 flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]"
           >
             {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
@@ -204,7 +231,7 @@ export function SessionDetailPage(): JSX.Element {
           <DetailRail
             events={detail.events}
             fileChanges={detail.fileChanges}
-            onShowDiffs={() => setTab('diffs')}
+            onShowDiffs={showDiffs}
           />
         </div>
       </div>
