@@ -8,15 +8,19 @@ const (
 	NoteSessionStarted = "session_started"
 	NoteSessionUpdated = "session_updated"
 	NoteEventAppended  = "event_appended"
+	// phase 2 — approvals (frozen at gate 2.2): published by internal/approvals.
+	NotePermissionRequested = "permission_requested"
+	NotePermissionResolved  = "permission_resolved"
 )
 
 // Notification is one ingest event on the internal bus. It carries row ids
 // only; subscribers (the WS layer) hydrate the DTO payloads from the DB so
 // the JSON shapes stay defined in exactly one place (internal/api).
 type Notification struct {
-	Type      string // NoteSessionStarted | NoteSessionUpdated | NoteEventAppended
+	Type      string // one of the Note* constants above
 	SessionID int64  // sessions.id — always set
 	EventID   int64  // events.id — set for event_appended only
+	RequestID int64  // permission_requests.id — set for permission_* only
 }
 
 // Bus is a minimal fan-out pub/sub channel for ingest notifications.
