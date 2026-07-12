@@ -74,5 +74,6 @@ Previous: [step-08-agent-c-metrics.md](step-08-agent-c-metrics.md) · Next: [ste
 ### Completion Report
 
 ```
-Date/reviewer: · Branch heads: · Boundary violations: · UX notes: · Verdict:
+Date/reviewer: 2026-07-12 / human (screenshots) + controller & subagent (mechanics) · Branch heads: ingest be66787, frontend 6a77ecb, metrics 280b796 · Boundary violations: none (ingest additionally touched cmd/main.go — accepted, needed for --projects-root testability) · UX notes: none blocking — screenshots approved as-is · Verdict: PASS.
+Contract-requests handed to step 10: (1) event_appended → {sessionId, event} — ACCEPTED; (2) Turn.model + turns.model column for exact recost — ACCEPTED; (3) session-list aggregates (toolCalls/costUsd/lastAction) — DEFERRED (nice-to-have). Note: pricing.json has a dated action — 2026-09-01 switch claude-sonnet-5 to $3/$15 and run recost.
 ```
