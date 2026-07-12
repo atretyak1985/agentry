@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -320,6 +321,186 @@ this is not json at all {{{
 	}
 	if got := count(t, db, `SELECT COUNT(*) FROM events`); got != 2 {
 		t.Errorf("events = %d, want 2 (user_prompt + unknown)", got)
+	}
+}
+
+// ── turns.text (Chat tab, migration 0005) ────────────────────────────────────
+
+func textOf(t *testing.T, db *sql.DB, where string, args ...any) sql.NullString {
+	t.Helper()
+	var s sql.NullString
+	if err := db.QueryRow(`SELECT text FROM turns WHERE `+where, args...).Scan(&s); err != nil {
+		t.Fatalf("turn text (%s): %v", where, err)
+	}
+	return s
+}
+
+func TestTurnTextFromFixtures(t *testing.T) {
+	db := testDB(t)
+	if _, err := File(db, filepath.Join(fixtures, "simple-session.jsonl")); err != nil {
+		t.Fatalf("ingest simple: %v", err)
+	}
+
+	// User turns carry the full prompt text.
+	if got := textOf(t, db, `role='user' AND seq=0`); got.String != "What does scripts/deploy.sh do?" {
+		t.Errorf("user turn text = %q", got.String)
+	}
+	// Single-text assistant message.
+	want := "It builds the app (`npm run build`) and rsyncs `dist/` to the staging host. No rollback step — deploys are one-way."
+	if got := textOf(t, db, `message_id='msg_01AAAAAAAAAAAAAAAAAAAA0302'`); got.String != want {
+		t.Errorf("assistant text = %q, want %q", got.String, want)
+	}
+	// thinking + tool_use only message → no prose → NULL.
+	if got := textOf(t, db, `message_id='msg_01AAAAAAAAAAAAAAAAAAAA0301'`); got.Valid {
+		t.Errorf("thinking/tool_use-only turn text = %q, want NULL", got.String)
+	}
+}
+
+func TestTurnTextSplitAssistantMessage(t *testing.T) {
+	// subagent-session msg 0001 is split across 3 lines (thinking / text /
+	// tool_use): text must be exactly the text block — thinking and tool_use
+	// excluded.
+	db := testDB(t)
+	path := filepath.Join(fixtures, "subagent-session.jsonl")
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if got := textOf(t, db, `message_id='msg_01AAAAAAAAAAAAAAAAAAAA0001'`); got.String != "I'll start by listing the agent definitions." {
+		t.Errorf("split-message text = %q", got.String)
+	}
+
+	// Re-ingest must not duplicate or extend the text (full re-read → the
+	// batch text equals the stored text).
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("re-ingest: %v", err)
+	}
+	if got := textOf(t, db, `message_id='msg_01AAAAAAAAAAAAAAAAAAAA0001'`); got.String != "I'll start by listing the agent definitions." {
+		t.Errorf("text after re-ingest = %q (duplicated?)", got.String)
+	}
+}
+
+const turnTextEnvelope = `,"timestamp":"%s","sessionId":"33333333-0000-4000-8000-000000000003","cwd":"/tmp/textproj","version":"2.1.170","gitBranch":"main"}` + "\n"
+
+func turnTextFixture() (head, tail string) {
+	asst := func(uuid, ts, blocks string) string {
+		return `{"type":"assistant","uuid":"` + uuid +
+			`","message":{"model":"claude-fable-5","id":"msg_TEXT01","role":"assistant","content":[` + blocks +
+			`],"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}` +
+			fmt.Sprintf(turnTextEnvelope, ts)
+	}
+	head = `{"type":"user","uuid":"tx-u1","promptSource":"typed","message":{"role":"user","content":"Summarize the module"}` +
+		fmt.Sprintf(turnTextEnvelope, "2026-07-10T12:00:00.000Z") +
+		asst("tx-a1", "2026-07-10T12:00:01.000Z", `{"type":"thinking","thinking":"planning"}`) +
+		asst("tx-a2", "2026-07-10T12:00:02.000Z", `{"type":"text","text":"First paragraph."}`)
+	tail = asst("tx-a3", "2026-07-10T12:00:03.000Z", `{"type":"tool_use","id":"toolu_TX1","name":"Bash","input":{"command":"ls"}}`) +
+		asst("tx-a4", "2026-07-10T12:00:04.000Z", `{"type":"text","text":"Second paragraph."}`)
+	return head, tail
+}
+
+func TestTurnTextConcatAcrossSplitLines(t *testing.T) {
+	db := testDB(t)
+	head, tail := turnTextFixture()
+	path := filepath.Join(t.TempDir(), "text-session.jsonl")
+	if err := os.WriteFile(path, []byte(head+tail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	const want = "First paragraph.\n\nSecond paragraph."
+	if got := textOf(t, db, `message_id='msg_TEXT01'`); got.String != want {
+		t.Errorf("concatenated text = %q, want %q", got.String, want)
+	}
+	// Idempotent full re-read.
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("re-ingest: %v", err)
+	}
+	if got := textOf(t, db, `message_id='msg_TEXT01'`); got.String != want {
+		t.Errorf("text after re-ingest = %q, want %q", got.String, want)
+	}
+}
+
+func TestTurnTextTailExtendsIncrementally(t *testing.T) {
+	// Live tail: later lines of the same turn arrive in a later batch — the
+	// upsert must EXTEND the stored text, and a subsequent full re-read must
+	// converge to the same value.
+	db := testDB(t)
+	head, tail := turnTextFixture()
+	path := filepath.Join(t.TempDir(), "text-session.jsonl")
+	if err := os.WriteFile(path, []byte(head), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := TailFile(db, path, Thresholds{}); err != nil {
+		t.Fatalf("tail 1: %v", err)
+	}
+	if got := textOf(t, db, `message_id='msg_TEXT01'`); got.String != "First paragraph." {
+		t.Errorf("after batch 1: text = %q", got.String)
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(tail); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err := TailFile(db, path, Thresholds{}); err != nil {
+		t.Fatalf("tail 2: %v", err)
+	}
+	const want = "First paragraph.\n\nSecond paragraph."
+	if got := textOf(t, db, `message_id='msg_TEXT01'`); got.String != want {
+		t.Errorf("after batch 2: text = %q, want %q", got.String, want)
+	}
+	// A later full re-read (File) over the tailed state converges, no dup.
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("full re-read: %v", err)
+	}
+	if got := textOf(t, db, `message_id='msg_TEXT01'`); got.String != want {
+		t.Errorf("after full re-read: text = %q, want %q", got.String, want)
+	}
+}
+
+func TestRebuildTextBackfillsExistingTurns(t *testing.T) {
+	// Pre-0005 rows have NULL text and their lines are already consumed, so a
+	// plain re-ingest of new bytes can't fill them — `backfill --rebuild-text`
+	// re-reads from byte 0. It must fill text without duplicating events.
+	db := testDB(t)
+	root := t.TempDir()
+	projDir := filepath.Join(root, "-tmp-textproj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(fixtures, "simple-session.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projDir, "session.jsonl")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := File(db, path); err != nil {
+		t.Fatalf("initial ingest: %v", err)
+	}
+	eventsBefore := count(t, db, `SELECT COUNT(*) FROM events`)
+	// Simulate pre-migration rows.
+	if _, err := db.Exec(`UPDATE turns SET text = NULL`); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := RebuildText(t.Context(), db, root)
+	if stats.Files != 1 || stats.Errors != 0 {
+		t.Errorf("rebuild stats = %+v, want 1 file / 0 errors", stats)
+	}
+	if got := textOf(t, db, `role='user' AND seq=0`); got.String != "What does scripts/deploy.sh do?" {
+		t.Errorf("rebuilt user text = %q", got.String)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM turns WHERE role='assistant' AND text IS NOT NULL`); got != 2 {
+		t.Errorf("assistant turns with text = %d, want 2", got)
+	}
+	if got := count(t, db, `SELECT COUNT(*) FROM events`); got != eventsBefore {
+		t.Errorf("events after rebuild = %d, want %d (dedup must absorb the replay)", got, eventsBefore)
 	}
 }
 

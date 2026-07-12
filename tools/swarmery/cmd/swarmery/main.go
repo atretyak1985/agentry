@@ -63,7 +63,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   swarmery ingest   [--db <path>] <file.jsonl>
-  swarmery backfill [--db <path>] [--projects-root <dir>]
+  swarmery backfill [--db <path>] [--projects-root <dir>] [--rebuild-text]
   swarmery serve    [--db <path>] [--port <n>] [--projects-root <dir>]
                     [--rescan <dur>] [--status-tick <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
@@ -173,6 +173,8 @@ func daemonRunning(port int) bool {
 func cmdBackfill(args []string) error {
 	fs := flag.NewFlagSet("backfill", flag.ExitOnError)
 	dbPath := dbFlag(fs)
+	rebuildText := fs.Bool("rebuild-text", false,
+		"re-read all transcripts from byte 0 to fill turns.text for pre-0005 rows (idempotent; dedup absorbs the replay)")
 	cfg := pipelineFlags(fs)
 	fs.Parse(args)
 
@@ -184,6 +186,12 @@ func cmdBackfill(args []string) error {
 
 	if _, err := os.Stat(cfg.ProjectsRoot); err != nil {
 		return fmt.Errorf("projects root: %w", err)
+	}
+	if *rebuildText {
+		stats := ingest.RebuildText(context.Background(), db, cfg.ProjectsRoot)
+		fmt.Printf("rebuild-text %s\n  transcripts re-read: %d\n  errors: %d\n",
+			cfg.ProjectsRoot, stats.Files, stats.Errors)
+		return nil
 	}
 	ingest.NewPipeline(db, *cfg, nil).Backfill(context.Background())
 	return nil

@@ -144,6 +144,11 @@ type ingester struct {
 	pending map[string]*pendingTool
 	// subagent_start event ids keyed by the Agent tool_use id (meta.json join key).
 	subagentStarts map[string]int64
+
+	// turn prose assembly (Chat tab): text blocks per turn in file/line order,
+	// batch-local — flushed to turns.text by flushTurnTexts (extend rule).
+	turnTexts     map[int64][]string
+	turnTextOrder []int64
 }
 
 type pendingTool struct {
@@ -303,6 +308,9 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 		in.pending = map[string]*pendingTool{}
 		in.subagentStarts = map[string]int64{}
 	}
+	if in.turnTexts == nil {
+		in.turnTexts = map[int64][]string{}
+	}
 	seq, err := in.nextSeq()
 	if err != nil {
 		return err
@@ -323,48 +331,65 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 				continue
 			}
 			var promptText string
-			if json.Unmarshal(m.Content, &promptText) == nil {
-				// (a) real prompt — string content (§4a).
-				if r.IsMeta || r.IsCompactSummary {
-					continue // injected skill bodies / compaction summaries
-				}
-				if sidechain {
-					continue // the sidechain opener repeats the Agent prompt — no new event
-				}
-				turnID, created, err := in.upsertTurn(seq, "user", "", "", r.Timestamp, nil)
-				if err != nil {
-					return err
-				}
-				if created {
-					seq++
-				}
-				curTurnID, curMsgID = turnID, ""
-				payload := map[string]any{"content": truncate(promptText, payloadStrLimit)}
-				if r.PromptSource != "" {
-					payload["promptSource"] = r.PromptSource
-				}
-				if _, _, err := in.insertEvent(eventRow{
-					turnID: turnID, ts: r.Timestamp, typ: "user_prompt",
-					parentEventID: parentEventID, payload: payload, dedup: dedup,
-				}); err != nil {
-					return err
-				}
-				continue
-			}
-			// (b) tool_result carrier — array content (§4b).
+			isPrompt := json.Unmarshal(m.Content, &promptText) == nil
 			var blocks []contentBlock
-			if err := json.Unmarshal(m.Content, &blocks); err != nil {
-				log.Printf("warn: %s: unrecognized user content shape, skipping", path)
-				in.stats.SkippedLines++
-				continue
-			}
-			for _, b := range blocks {
-				if b.Type != "tool_result" {
+			if !isPrompt {
+				// Array content: tool_result carrier (§4b) — or a prompt shipped
+				// as text blocks (e.g. prompts with attachments).
+				if err := json.Unmarshal(m.Content, &blocks); err != nil {
+					log.Printf("warn: %s: unrecognized user content shape, skipping", path)
+					in.stats.SkippedLines++
 					continue
 				}
-				if err := in.closeToolCall(r, b, dedup, parentEventID); err != nil {
-					return err
+				carrier := false
+				for _, b := range blocks {
+					if b.Type != "tool_result" {
+						continue
+					}
+					carrier = true
+					if err := in.closeToolCall(r, b, dedup, parentEventID); err != nil {
+						return err
+					}
 				}
+				if carrier {
+					continue
+				}
+				var texts []string
+				for _, b := range blocks {
+					if b.Type == "text" && b.Text != "" {
+						texts = append(texts, b.Text)
+					}
+				}
+				if len(texts) == 0 {
+					continue // nothing actionable on this user line
+				}
+				promptText = strings.Join(texts, "\n\n")
+			}
+			// Real prompt — string content (§4a) or text blocks.
+			if r.IsMeta || r.IsCompactSummary {
+				continue // injected skill bodies / compaction summaries
+			}
+			if sidechain {
+				continue // the sidechain opener repeats the Agent prompt — no new event
+			}
+			turnID, created, err := in.upsertTurn(seq, "user", "", "", r.Timestamp, nil)
+			if err != nil {
+				return err
+			}
+			if created {
+				seq++
+			}
+			curTurnID, curMsgID = turnID, ""
+			in.addTurnText(turnID, promptText)
+			payload := map[string]any{"content": truncate(promptText, payloadStrLimit)}
+			if r.PromptSource != "" {
+				payload["promptSource"] = r.PromptSource
+			}
+			if _, _, err := in.insertEvent(eventRow{
+				turnID: turnID, ts: r.Timestamp, typ: "user_prompt",
+				parentEventID: parentEventID, payload: payload, dedup: dedup,
+			}); err != nil {
+				return err
 			}
 
 		case "assistant":
@@ -414,6 +439,11 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 				continue
 			}
 			for _, b := range blocks {
+				if b.Type == "text" && !sidechain {
+					// Turn prose (Chat tab): text blocks only — thinking and
+					// tool_use are never part of turns.text.
+					in.addTurnText(curTurnID, b.Text)
+				}
 				if b.Type != "tool_use" {
 					continue // thinking / text blocks are turn content, not events
 				}
@@ -470,6 +500,57 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 			}
 		}
 	}
+	return in.flushTurnTexts()
+}
+
+// addTurnText buffers one prose block for a turn (batch-local, line order).
+func (in *ingester) addTurnText(turnID int64, text string) {
+	if turnID == 0 || text == "" {
+		return
+	}
+	if _, ok := in.turnTexts[turnID]; !ok {
+		in.turnTextOrder = append(in.turnTextOrder, turnID)
+	}
+	in.turnTexts[turnID] = append(in.turnTexts[turnID], text)
+}
+
+// flushTurnTexts applies this batch's assembled prose to turns.text with the
+// EXTEND rule (chosen over rebuild so the tail path needs no full re-read):
+//
+//   - stored is NULL/empty            → set to the batch text;
+//   - batch starts with stored        → replace with the batch text (a full
+//     re-read from byte 0: File(), an offset reset, or --rebuild-text always
+//     re-assembles the complete join, of which any previous state is a
+//     string prefix — so re-ingest converges and is idempotent);
+//   - otherwise                       → stored + "\n\n" + batch (incremental
+//     tail: the batch carries only NEW trailing lines of the turn).
+//
+// Text is stored verbatim — never truncated. Crash safety mirrors events:
+// the update commits in the same transaction as the file offset, so a tail
+// batch can never be applied twice.
+func (in *ingester) flushTurnTexts() error {
+	for _, id := range in.turnTextOrder {
+		batch := strings.Join(in.turnTexts[id], "\n\n")
+		if batch == "" {
+			continue
+		}
+		var stored sql.NullString
+		if err := in.tx.QueryRow(`SELECT text FROM turns WHERE id = ?`, id).Scan(&stored); err != nil {
+			return fmt.Errorf("read turn %d text: %w", id, err)
+		}
+		next := batch
+		if stored.Valid && stored.String != "" && !strings.HasPrefix(batch, stored.String) {
+			next = stored.String + "\n\n" + batch
+		}
+		if stored.Valid && stored.String == next {
+			continue
+		}
+		if _, err := in.tx.Exec(`UPDATE turns SET text = ? WHERE id = ?`, next, id); err != nil {
+			return fmt.Errorf("update turn %d text: %w", id, err)
+		}
+	}
+	in.turnTexts = map[int64][]string{}
+	in.turnTextOrder = in.turnTextOrder[:0]
 	return nil
 }
 
