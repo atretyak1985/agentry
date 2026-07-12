@@ -70,6 +70,8 @@ await mobile.close();
 // Desktop (≥1280px): sidebar navigation + the Overview/detail right rails.
 const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await shot(desktop, '/', 'overview-desktop.png');
+// Sessions table (≥900px): dropdown + status-count chips + aligned columns.
+await shot(desktop, '/sessions', 'sessions-desktop.png');
 await shot(desktop, '/sessions/1', 'session-detail-desktop.png');
 await shot(desktop, '/docs/neutrality', 'docs.png');
 await desktop.close();

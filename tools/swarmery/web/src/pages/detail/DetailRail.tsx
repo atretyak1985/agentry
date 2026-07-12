@@ -64,7 +64,7 @@ export function DetailRail({
   return (
     <div className="min-w-0 wide:sticky wide:top-[76px]">
       {(agents.length > 0 || skills.length > 0) && (
-        <div className="mb-3 rounded-xl border border-line bg-surface px-4 py-3.5">
+        <div className="mb-2.5 rounded-xl border border-line bg-surface px-4 py-3.5">
           {agents.length > 0 && (
             <>
               <RailLabel tone="text-blue/70">agents</RailLabel>

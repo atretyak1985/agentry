@@ -57,7 +57,7 @@ export function Docs(): JSX.Element {
   return (
     <div className="wide:grid wide:grid-cols-[230px_minmax(0,1fr)] wide:items-start wide:gap-6">
       <div className="min-w-0 wide:sticky wide:top-[76px]">
-        <SectionTitle>Documentation</SectionTitle>
+        <SectionTitle flush>Documentation</SectionTitle>
         <div className="overflow-hidden rounded-xl border border-line bg-surface">
           {docs.map((d) => {
             const active = d.slug === activeSlug;
