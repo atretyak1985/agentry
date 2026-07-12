@@ -29,6 +29,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/wsingest"
 )
 
 const defaultPort = 7777
@@ -49,6 +50,8 @@ func main() {
 		err = cmdServe(os.Args[2:])
 	case "recost":
 		err = cmdRecost(os.Args[2:])
+	case "wscan":
+		err = cmdWscan(os.Args[2:])
 	case "install":
 		err = installer.CmdInstall(os.Args[2:])
 	case "uninstall":
@@ -80,6 +83,7 @@ func usage() {
                     [--rescan <dur>] [--status-tick <dur>] [--approval-timeout <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
   swarmery recost   [--db <path>]
+  swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery install  [--port <n>]   launchd auto-start
   swarmery uninstall               remove launchd service (keeps logs+db)
   swarmery status                  service health, pid, uptime, db size
@@ -211,6 +215,39 @@ func cmdBackfill(args []string) error {
 	return nil
 }
 
+// wsingestFlags registers the phase-3.5 workspace-scanner flags.
+func wsingestFlags(fs *flag.FlagSet) *wsingest.Config {
+	cfg := &wsingest.Config{}
+	fs.StringVar(&cfg.WorkspaceRoot, "workspace-root", wsingest.Root(),
+		"agent-work.sh workspace repo to index (env: AGENT_WORKSPACE_ROOT)")
+	return cfg
+}
+
+// cmdWscan runs one workspace scan pass — the CLI twin of the periodic
+// scanner inside serve (phase 3.5: workspaces). READ-ONLY on the workspace.
+func cmdWscan(args []string) error {
+	fs := flag.NewFlagSet("wscan", flag.ExitOnError)
+	dbPath := dbFlag(fs)
+	wsCfg := wsingestFlags(fs)
+	fs.Parse(args)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: swarmery wscan [--db <path>] [--workspace-root <dir>]")
+	}
+
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stats, err := wsingest.New(db, *wsCfg).Scan()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("wscan %s\n  %s\n", wsCfg.WorkspaceRoot, stats)
+	return nil
+}
+
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dbPath := dbFlag(fs)
@@ -221,6 +258,7 @@ func cmdServe(args []string) error {
 	approvalTimeout := fs.Duration("approval-timeout", approvals.DefaultTimeout,
 		"how long a permission request stays pending before fail-open expiry")
 	cfg := pipelineFlags(fs)
+	wsCfg := wsingestFlags(fs)
 	fs.Parse(args)
 
 	db, err := store.Open(*dbPath)
@@ -240,6 +278,17 @@ func cmdServe(args []string) error {
 			}
 		}()
 		log.Printf("swarmery ingest pipeline watching %s (rescan %s)", cfg.ProjectsRoot, cfg.RescanInterval)
+
+		// phase 3.5: workspaces — read-only periodic scan of the agent-work.sh
+		// workspace repo (tasks + task↔session links). Missing root is not
+		// fatal: the scanner logs and keeps ticking.
+		scanner := wsingest.New(db, *wsCfg)
+		go func() {
+			if err := scanner.Run(context.Background()); err != nil && err != context.Canceled {
+				log.Printf("error: wsingest scanner stopped: %v", err)
+			}
+		}()
+		log.Printf("swarmery workspace scanner watching %s (rescan %s)", wsCfg.WorkspaceRoot, wsingest.DefaultRescanInterval)
 	}
 
 	// phase 2: approvals — long-poll registry + expiry sweeper + heartbeat.

@@ -25,6 +25,8 @@ var (
 		"cwd", "status", "startedAt", "endedAt", "title", "source",
 		// parity wave: additive per-session aggregates (nullable).
 		"tokens", "costUsd",
+		// phase 3.5: workspaces — additive best-task-link fields (nullable).
+		"taskId", "taskExternalId", "taskLinkSource", "taskConfidence",
 	}
 	eventKeys = []string{
 		"id", "turnId", "ts", "type", "toolName", "parentEventId",

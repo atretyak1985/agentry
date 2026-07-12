@@ -51,6 +51,12 @@ type sessionDTO struct {
 	// turns; costUsd = SUM(cost_usd), null while no turn is priced.
 	Tokens  *int64   `json:"tokens"`
 	CostUSD *float64 `json:"costUsd"`
+	// phase 3.5: workspaces — best task link (explicit beats heuristic,
+	// then highest confidence); all null while the session is unlinked.
+	TaskID         *int64   `json:"taskId"`
+	TaskExternalID *string  `json:"taskExternalId"`
+	TaskLinkSource *string  `json:"taskLinkSource"` // explicit | heuristic
+	TaskConfidence *float64 `json:"taskConfidence"`
 }
 
 type turnDTO struct {
@@ -132,7 +138,8 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 const sessionSelect = `
 	SELECT s.id, s.project_id, p.slug, p.name, s.session_uuid, s.model, s.git_branch, s.cwd,
 	       s.status, s.started_at, s.ended_at, s.title, s.source,
-	       agg.tokens, agg.cost_usd
+	       agg.tokens, agg.cost_usd,
+	       tl.task_id, tl.external_id, tl.link_source, tl.confidence
 	FROM sessions s
 	JOIN projects p ON p.id = s.project_id
 	LEFT JOIN (
@@ -140,7 +147,18 @@ const sessionSelect = `
 		       SUM(COALESCE(tokens_in, 0) + COALESCE(tokens_out, 0)) AS tokens,
 		       SUM(cost_usd) AS cost_usd
 		FROM turns GROUP BY session_id
-	) agg ON agg.session_id = s.id`
+	) agg ON agg.session_id = s.id
+	LEFT JOIN (
+		-- phase 3.5: one best task link per session, picked in a single
+		-- window pass (explicit first, then highest confidence) — no N+1.
+		SELECT ts.session_id, ts.task_id, t.external_id, ts.link_source, ts.confidence,
+		       ROW_NUMBER() OVER (
+		           PARTITION BY ts.session_id
+		           ORDER BY (ts.link_source = 'explicit') DESC, ts.confidence DESC
+		       ) AS rn
+		FROM task_sessions ts
+		JOIN tasks t ON t.id = ts.task_id
+	) tl ON tl.session_id = s.id AND tl.rn = 1`
 
 // GET /api/sessions?project=<slug|id>&status=<status>
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +292,8 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 func scanSession(scan func(...any) error, s *sessionDTO) error {
 	return scan(&s.ID, &s.ProjectID, &s.ProjectSlug, &s.ProjectName, &s.SessionUUID, &s.Model,
 		&s.GitBranch, &s.CWD, &s.Status, &s.StartedAt, &s.EndedAt, &s.Title, &s.Source,
-		&s.Tokens, &s.CostUSD)
+		&s.Tokens, &s.CostUSD,
+		&s.TaskID, &s.TaskExternalID, &s.TaskLinkSource, &s.TaskConfidence)
 }
 
 func writeJSON(w http.ResponseWriter, v any, err error) {
