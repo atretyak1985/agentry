@@ -65,6 +65,27 @@ On a name collision, a consumer's project-local component overrides the plugin's
 
 Agents look in `${CLAUDE_PROJECT_DIR}/.claude/templates/` first, then fall back to `${CLAUDE_PLUGIN_ROOT}/templates/`. Generic templates ship with core; project-specific ones stay with the project.
 
+## Self-hosting (dogfooding)
+
+This repo is itself a swarmery consumer: `.claude/` is a **plain committed directory**
+(no `agents/` repo + symlink — that pattern exists only for multi-repo consumer
+workspaces sharing one overlay). `settings.json` enables `core@swarmery` from the
+GitHub marketplace like any consumer; `project.json` sets `AGENT_PROJECT=swarmery`
+(workspace: `swarmery-workspace/swarmery/`); the statusline runs straight from
+source at `plugins/core/statusline/`.
+
+Installed plugins come from the **cache** (`~/.claude/plugins/cache`), so local edits
+to `plugins/**` are NOT what the session runs. To test in-progress plugin changes,
+load them live for one session:
+
+```bash
+claude --plugin-dir plugins/core                 # repeatable: --plugin-dir plugins/infra-pack …
+```
+
+Never re-register the local checkout as a marketplace: `marketplace.json` `name` is
+`swarmery`, and a local-path registration would **replace** the GitHub source globally,
+breaking the `/plugin update` distribution path all consumers rely on.
+
 ## Conventions
 
 - Conventional commits (`feat:`, `refactor!:`, `chore:`); semver bumps in `plugin.json` accompany plugin changes, with the marketplace `metadata.version` tracking the core version.

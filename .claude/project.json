@@ -1,0 +1,15 @@
+{
+  "$schema": "../overlays/_schema/project.schema.json",
+  "name": "swarmery",
+  "displayName": "Swarmery (framework, self-hosted)",
+  "codePath": "/Volumes/Work/swarmery",
+  "repos": ["plugins/core", "plugins/uav-pack", "plugins/iot-pack", "plugins/web-pack", "plugins/infra-pack", "plugins/lsp-pack", "scripts", "docs", "evals"],
+  "domainTerms": {
+    "product": "vendor-neutral Claude Code agent framework (plugin marketplace)"
+  },
+  "stack": {
+    "web": "Markdown agents/skills + Bash hooks + JSON plugin manifests"
+  },
+  "commitScopes": ["core", "uav-pack", "iot-pack", "web-pack", "infra-pack", "lsp-pack", "marketplace", "docs", "scripts", "evals"],
+  "enabledPacks": []
+}
