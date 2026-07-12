@@ -41,17 +41,17 @@ type sessionDTO struct {
 }
 
 type turnDTO struct {
-	ID               int64   `json:"id"`
-	Seq              int64   `json:"seq"`
-	Role             string  `json:"role"`
-	MessageID        *string `json:"messageId"`
-	Model            *string `json:"model"`
-	StartedAt        string  `json:"startedAt"`
-	EndedAt          *string `json:"endedAt"`
-	TokensIn         *int64  `json:"tokensIn"`
-	TokensOut        *int64  `json:"tokensOut"`
-	TokensCacheRead  *int64  `json:"tokensCacheRead"`
-	TokensCacheWrite *int64  `json:"tokensCacheWrite"`
+	ID               int64    `json:"id"`
+	Seq              int64    `json:"seq"`
+	Role             string   `json:"role"`
+	MessageID        *string  `json:"messageId"`
+	Model            *string  `json:"model"`
+	StartedAt        string   `json:"startedAt"`
+	EndedAt          *string  `json:"endedAt"`
+	TokensIn         *int64   `json:"tokensIn"`
+	TokensOut        *int64   `json:"tokensOut"`
+	TokensCacheRead  *int64   `json:"tokensCacheRead"`
+	TokensCacheWrite *int64   `json:"tokensCacheWrite"`
 	CostUSD          *float64 `json:"costUsd"`
 }
 
@@ -68,14 +68,14 @@ type eventDTO struct {
 }
 
 type fileChangeDTO struct {
-	ID         int64  `json:"id"`
-	EventID    int64  `json:"eventId"`
-	FilePath   string `json:"filePath"`
-	ChangeType string `json:"changeType"`
-	Additions  *int64 `json:"additions"`
-	Deletions  *int64 `json:"deletions"`
+	ID         int64   `json:"id"`
+	EventID    int64   `json:"eventId"`
+	FilePath   string  `json:"filePath"`
+	ChangeType string  `json:"changeType"`
+	Additions  *int64  `json:"additions"`
+	Deletions  *int64  `json:"deletions"`
 	Diff       *string `json:"diff"`
-	OutOfScope bool   `json:"outOfScope"`
+	OutOfScope bool    `json:"outOfScope"`
 }
 
 type sessionDetailDTO struct {

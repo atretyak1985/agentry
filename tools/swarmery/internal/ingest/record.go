@@ -18,7 +18,7 @@ type record struct {
 	PromptID         string          `json:"promptId"`
 	PromptSource     string          `json:"promptSource"`
 	AgentID          string          `json:"agentId"`
-	Subtype          string          `json:"subtype"`  // system records
+	Subtype          string          `json:"subtype"` // system records
 	DurationMs       int64           `json:"durationMs"`
 	AITitle          string          `json:"aiTitle"` // ai-title records
 	Message          json.RawMessage `json:"message"`

@@ -25,9 +25,9 @@ func Recost(db *sql.DB, t *Table) (RecostStats, error) {
 	var stats RecostStats
 
 	type row struct {
-		id                 int64
-		model              string
-		in, out, cr, cw    sql.NullInt64
+		id              int64
+		model           string
+		in, out, cr, cw sql.NullInt64
 	}
 
 	// Buffer the rows first: the store uses a single-connection pool, so we

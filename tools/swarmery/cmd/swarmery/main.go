@@ -4,6 +4,7 @@
 //	swarmery backfill              one-shot full scan of the projects root
 //	swarmery serve                 serve the API/SPA + live ingest pipeline
 //	swarmery recost                recompute cost_usd for all turns
+//	swarmery install               launchd auto-start (uninstall / status)
 package main
 
 import (
@@ -19,6 +20,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/api"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
 )
 
@@ -40,6 +42,12 @@ func main() {
 		err = cmdServe(os.Args[2:])
 	case "recost":
 		err = cmdRecost(os.Args[2:])
+	case "install":
+		err = installer.CmdInstall(os.Args[2:])
+	case "uninstall":
+		err = installer.CmdUninstall(os.Args[2:])
+	case "status":
+		err = installer.CmdStatus(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -60,6 +68,9 @@ func usage() {
                     [--rescan <dur>] [--status-tick <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
   swarmery recost   [--db <path>]
+  swarmery install  [--port <n>]   launchd auto-start
+  swarmery uninstall               remove launchd service (keeps logs+db)
+  swarmery status                  service health, pid, uptime, db size
   env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING`)
 }
 
