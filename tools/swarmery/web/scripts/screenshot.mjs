@@ -48,6 +48,7 @@ const mobile = await browser.newPage({
   deviceScaleFactor: 2,
 });
 await shot(mobile, '/', 'overview.png');
+await shot(mobile, '/docs', 'docs-mobile.png');
 await shot(mobile, '/sessions', 'sessions.png');
 // Session 1 is the subagent fixture — full page so the nested track is visible.
 await shot(mobile, '/sessions/1', 'session-detail-timeline.png', { fullPage: true });
@@ -66,9 +67,11 @@ await mobile.screenshot({ path: join(outDir, 'session-detail-diffs.png'), fullPa
 console.log('✓ session-detail-diffs.png');
 await mobile.close();
 
-// Desktop (≥900px): sidebar navigation.
-const desktop = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// Desktop (≥1280px): sidebar navigation + the Overview/detail right rails.
+const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await shot(desktop, '/', 'overview-desktop.png');
+await shot(desktop, '/sessions/1', 'session-detail-desktop.png');
+await shot(desktop, '/docs/neutrality', 'docs.png');
 await desktop.close();
 
 await browser.close();
