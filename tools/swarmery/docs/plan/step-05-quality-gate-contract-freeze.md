@@ -79,7 +79,7 @@ Previous: [step-04-vertical-slice.md](step-04-vertical-slice.md) · Next: [step-
 ### Completion Report
 
 ```
-Date: 2026-07-12 · Tag SHA: controller fills · Worktrees created: controller fills · Verdict: agent part done
+Date: 2026-07-12 · Tag SHA: 4858f2d (swarmery-contract-freeze-v1) · Worktrees created: /Volumes/Work/swarmery-wt-{ingest,frontend,metrics} (feat/swarmery-{ingest,frontend,metrics}) · Verdict: PASS. Note: freeze commits rewritten once before tagging to purge an accidentally committed 15MB binary (old 'swormery' name escaped the anchored .gitignore); history is clean.
 ```
 
 Agent part details:
