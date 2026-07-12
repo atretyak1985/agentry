@@ -72,7 +72,11 @@ export function Diffs({ changes }: { changes: FileChange[] }): JSX.Element {
         const first = group.changes[0];
         const outOfScope = group.changes.some((c) => c.outOfScope);
         return (
-          <div key={group.filePath} className="border-b border-line py-2 last:border-b-0">
+          <div
+            key={group.filePath}
+            data-diff-path={group.filePath}
+            className="border-b border-line py-2 last:border-b-0"
+          >
             <div className="flex flex-wrap items-center gap-2 font-mono text-[11.5px]">
               <span className="min-w-0 flex-1 truncate">{group.filePath}</span>
               {first !== undefined && (

@@ -6,9 +6,41 @@
 
 import { useMemo } from 'react';
 import type { Event, FileChange } from '../../api/types';
-import { fmtDurationMs, fmtSpan } from '../../lib/format';
+import { fmtDurationMs } from '../../lib/format';
 import { subagentDescription, subagentName } from '../../lib/payload';
 import { deriveSkills } from './SummaryChips';
+
+interface AgentGroup {
+  name: string;
+  count: number;
+  running: number;
+  totalMs: number;
+  /** "description — duration" per run → native tooltip. */
+  titles: string[];
+}
+
+/** Group subagent runs by type: one pill per agent name with ×N and total time. */
+function groupAgents(events: Event[]): AgentGroup[] {
+  const byName = new Map<string, AgentGroup>();
+  for (const event of events) {
+    if (event.type !== 'subagent_start') continue;
+    const stop = events.find(
+      (e) => e.type === 'subagent_stop' && e.parentEventId === event.id,
+    );
+    const name = subagentName(event);
+    const group = byName.get(name) ?? { name, count: 0, running: 0, totalMs: 0, titles: [] };
+    group.count += 1;
+    if (stop === undefined) group.running += 1;
+    const ms = stop?.durationMs ?? null;
+    if (ms !== null) group.totalMs += ms;
+    const desc = subagentDescription(event);
+    if (desc !== null) {
+      group.titles.push(ms !== null ? `${desc} — ${fmtDurationMs(ms)}` : `${desc} — running`);
+    }
+    byName.set(name, group);
+  }
+  return [...byName.values()].sort((a, b) => b.count - a.count);
+}
 
 interface FileRow {
   path: string;
@@ -34,36 +66,6 @@ function aggregateFileChanges(changes: FileChange[]): FileRow[] {
   );
 }
 
-interface AgentPill {
-  key: string;
-  name: string;
-  /** "4m 12s" for finished agents; null while still running. */
-  duration: string | null;
-  /** Task description → native tooltip. */
-  title: string | null;
-}
-
-function deriveAgentPills(events: Event[]): AgentPill[] {
-  const pills: AgentPill[] = [];
-  for (const event of events) {
-    if (event.type !== 'subagent_start') continue;
-    const stop = events.find(
-      (e) => e.type === 'subagent_stop' && e.parentEventId === event.id,
-    );
-    const duration =
-      stop !== undefined
-        ? fmtDurationMs(stop.durationMs ?? null) || fmtSpan(event.ts, stop.ts)
-        : null;
-    pills.push({
-      key: `agent-${String(event.id)}`,
-      name: subagentName(event),
-      duration,
-      title: subagentDescription(event),
-    });
-  }
-  return pills;
-}
-
 function RailLabel({ tone, children }: { tone: string; children: string }): JSX.Element {
   return (
     <div className={`mb-2 font-mono text-[10.5px] tracking-[0.08em] uppercase ${tone}`}>
@@ -79,9 +81,9 @@ export function DetailRail({
 }: {
   events: Event[];
   fileChanges: FileChange[];
-  onShowDiffs: () => void;
+  onShowDiffs: (path?: string) => void;
 }): JSX.Element | null {
-  const agents = useMemo(() => deriveAgentPills(events), [events]);
+  const agents = useMemo(() => groupAgents(events), [events]);
   const skills = useMemo(() => deriveSkills(events), [events]);
   const files = useMemo(() => aggregateFileChanges(fileChanges), [fileChanges]);
 
@@ -95,15 +97,17 @@ export function DetailRail({
             <>
               <RailLabel tone="text-blue/70">agents</RailLabel>
               <div className="flex flex-wrap gap-1.5">
-                {agents.map((agent) => (
+                {agents.map((group) => (
                   <span
-                    key={agent.key}
-                    title={agent.title ?? undefined}
+                    key={group.name}
+                    title={group.titles.length > 0 ? group.titles.join('\n') : undefined}
                     className="max-w-full truncate rounded-full border border-blue/30 bg-blue/10 px-[9px] py-0.5 font-mono text-[11px] text-blue"
                   >
                     <span aria-hidden="true">⬡ </span>
-                    {agent.name}
-                    {agent.duration !== null ? ` · ${agent.duration}` : ' · running'}
+                    {group.name}
+                    {group.count > 1 ? ` ×${String(group.count)}` : ''}
+                    {group.totalMs > 0 ? ` · ${fmtDurationMs(group.totalMs)}` : ''}
+                    {group.running > 0 ? ' · running' : ''}
                   </span>
                 ))}
               </div>
@@ -142,7 +146,7 @@ export function DetailRail({
             <button
               key={file.path}
               type="button"
-              onClick={onShowDiffs}
+              onClick={() => onShowDiffs(file.path)}
               className="flex w-full items-center gap-2 border-b border-line-soft py-1.5 text-left font-mono text-[11px] transition-colors last:border-b-0 hover:bg-surface2/50"
             >
               <span className="min-w-0 flex-1 truncate text-left text-ink-3 [direction:rtl]">

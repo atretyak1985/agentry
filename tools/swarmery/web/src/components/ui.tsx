@@ -53,10 +53,13 @@ export function GroupHeader({ children }: { children: ReactNode }): JSX.Element 
  *   [status dot] [project] [title 1fr] [model] [branch] [start] [duration]
  * Overview drops the status-dot and branch columns (completed rows). */
 
+/* Fixed widths everywhere (no max-content): each row is its own grid, so any
+ * content-sized column would resolve per row and the table would shear —
+ * durations like "active · 7 h 06 min" vs "37 s" must not move the columns. */
 export const SESSION_ROW_GRID =
-  'desk:grid-cols-[14px_120px_minmax(0,1fr)_110px_80px_40px_max-content]';
+  'desk:grid-cols-[14px_120px_minmax(0,1fr)_130px_60px_44px_150px]';
 export const COMPLETED_ROW_GRID =
-  'desk:grid-cols-[120px_minmax(0,1fr)_110px_40px_max-content]';
+  'desk:grid-cols-[120px_minmax(0,1fr)_130px_44px_150px]';
 
 /* ----- duration pill — right column of session table rows -----
  * Active rows get the green-tinted "active · 3 h 43 min" pill; everything
