@@ -3,6 +3,7 @@
 //	swarmery ingest <file.jsonl>   parse one transcript into the local DB
 //	swarmery backfill              one-shot full scan of the projects root
 //	swarmery serve                 serve the API/SPA + live ingest pipeline
+//	swarmery recost                recompute cost_usd for all turns
 package main
 
 import (
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/api"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
 )
@@ -36,6 +38,8 @@ func main() {
 		err = cmdBackfill(os.Args[2:])
 	case "serve":
 		err = cmdServe(os.Args[2:])
+	case "recost":
+		err = cmdRecost(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -55,7 +59,8 @@ func usage() {
   swarmery serve    [--db <path>] [--port <n>] [--projects-root <dir>]
                     [--rescan <dur>] [--status-tick <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
-  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT`)
+  swarmery recost   [--db <path>]
+  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING`)
 }
 
 // defaultProjectsRoot resolves SWARMERY_PROJECTS_ROOT, falling back to
@@ -111,6 +116,47 @@ func cmdIngest(args []string) error {
 	fmt.Printf("ingested %s\n  projects: %d created\n  sessions: %d created\n  turns: %d created\n  events: %d created\n  file_changes: %d created\n  skipped lines: %d\n",
 		fs.Arg(0), stats.Projects, stats.Sessions, stats.Turns, stats.Events, stats.FileChanges, stats.SkippedLines)
 	return nil
+}
+
+// cmdRecost recomputes turns.cost_usd for every turn from stored usage and
+// the current pricing table — run it after changing config/pricing.json.
+// Idempotent: converges to the same values on every run.
+func cmdRecost(args []string) error {
+	fs := flag.NewFlagSet("recost", flag.ExitOnError)
+	dbPath := dbFlag(fs)
+	fs.Parse(args)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: swarmery recost [--db <path>]")
+	}
+
+	if port := envPort(); daemonRunning(port) {
+		log.Printf("warn: a swarmery daemon appears to be running on port %d — recost writes to the same WAL; concurrent ingest may interleave (busy_timeout handles locking, but consider stopping the daemon first)", port)
+	}
+
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stats, err := cost.Recost(db, cost.Default())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("recost %s\n  turns examined: %d\n  priced: %d\n  unpriced (unknown model → NULL): %d\n  no usage (user turns → NULL): %d\n",
+		*dbPath, stats.Total, stats.Priced, stats.Unpriced, stats.NoUsage)
+	return nil
+}
+
+// daemonRunning probes the local API port to detect a live daemon.
+func daemonRunning(port int) bool {
+	client := http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/api/projects", port))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
 }
 
 func cmdBackfill(args []string) error {

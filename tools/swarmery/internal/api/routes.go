@@ -16,5 +16,5 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/ws", h.ws)
 
 	// wave C: stats
-	// (overview/stats endpoints — registered by branch C; do not add here)
+	mux.HandleFunc("GET /api/stats/today", h.statsToday)
 }

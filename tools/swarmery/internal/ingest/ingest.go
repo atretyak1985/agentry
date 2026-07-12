@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost" // metrics hook (wave C)
 )
 
 // Stats counts rows created by one ingest run (idempotent re-runs report zeros).
@@ -381,6 +383,22 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 					}
 					if created {
 						seq++
+						// metrics hook (wave C): price the turn from its usage +
+						// per-message model — the single cost integration point.
+						if u := m.Usage; u != nil {
+							if c := cost.EnrichTurn(cost.Turn{
+								Model:            m.Model,
+								TokensIn:         &u.InputTokens,
+								TokensOut:        &u.OutputTokens,
+								TokensCacheRead:  &u.CacheReadInputTokens,
+								TokensCacheWrite: &u.CacheCreationInputTokens,
+							}); c != nil {
+								if _, err := in.tx.Exec(
+									`UPDATE turns SET cost_usd = ? WHERE id = ?`, *c, turnID); err != nil {
+									return err
+								}
+							}
+						}
 					}
 					curTurnID, curMsgID = turnID, m.ID
 				} else if curTurnID != 0 {
