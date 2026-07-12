@@ -88,5 +88,15 @@ Previous: [step-09-quality-gate-parallel-wave.md](step-09-quality-gate-parallel-
 ### Completion Report
 
 ```
-Date/agent: · Merge SHAs: · Backfill stats (projects/sessions/events): · Today cost: · Integration bugs fixed:
+Date/agent: 2026-07-12 / integration agent (Claude Code, main checkout).
+Merge SHAs: ingest 834ebc3 → metrics bdd7dfb → frontend eb7984a (fixed order, one merge commit each); contract-request implementation 01fd6ef.
+Conflicts: cmd/swarmery/main.go (ingest serve/backfill vs metrics recost — union: all four subcommands kept) and web/CONTRACT-REQUESTS.md (both branches appended at the marker — union of all three entries). routes.go merged clean (wave blocks).
+Contract requests: (1) event_appended → {sessionId, event} IMPLEMENTED (ws.go + ws-protocol.md + types.ts + frontend; session-card "now: <last action>" live line enabled on Overview/Sessions); (2) turns.model IMPLEMENTED (migration 0002, ingest writes per-message model, recost COALESCE(turns.model, sessions.model), Turn DTO exposes model); (3) session-list aggregates DEFERRED — answered in web/CONTRACT-REQUESTS.md (phase 2 candidates).
+Backfill stats (full ~/.claude/projects, scratch DB): 457 files / 114,545 lines in 6.8 s → 11 projects, 115 sessions, 12,213 turns (11,009 assistant turns, 100% with model), 24,779 events, 2,979 file_changes, 0 skipped, 0 errors.
+Today (/api/stats/today): sessions 2, tokens_in 58,345, tokens_out 164,337, cost $40.56, errors 55.
+Session-detail spot check (4 largest, different projects): swarmery #114 (158 turns / 813 events / 14 diffs / $27.92 / 15 subagents), Naomi School #25 (436/1902/36/$106.92/18), bloomblum #100 (43/833/34/$6.39/15), CarsFinders #14 (91/1152/9/$23.27/24) — timeline, nested subagents (parentEventId), diffs, per-turn models and cost all present and sane.
+WS live check: serve with SWARMERY_PROJECTS_ROOT at a temp dir; new-file append → event_appended with sessionId in 8 ms; incremental tail append → 158 ms (both « 3 s). Embedded SPA verified on the built binary (make build, single binary).
+Integration bugs fixed: none beyond the two known conflict points — no contract mismatches surfaced (gate 09 pre-limits held). Note: model "<synthetic>" (50 turns) has no pricing → cost_usd NULL by the honesty rule.
+Cleanup: worktrees swarmery-wt-{ingest,metrics,frontend} removed; branches deleted. swarmery-wt-install + feat/swarmery-install untouched (still in flight).
+Validation: go vet + go test, tsc --noEmit, npm run build all green on final main.
 ```
