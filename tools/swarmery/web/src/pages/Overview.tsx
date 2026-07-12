@@ -7,8 +7,14 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { PermissionRequest, Session, StatsOverview, WSMessage } from '../api/types';
-import { fetchApprovals, fetchSessions, fetchStatsOverview } from '../api';
+import type {
+  PermissionRequest,
+  Session,
+  StatsOverview,
+  TaskSummary,
+  WSMessage,
+} from '../api/types';
+import { fetchApprovals, fetchSessions, fetchStatsOverview, fetchTasks } from '../api';
 import { requestSummary } from '../lib/approvals';
 import { projectColor } from '../lib/colors';
 import {
@@ -280,6 +286,71 @@ function CompletedRow({ session }: { session: Session }): JSX.Element {
   );
 }
 
+/* ----- phase 3.5: workspaces — "tasks · 14 days" slice. Each row is one
+ * workspace card (agent-work.sh task) with the sessions it attracted and
+ * the money they burned (Σ over task_sessions). Sits below "Recently
+ * completed": same navy list card, same column discipline. ----- */
+
+const OUTCOME_TONES: Record<TaskSummary['outcome'], string> = {
+  active: 'text-green',
+  done: 'text-ink-dim',
+  archived: 'text-ink-3',
+};
+
+/* Fixed desk column widths (same discipline as COMPLETED_ROW_GRID):
+ * [task 1fr] [project] [sessions] [Σ$] [outcome]. Mobile keeps task | Σ$ | outcome. */
+const TASK_ROW_GRID = 'desk:grid-cols-[minmax(0,1fr)_120px_88px_70px_80px]';
+
+function TaskRow({ task }: { task: TaskSummary }): JSX.Element {
+  return (
+    <div
+      className={`grid grid-cols-[minmax(0,1fr)_70px_80px] items-center gap-3 px-3.5 py-2.5 ${TASK_ROW_GRID}`}
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold">{task.title}</span>
+        <span className="block truncate font-mono text-[10px] text-ink-dim">
+          {task.externalId}
+        </span>
+      </span>
+      <span className="hidden min-w-0 items-center gap-[7px] desk:flex">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ background: projectColor(task.projectSlug) }}
+          aria-hidden="true"
+        />
+        <span className="truncate font-mono text-[11px] text-ink-3">
+          {projectLabel(task.projectName, task.projectSlug)}
+        </span>
+      </span>
+      <span className="hidden text-right font-mono text-[11px] text-ink-3 desk:block">
+        {task.sessions} {task.sessions === 1 ? 'session' : 'sessions'}
+      </span>
+      <span className="text-right font-mono text-[12px] font-bold text-brand">
+        {fmtCost(task.costUsd)}
+      </span>
+      <span
+        className={`justify-self-end font-mono text-[10.5px] tracking-[0.06em] uppercase ${OUTCOME_TONES[task.outcome]}`}
+      >
+        {task.outcome}
+      </span>
+    </div>
+  );
+}
+
+function TasksSlice({ tasks }: { tasks: TaskSummary[] | null }): JSX.Element | null {
+  if (tasks === null || tasks.length === 0) return null; // no workspace repo → no section
+  return (
+    <>
+      <SectionTitle>Tasks · 14 days</SectionTitle>
+      <div className="divide-y divide-line-soft overflow-hidden rounded-xl border border-line bg-surface">
+        {tasks.slice(0, 8).map((t) => (
+          <TaskRow key={t.id} task={t} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 /* ----- right rail (desktop ≥1280px; stacked below on mobile) ----- */
 
 function RailCard({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
@@ -437,6 +508,8 @@ export function Overview(): JSX.Element {
   const [nowById, setNowById] = useState<Record<number, string>>({});
   // Live pending approvals (phase 2) — the rail card + ACTIVE tile subline.
   const [approvals, setApprovals] = useState<PermissionRequest[] | null>(null);
+  // phase 3.5: workspaces — 14-day task slice (null/empty hides the section).
+  const [tasks, setTasks] = useState<TaskSummary[] | null>(null);
 
   const isToday = day === isoDay();
 
@@ -464,8 +537,15 @@ export function Overview(): JSX.Element {
       .catch(() => setStatsError(true));
   }, [day]);
 
+  const loadTasks = useCallback((): void => {
+    fetchTasks()
+      .then(setTasks)
+      .catch(() => setTasks(null)); // older daemon / no workspace → section hidden
+  }, []);
+
   useEffect(loadSessions, [loadSessions]);
   useEffect(loadApprovals, [loadApprovals]);
+  useEffect(loadTasks, [loadTasks]);
   useEffect(() => {
     setStats(null);
     loadStats();
@@ -475,7 +555,8 @@ export function Overview(): JSX.Element {
     loadSessions();
     loadStats();
     loadApprovals();
-  }, [loadSessions, loadStats, loadApprovals]);
+    loadTasks();
+  }, [loadSessions, loadStats, loadApprovals, loadTasks]);
 
   const onMessage = useCallback((msg: WSMessage): void => {
     if (msg.type === 'event_appended') {
@@ -576,6 +657,8 @@ export function Overview(): JSX.Element {
               all sessions →
             </button>
           </div>
+
+          <TasksSlice tasks={tasks} />
         </div>
 
         {stats !== null && <Rail stats={stats} isToday={isToday} pending={approvals ?? []} />}

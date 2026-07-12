@@ -292,8 +292,17 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 	case err != nil:
 		return err
 	default:
+		// Phase 2 (approvals) interplay:
+		//   - a session first created by the hooks channel (source='hook') that
+		//     now shows up in a JSONL transcript is promoted to source='both';
+		//   - status='waiting_approval' is owned exclusively by the approvals
+		//     layer (entry AND exit) — the heuristic never overwrites it here;
+		//     the approvals resolution/sweeper restores the heuristic status.
 		if _, err := in.tx.Exec(
-			`UPDATE sessions SET model = COALESCE(?, model), status = ?,
+			`UPDATE sessions SET model = COALESCE(?, model),
+			                     status = CASE WHEN status = 'waiting_approval'
+			                                   THEN status ELSE ? END,
+			                     source = CASE WHEN source = 'hook' THEN 'both' ELSE source END,
 			                     ended_at = CASE WHEN ? = '' THEN ended_at
 			                                     ELSE MAX(COALESCE(ended_at,''), ?) END,
 			                     title = COALESCE(?, COALESCE(title, ?)) WHERE id = ?`,

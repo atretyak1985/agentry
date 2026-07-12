@@ -97,6 +97,25 @@ Request format:
 
 ---
 
+## Phase 3.5 resolutions (2026-07-13, feat/swarmery-workspaces — E-lite)
+
+Additive-only, applied on the phase branch (single agent, no parallel wave to
+conflict with):
+
+- **`Session` task attribution** — `taskId` / `taskExternalId` /
+  `taskLinkSource` / `taskConfidence` (all optional-nullable): the best task
+  link per session (explicit beats heuristic, then highest confidence),
+  computed in one window-function JOIN in `sessionSelect`. Renders the task
+  chip in Session Detail and the task badge in Sessions rows.
+- **New endpoints** — `GET /api/tasks?days=<n>` (`TaskSummary[]`, default 14
+  days, drives the Overview "Tasks · 14 days" slice) and
+  `GET /api/tasks/{id}` (`TaskDetail`: card metadata + `sessionLinks[]` with
+  per-session cost + Σ cost; `id` = row id or `externalId`).
+- **New types** — `TaskLinkSource`, `TaskOutcome`, `TaskSummary`,
+  `TaskSessionLink`, `TaskDetail`, `TasksResponse`.
+
+---
+
 <!-- Phase 2 — parallel wave (gate 2.2 freeze). Resolved at step 2.5/integration. -->
 
 ## 2026-07-13 — feat/swarmery-approvals-ui (wave B) — GET /api/approvals filter semantics
