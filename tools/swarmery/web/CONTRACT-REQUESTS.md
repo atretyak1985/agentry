@@ -74,3 +74,23 @@ Request format:
     lastAction?: string | null; // toolName + arg summary of latest event
   }
   ```
+
+---
+
+## Step-10 resolutions (2026-07-12, integration)
+
+- **per-turn model (wave C)** — ACCEPTED & IMPLEMENTED. Migration
+  `0002_turn_model.sql` adds `turns.model TEXT NULL`; ingest writes the
+  per-message API model; `swarmery recost` resolves
+  `COALESCE(turns.model, sessions.model)`; `turnDTO`/`Turn` expose
+  `model: string | null`.
+- **event_appended session attribution (frontend)** — ACCEPTED & IMPLEMENTED.
+  `event_appended` payload is now `{ sessionId: number; event: Event }`
+  (internal/api/ws.go, docs/ws-protocol.md, types.ts). Detail view attributes
+  by `sessionId`; Overview/Sessions render a live `now: <last action>` line on
+  session cards.
+- **session list aggregates (frontend)** — DEFERRED, phase 2 candidates.
+  `toolCalls`/`costUsd`/`lastAction` on `sessionDTO` need per-session
+  aggregate queries (or denormalized counters) on the list endpoint; the live
+  `now:` line above covers the most visible gap via WS without any schema or
+  list-query cost. Revisit alongside the phase-2 session-card design.

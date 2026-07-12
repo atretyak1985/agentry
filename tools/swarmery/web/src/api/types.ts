@@ -3,10 +3,12 @@
 // ============================================================================
 // Single source of truth for all API response shapes, generated from the Go
 // DTO structs in internal/api/handlers.go (field names match the JSON tags
-// exactly). Frozen at the step-05 quality gate before the parallel wave.
+// exactly). Frozen at the step-05 quality gate before the parallel wave;
+// updated ONCE at step-10 integration with the accepted contract requests
+// (Turn.model, event_appended {sessionId, event}) — see web/CONTRACT-REQUESTS.md.
 //
 // DO NOT EDIT on branch agents' worktrees. Contract change requests go to
-// web/CONTRACT-REQUESTS.md and are resolved at integration (step 10).
+// web/CONTRACT-REQUESTS.md and are resolved at integration.
 // ============================================================================
 
 // --- Enum-like unions (documented value sets from the DB schema) ------------
@@ -78,6 +80,8 @@ export interface Turn {
   seq: number;
   role: TurnRole;
   messageId: string | null;
+  /** Per-message API model; null for user turns (and pre-0002 rows). */
+  model: string | null;
   startedAt: string;
   endedAt: string | null;
   tokensIn: number | null;
@@ -145,8 +149,8 @@ export interface StatsToday {
 /** WS event names — frozen; implemented by Agent A on /api/ws. */
 export type WSMessageType = 'session_started' | 'session_updated' | 'event_appended';
 
-/** Messages pushed over /api/ws — implemented by Agent A (ingest branch). */
+/** Messages pushed over /api/ws — see docs/ws-protocol.md. */
 export type WSMessage =
   | { type: 'session_started'; payload: Session }
   | { type: 'session_updated'; payload: Session }
-  | { type: 'event_appended'; payload: Event };
+  | { type: 'event_appended'; payload: { sessionId: number; event: Event } };

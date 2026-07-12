@@ -114,17 +114,40 @@ func TestWSMessageShape(t *testing.T) {
 	assertEnvelope(t, frame, "session_updated")
 	assertPayloadKeys(t, frame, sessionKeys)
 
-	// event_appended — Event DTO payload.
+	// event_appended — {sessionId, event: Event DTO} payload (step-10 contract).
 	bus.Publish(ingest.Notification{Type: ingest.NoteEventAppended, SessionID: 1, EventID: 1})
 	frame = readFrame()
 	assertEnvelope(t, frame, "event_appended")
-	assertPayloadKeys(t, frame, eventKeys)
+	assertPayloadKeys(t, frame, []string{"sessionId", "event"})
+	var wrapper struct {
+		SessionID int64           `json:"sessionId"`
+		Event     json.RawMessage `json:"event"`
+	}
+	if err := json.Unmarshal(frame["payload"], &wrapper); err != nil {
+		t.Fatal(err)
+	}
+	if wrapper.SessionID != 1 {
+		t.Errorf("event_appended sessionId = %d, want 1", wrapper.SessionID)
+	}
+	var eventObj map[string]json.RawMessage
+	if err := json.Unmarshal(wrapper.Event, &eventObj); err != nil {
+		t.Fatalf("event is not a JSON object: %v", err)
+	}
+	if got, want := keysOf(eventObj), sortedCopy(eventKeys); len(got) != len(want) {
+		t.Fatalf("event keys = %v, want %v", got, want)
+	} else {
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("event keys = %v, want %v", got, want)
+			}
+		}
+	}
 	var ev struct {
 		ID   int64  `json:"id"`
 		Type string `json:"type"`
 		TS   string `json:"ts"`
 	}
-	if err := json.Unmarshal(frame["payload"], &ev); err != nil {
+	if err := json.Unmarshal(wrapper.Event, &ev); err != nil {
 		t.Fatal(err)
 	}
 	if ev.ID != 1 || ev.Type == "" || ev.TS == "" {

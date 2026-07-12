@@ -172,10 +172,11 @@ func TestRecostIdempotent(t *testing.T) {
 	mustExec(`INSERT INTO sessions (id, project_id, session_uuid, model, status, started_at)
 	          VALUES (1, 1, 'u1', 'm-basic', 'completed', '2026-07-12T00:00:00Z'),
 	                 (2, 1, 'u2', 'm-unknown', 'completed', '2026-07-12T00:00:00Z')`)
-	mustExec(`INSERT INTO turns (id, session_id, seq, role, started_at, tokens_in, tokens_out, cost_usd)
-	          VALUES (1, 1, 0, 'assistant', '2026-07-12T00:00:01Z', 1000000, 1000000, 999.0),
-	                 (2, 1, 1, 'user',      '2026-07-12T00:00:02Z', NULL, NULL, 123.0),
-	                 (3, 2, 0, 'assistant', '2026-07-12T00:00:03Z', 500, 500, 0.0)`)
+	mustExec(`INSERT INTO turns (id, session_id, seq, role, model, started_at, tokens_in, tokens_out, cost_usd)
+	          VALUES (1, 1, 0, 'assistant', NULL,      '2026-07-12T00:00:01Z', 1000000, 1000000, 999.0),
+	                 (2, 1, 1, 'user',      NULL,      '2026-07-12T00:00:02Z', NULL, NULL, 123.0),
+	                 (3, 2, 0, 'assistant', NULL,      '2026-07-12T00:00:03Z', 500, 500, 0.0),
+	                 (4, 2, 1, 'assistant', 'm-basic', '2026-07-12T00:00:04Z', 1000000, 0, NULL)`)
 
 	tbl := testTable(t)
 	for pass := 1; pass <= 2; pass++ { // second pass proves idempotency
@@ -183,8 +184,8 @@ func TestRecostIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("recost pass %d: %v", pass, err)
 		}
-		if stats.Total != 3 || stats.Priced != 1 || stats.Unpriced != 1 || stats.NoUsage != 1 {
-			t.Fatalf("pass %d stats = %+v, want Total:3 Priced:1 Unpriced:1 NoUsage:1", pass, stats)
+		if stats.Total != 4 || stats.Priced != 2 || stats.Unpriced != 1 || stats.NoUsage != 1 {
+			t.Fatalf("pass %d stats = %+v, want Total:4 Priced:2 Unpriced:1 NoUsage:1", pass, stats)
 		}
 	}
 
@@ -201,6 +202,14 @@ func TestRecostIdempotent(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("turns 2 (no usage) and 3 (unknown model) must both be NULL; got %d NULLs", n)
+	}
+	// turns.model beats the session's unknown model (migration 0002 semantics).
+	var c4 float64
+	if err := db.QueryRow(`SELECT cost_usd FROM turns WHERE id = 4`).Scan(&c4); err != nil {
+		t.Fatalf("turn 4 cost: %v", err)
+	}
+	if math.Abs(c4-1.0) > 1e-12 { // 1e6/1e6 * m-basic input rate (1)
+		t.Errorf("turn 4 cost = %v, want 1.0 (per-turn model must override session model)", c4)
 	}
 }
 

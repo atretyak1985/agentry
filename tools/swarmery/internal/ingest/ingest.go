@@ -331,7 +331,7 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 				if sidechain {
 					continue // the sidechain opener repeats the Agent prompt — no new event
 				}
-				turnID, created, err := in.upsertTurn(seq, "user", "", r.Timestamp, nil)
+				turnID, created, err := in.upsertTurn(seq, "user", "", "", r.Timestamp, nil)
 				if err != nil {
 					return err
 				}
@@ -377,7 +377,7 @@ func (in *ingester) processRecords(recs []record, path string, sidechain bool, s
 			if !sidechain {
 				if m.ID != curMsgID {
 					// New API message → new assistant turn; usage counted ONCE (C1).
-					turnID, created, err := in.upsertTurn(seq, "assistant", m.ID, r.Timestamp, m.Usage)
+					turnID, created, err := in.upsertTurn(seq, "assistant", m.ID, m.Model, r.Timestamp, m.Usage)
 					if err != nil {
 						return err
 					}
@@ -721,8 +721,9 @@ func (in *ingester) nextSeq() (int, error) {
 }
 
 // upsertTurn inserts a turn; on (session_id, seq) conflict the existing row is
-// reused (re-ingest). Returns (id, createdNow).
-func (in *ingester) upsertTurn(seq int, role, messageID, ts string, u *usage) (int64, bool, error) {
+// reused (re-ingest). model is the per-message API model (empty → NULL, e.g.
+// user turns). Returns (id, createdNow).
+func (in *ingester) upsertTurn(seq int, role, messageID, model, ts string, u *usage) (int64, bool, error) {
 	// Re-ingest: match an existing turn by identity first.
 	var id int64
 	var err error
@@ -747,10 +748,10 @@ func (in *ingester) upsertTurn(seq int, role, messageID, ts string, u *usage) (i
 		tin, tout, tcr, tcw = u.InputTokens, u.OutputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens
 	}
 	res, err := in.tx.Exec(
-		`INSERT INTO turns (session_id, seq, role, message_id, started_at, ended_at,
+		`INSERT INTO turns (session_id, seq, role, message_id, model, started_at, ended_at,
 		                    tokens_in, tokens_out, tokens_cache_read, tokens_cache_write)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.sessionID, seq, role, nullStr(messageID), ts, ts, tin, tout, tcr, tcw)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.sessionID, seq, role, nullStr(messageID), nullStr(model), ts, ts, tin, tout, tcr, tcw)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert turn seq=%d: %w", seq, err)
 	}

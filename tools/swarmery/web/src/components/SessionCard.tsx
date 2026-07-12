@@ -19,7 +19,16 @@ function chipSuffix(session: Session): string {
   return fmtSpan(session.startedAt, session.endedAt);
 }
 
-export function SessionCard({ session }: { session: Session }): JSX.Element {
+const NOW_STATUSES = new Set<Session['status']>(['active', 'waiting_approval', 'idle']);
+
+export function SessionCard({
+  session,
+  now = null,
+}: {
+  session: Session;
+  /** Live "now: <last action>" line, fed by event_appended WS messages. */
+  now?: string | null;
+}): JSX.Element {
   return (
     <Link
       to={`/sessions/${session.id}`}
@@ -36,6 +45,9 @@ export function SessionCard({ session }: { session: Session }): JSX.Element {
         {session.title ?? session.sessionUuid}
       </div>
       <div className="truncate font-mono text-[11px] text-ink-dim">{meta(session)}</div>
+      {now !== null && NOW_STATUSES.has(session.status) && (
+        <div className="mt-[3px] truncate font-mono text-[10.5px] text-green">now: {now}</div>
+      )}
     </Link>
   );
 }

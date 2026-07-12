@@ -35,6 +35,14 @@ type wsEnvelope struct {
 	Payload any    `json:"payload"`
 }
 
+// wsEventPayload is the event_appended payload: the Event DTO plus its
+// session id, so list views can attribute live events to a session card
+// (contract change accepted at step 10 — see web/CONTRACT-REQUESTS.md).
+type wsEventPayload struct {
+	SessionID int64     `json:"sessionId"`
+	Event     *eventDTO `json:"event"`
+}
+
 // GET /api/ws — upgrades to WebSocket and streams WSMessage JSON text frames.
 func (h *Handler) ws(w http.ResponseWriter, r *http.Request) {
 	if wsBus == nil {
@@ -106,7 +114,7 @@ func (h *Handler) buildWSMessage(n ingest.Notification) ([]byte, error) {
 		if e == nil {
 			return nil, nil
 		}
-		payload = e
+		payload = wsEventPayload{SessionID: n.SessionID, Event: e}
 	default:
 		return nil, errors.New("unknown notification type " + n.Type)
 	}

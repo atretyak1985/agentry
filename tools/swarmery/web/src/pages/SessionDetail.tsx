@@ -1,7 +1,7 @@
 // Session detail (design §3.3, MVP scope): header with status/model/token/cost
 // facts, then ONLY the Timeline and Diffs tabs (Context and Tree are later
 // phases). Live: session_updated merges header state; event_appended is
-// attributed via turnId and appended to the open timeline.
+// attributed via its sessionId and appended to the open timeline.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -59,10 +59,10 @@ export function SessionDetailPage(): JSX.Element {
       if (msg.type === 'session_updated') {
         return msg.payload.id === prev.id ? { ...prev, ...msg.payload } : prev;
       }
-      // event_appended: the Event carries no session id (see
-      // web/CONTRACT-REQUESTS.md) — attribute via turnId when possible.
-      const event = msg.payload;
-      if (event.turnId === null || !prev.turns.some((t) => t.id === event.turnId)) return prev;
+      // event_appended: attributed directly via the payload's sessionId
+      // (step-10 contract change).
+      const { sessionId, event } = msg.payload;
+      if (sessionId !== prev.id) return prev;
       if (prev.events.some((e) => e.id === event.id)) return prev;
       return { ...prev, events: [...prev.events, event] };
     });

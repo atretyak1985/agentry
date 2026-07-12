@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Project, Session, SessionStatus, WSMessage } from '../api/types';
 import { fetchProjects, fetchSessions } from '../api';
+import { liveActionText } from '../lib/payload';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { SessionCard } from '../components/SessionCard';
 import { Empty, ErrorBox, Loading } from '../components/ui';
@@ -49,6 +50,7 @@ export function Sessions(): JSX.Element {
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowById, setNowById] = useState<Record<number, string>>({});
 
   useEffect(() => {
     fetchProjects()
@@ -81,7 +83,15 @@ export function Sessions(): JSX.Element {
 
   const onMessage = useCallback(
     (msg: WSMessage): void => {
-      if (msg.type === 'event_appended') return;
+      if (msg.type === 'event_appended') {
+        // step-10 contract: the payload carries sessionId → live "now" line.
+        const text = liveActionText(msg.payload.event);
+        if (text !== null) {
+          const { sessionId } = msg.payload;
+          setNowById((prev) => ({ ...prev, [sessionId]: text }));
+        }
+        return;
+      }
       setSessions((prev) => {
         if (prev === null) return prev;
         const next = applySessionMessage(prev, msg);
@@ -132,7 +142,7 @@ export function Sessions(): JSX.Element {
         </Empty>
       )}
       {sorted.map((s) => (
-        <SessionCard key={s.id} session={s} />
+        <SessionCard key={s.id} session={s} now={nowById[s.id] ?? null} />
       ))}
     </>
   );

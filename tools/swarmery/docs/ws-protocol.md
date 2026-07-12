@@ -27,7 +27,7 @@ Every server frame is one **text** frame containing one JSON object:
 type WSMessage =
   | { type: 'session_started'; payload: Session }
   | { type: 'session_updated'; payload: Session }
-  | { type: 'event_appended';  payload: Event };
+  | { type: 'event_appended';  payload: { sessionId: number; event: Event } };
 ```
 
 `Session` and `Event` are byte-for-byte the same JSON DTOs the REST API
@@ -58,16 +58,19 @@ fresh `Session` — clients should upsert it by `id`, not diff it.
 ### `event_appended`
 
 Emitted once per newly created `events` row, in insert order, after
-`session_started`/`session_updated` for the same batch.
+`session_started`/`session_updated` for the same batch. The payload wraps the
+`Event` DTO with its owning `sessionId` so list views can attribute live
+events to a session card (contract change accepted at step 10 — see
+`web/CONTRACT-REQUESTS.md`).
 
 ```json
-{"type":"event_appended","payload":{
+{"type":"event_appended","payload":{"sessionId":1,"event":{
   "id":2,"turnId":2,"ts":"2026-07-12T14:03:58.000Z","type":"user_prompt",
   "toolName":null,"parentEventId":null,"status":null,"durationMs":null,
-  "payload":{"content":"second live line","promptSource":"typed"}}}
+  "payload":{"content":"second live line","promptSource":"typed"}}}}
 ```
 
-`payload.payload` is the raw event payload JSON (`unknown` client-side),
+`payload.event.payload` is the raw event payload JSON (`unknown` client-side),
 exactly as the REST detail endpoint returns it.
 
 ## Delivery semantics

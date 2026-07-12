@@ -45,6 +45,7 @@ type turnDTO struct {
 	Seq              int64   `json:"seq"`
 	Role             string  `json:"role"`
 	MessageID        *string `json:"messageId"`
+	Model            *string `json:"model"`
 	StartedAt        string  `json:"startedAt"`
 	EndedAt          *string `json:"endedAt"`
 	TokensIn         *int64  `json:"tokensIn"`
@@ -171,7 +172,7 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 
 	d.Turns = []turnDTO{}
 	rows, err := h.DB.Query(`
-		SELECT id, seq, role, message_id, started_at, ended_at,
+		SELECT id, seq, role, message_id, model, started_at, ended_at,
 		       tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, cost_usd
 		FROM turns WHERE session_id = ? ORDER BY seq`, d.ID)
 	if err != nil {
@@ -180,7 +181,7 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 	}
 	for rows.Next() {
 		var t turnDTO
-		if err := rows.Scan(&t.ID, &t.Seq, &t.Role, &t.MessageID, &t.StartedAt, &t.EndedAt,
+		if err := rows.Scan(&t.ID, &t.Seq, &t.Role, &t.MessageID, &t.Model, &t.StartedAt, &t.EndedAt,
 			&t.TokensIn, &t.TokensOut, &t.TokensCacheRead, &t.TokensCacheWrite, &t.CostUSD); err != nil {
 			rows.Close()
 			writeErr(w, err)

@@ -46,6 +46,19 @@ export function argSummary(event: Event): string | null {
   ]);
 }
 
+/** One-line "now: <last action>" text for a live session card. */
+export function liveActionText(event: Event): string | null {
+  if (event.type === 'user_prompt') {
+    const text = pickString(event.payload, ['content']);
+    return text !== null ? `prompt: ${text}` : 'prompt';
+  }
+  const arg = argSummary(event);
+  if (event.toolName !== null) {
+    return arg !== null ? `${event.toolName} ${arg}` : event.toolName;
+  }
+  return arg;
+}
+
 /** Failure text shown inline (without expanding) for error/denied/timeout rows. */
 export function errorText(event: Event): string | null {
   return (

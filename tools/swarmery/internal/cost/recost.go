@@ -18,10 +18,9 @@ type RecostStats struct {
 // current DB state, so re-running (or running after a pricing.json change)
 // always converges to the same values.
 //
-// Model resolution: turns carry no model column, so the session's model is
-// used. Ingest-time pricing uses the per-message model (more precise); the two
-// only differ in the rare case a session switches models mid-file — see
-// web/CONTRACT-REQUESTS.md for the proposed turns.model column.
+// Model resolution: turns.model (the exact per-message API model, written by
+// ingest since migration 0002) with a fallback to sessions.model for rows
+// ingested before the column existed.
 func Recost(db *sql.DB, t *Table) (RecostStats, error) {
 	var stats RecostStats
 
@@ -34,7 +33,7 @@ func Recost(db *sql.DB, t *Table) (RecostStats, error) {
 	// Buffer the rows first: the store uses a single-connection pool, so we
 	// cannot UPDATE while the SELECT cursor is still open.
 	rows, err := db.Query(`
-		SELECT t.id, COALESCE(s.model, ''),
+		SELECT t.id, COALESCE(t.model, s.model, ''),
 		       t.tokens_in, t.tokens_out, t.tokens_cache_read, t.tokens_cache_write
 		FROM turns t JOIN sessions s ON s.id = t.session_id`)
 	if err != nil {

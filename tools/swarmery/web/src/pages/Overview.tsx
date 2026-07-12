@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Session, StatsToday, WSMessage } from '../api/types';
 import { fetchSessions, fetchStatsToday } from '../api';
 import { fmtCost, fmtTodayHeader, fmtTokens } from '../lib/format';
+import { liveActionText } from '../lib/payload';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { SessionCard } from '../components/SessionCard';
 import { Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
@@ -49,6 +50,7 @@ export function Overview(): JSX.Element {
   const [stats, setStats] = useState<StatsToday | null>(null);
   const [statsError, setStatsError] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nowById, setNowById] = useState<Record<number, string>>({});
 
   const load = useCallback((): void => {
     fetchSessions()
@@ -68,6 +70,15 @@ export function Overview(): JSX.Element {
   useEffect(load, [load]);
 
   const onMessage = useCallback((msg: WSMessage): void => {
+    if (msg.type === 'event_appended') {
+      // step-10 contract: the payload carries sessionId → live "now" line.
+      const text = liveActionText(msg.payload.event);
+      if (text !== null) {
+        const { sessionId } = msg.payload;
+        setNowById((prev) => ({ ...prev, [sessionId]: text }));
+      }
+      return;
+    }
     setSessions((prev) => (prev === null ? prev : applySessionMessage(prev, msg)));
   }, []);
   useLiveUpdates(onMessage, load);
@@ -101,7 +112,7 @@ export function Overview(): JSX.Element {
         </Empty>
       )}
       {live.map((s) => (
-        <SessionCard key={s.id} session={s} />
+        <SessionCard key={s.id} session={s} now={nowById[s.id] ?? null} />
       ))}
 
       <SectionTitle>Recently completed</SectionTitle>
