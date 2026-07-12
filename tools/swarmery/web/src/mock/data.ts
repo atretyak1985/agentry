@@ -3,15 +3,21 @@
 // testdata/fixtures/*.jsonl (simple, tool-heavy, and subagent sessions).
 
 import type {
+  DocDetail,
+  DocMeta,
   Event,
   FileChange,
+  HealthResponse,
   Project,
   Session,
   SessionDetail,
   SessionsResponse,
+  StatsOverview,
+  StatsSeriesPoint,
   StatsToday,
   Turn,
 } from '../api/types';
+import { addDays, isoDay, parseDay } from '../lib/format';
 
 const now = Date.now();
 const iso = (msAgo: number): string => new Date(now - msAgo).toISOString();
@@ -74,6 +80,8 @@ export const mockSessions: Session[] = [
     endedAt: null,
     title: 'Migrate email templates to the provider v2 API',
     source: 'jsonl',
+    tokens: 412_000,
+    costUsd: 0.84,
   },
   {
     id: 2,
@@ -88,6 +96,8 @@ export const mockSessions: Session[] = [
     endedAt: null,
     title: 'Analyze the agent system and summarize orchestration',
     source: 'jsonl',
+    tokens: 141_000,
+    costUsd: 0.34,
   },
   {
     id: 3,
@@ -102,6 +112,8 @@ export const mockSessions: Session[] = [
     endedAt: null,
     title: 'Agent A: fsnotify watcher + offsets',
     source: 'both',
+    tokens: 96_000,
+    costUsd: 0.41,
   },
   {
     id: 4,
@@ -116,6 +128,8 @@ export const mockSessions: Session[] = [
     endedAt: null,
     title: 'Investigate flaky pagination test',
     source: 'jsonl',
+    tokens: 60_000,
+    costUsd: 0.11,
   },
   {
     id: 5,
@@ -130,6 +144,8 @@ export const mockSessions: Session[] = [
     endedAt: iso(139 * MIN),
     title: 'Fix pagination in the vendor portal',
     source: 'jsonl',
+    tokens: 220_000,
+    costUsd: 0.52,
   },
   {
     id: 6,
@@ -144,6 +160,8 @@ export const mockSessions: Session[] = [
     endedAt: iso(5 * 60 * MIN),
     title: 'Regenerate API reference pages',
     source: 'jsonl',
+    tokens: 88_000,
+    costUsd: 0.19,
   },
   {
     id: 7,
@@ -158,6 +176,8 @@ export const mockSessions: Session[] = [
     endedAt: iso(25 * 60 * MIN),
     title: 'Bulk dependency upgrade',
     source: 'hook',
+    tokens: null,
+    costUsd: null,
   },
 ];
 
@@ -169,6 +189,190 @@ export const mockStatsToday: StatsToday = {
   cost_usd: 4.87,
   errors: 3,
 };
+
+// --- /api/health --------------------------------------------------------------
+
+export const mockHealth: HealthResponse = {
+  status: 'ok',
+  version: '0.3.0',
+  db_size_bytes: 18_874_368,
+  watching: true,
+};
+
+// --- /api/stats/overview?day= --------------------------------------------------
+// Deterministic per-day pseudo-values so the day navigator shows believable,
+// stable variation; "today" mirrors mockStatsToday.
+
+interface DayFacts {
+  sessions: number;
+  tokens: number;
+  cost: number;
+  errors: number;
+}
+
+/** offset = days before today (0 = today). Stable across reloads within a day. */
+function dayFacts(offset: number): DayFacts {
+  if (offset === 0) return { sessions: 14, tokens: 2_100_000, cost: 4.87, errors: 3 };
+  const r = (salt: number): number => {
+    const x = Math.sin(offset * 12.9898 + salt * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  return {
+    sessions: 2 + Math.floor(r(1) * 9),
+    tokens: 150_000 + Math.floor(r(2) * 900_000),
+    cost: Math.round((3 + r(3) * 42) * 100) / 100,
+    errors: Math.floor(r(4) * 20),
+  };
+}
+
+function offsetOf(day: string): number {
+  const today = parseDay(isoDay());
+  const target = parseDay(day);
+  const diff = Math.round((today.getTime() - target.getTime()) / 86_400_000);
+  return Math.min(Math.max(diff, 0), 60);
+}
+
+export function mockStatsOverview(day: string): StatsOverview {
+  const offset = offsetOf(day);
+  const requested = addDays(isoDay(), -offset); // normalized day key
+  const facts = dayFacts(offset);
+  const isToday = offset === 0;
+
+  const series: StatsSeriesPoint[] = [];
+  for (let i = 13; i >= 0; i -= 1) {
+    const o = offset + i;
+    const f = dayFacts(o);
+    series.push({
+      day: addDays(requested, -i),
+      sessions: f.sessions,
+      tokens: f.tokens,
+      cost_usd: f.cost,
+      errors: f.errors,
+    });
+  }
+
+  // Split errors/cost/sessions across the fixture projects & models, keeping
+  // the rail rows consistent with the headline numbers.
+  const slugs = mockProjects.map((p) => ({ slug: p.slug, name: p.name }));
+  const errorRows: StatsOverview['errors_by_project'] = [];
+  let errorsLeft = facts.errors;
+  for (const [i, p] of slugs.entries()) {
+    if (errorsLeft <= 0) break;
+    const take = i === slugs.length - 1 ? errorsLeft : Math.ceil(errorsLeft / 2);
+    errorRows.push({ slug: p.slug, name: p.name, errors: take });
+    errorsLeft -= take;
+  }
+
+  const fableShare = Math.round(facts.cost * 0.77 * 100) / 100;
+  const opusShare = Math.round((facts.cost - fableShare) * 100) / 100;
+  const costRows: StatsOverview['cost_by_model'] = [{ model: 'claude-fable-5', cost_usd: fableShare }];
+  if (opusShare > 0) costRows.push({ model: 'claude-opus-4-8', cost_usd: opusShare });
+
+  const projectRows: StatsOverview['projects'] = [];
+  let sessionsLeft = facts.sessions;
+  for (const [i, p] of slugs.entries()) {
+    if (sessionsLeft <= 0) break;
+    const take = i === slugs.length - 1 ? sessionsLeft : Math.ceil(sessionsLeft / 2);
+    projectRows.push({ slug: p.slug, name: p.name, sessions: take });
+    sessionsLeft -= take;
+  }
+
+  return {
+    day: requested,
+    sessions: facts.sessions,
+    active: isToday ? 2 : 0,
+    waiting_approval: isToday ? 1 : 0,
+    tokens_in: Math.round(facts.tokens * 0.6),
+    tokens_out: facts.tokens - Math.round(facts.tokens * 0.6),
+    cost_usd: facts.cost,
+    errors: facts.errors,
+    series,
+    errors_by_project: errorRows,
+    cost_by_model: costRows,
+    projects: projectRows,
+  };
+}
+
+// --- /api/docs -----------------------------------------------------------------
+// Trimmed versions of the real swarmery/docs/*.md so the Docs screen demos
+// headings, lists, a pipe table, and a code fence offline.
+
+const onboardingMd = `# Onboarding a project onto swarmery
+
+## The one-command way
+
+From the new project's root:
+
+\`\`\`bash
+bash <swarmery-repo>/scripts/init.sh <project-slug> [pack ...]
+# e.g.  bash /path/to/swarmery/scripts/init.sh my-shop web-pack
+\`\`\`
+
+It scaffolds \`.claude/settings.json\` (marketplace + core + chosen packs + env + safety denies), a \`.claude/project.json\` skeleton (fill the TODOs), and the workspace namespace. Then start a fresh session and accept the trust prompt. Idempotent — existing files are never overwritten.
+
+**Packs:** \`uav-pack\` (drones/telemetry) · \`iot-pack\` (devices/BLE) · \`web-pack\` (SEO/i18n/CRO) · \`infra-pack\` (k8s/Helm/GitOps).
+
+## The payoff test (prove porting is dead)
+
+1. Bump \`plugins/core\` minor version; push.
+2. In each consumer: \`/plugin update\`.
+3. Confirm the change lands in every project with **zero per-project file copying**.
+
+This is the whole reason swarmery exists — verify it explicitly once ≥2 consumers are live.`;
+
+const extendingMd = `# Extending swarmery: where project-specific things live
+
+swarmery is **one global system + a thin native overlay per project** — never a separate "sub-agent-system" inside a project. On a name collision the project-local component wins (native base + overlay).
+
+## Decision tree for every new skill / agent / command / template / script
+
+| The thing is… | It goes to… |
+|---|---|
+| useful to any project | \`plugins/core\` (bump semver → consumers adopt via \`/plugin update\`) |
+| useful to ≥2 projects of one domain | the domain pack (\`uav-pack\` / \`iot-pack\` / \`web-pack\`) |
+| unique to one project | **the project's own** \`.claude/{agents,skills,commands,templates}/\` |
+| configuration, not logic | the project's \`.claude/project.json\` |
+
+## The graduation rule (flow goes UP only)
+
+New things are born **project-local**. When a **second** project needs the same thing, promote it to a pack; when every project needs it, promote to core. Never copy downward — copying framework files into projects recreates the fork-and-sync rot this repo exists to eliminate.
+
+Promotion checklist:
+
+1. De-flavor it (see \`docs/NEUTRALITY.md\`) — values move to \`project.json\` reads.
+2. Move the file into the pack/core; bump that plugin's semver.
+3. Delete the project-local copy in the consumer that donated it.`;
+
+const neutralityMd = `# Vendor neutrality policy
+
+\`plugins/**\` must contain **zero** project-specific tokens — no company/product names, no internal repo names, no environment aliases, no cloud regions. Per-project flavor lives in each consumer's \`.claude/project.json\` (schema: \`overlays/_schema/project.schema.json\`; sample: \`overlays/example/\`) and is read at **runtime** by core agents, skills, and hooks.
+
+## Rules
+
+- **Brand tokens** (project/company identity, internal infra names) — forbidden everywhere in \`plugins/**\`.
+- **Domain vocabulary** (e.g. drones for \`uav-pack\`, wearables for \`iot-pack\`) — legitimate *inside its own domain pack*, forbidden in \`core\`.
+- Scripts/hooks read \`\${CLAUDE_PROJECT_DIR}/.claude/project.json\`; never default to a hard-coded path.
+- Prose examples use neutral placeholders (\`apps/<mainApp>\`, \`<device>\`, \`<envAlias>\`) or neutral example domains (\`orders/line-items\`, \`pipelines/job_runs\`).
+- Frontmatter identity is \`swarmery-core\`.
+
+## Checking
+
+\`scripts/scan-flavor.sh\` greps \`plugins/**\` for your token patterns:
+
+\`\`\`bash
+# Put your (private) token regexes next to the repo or in the env:
+echo 'mycompany|my-app|my-env-alias' > .flavor-tokens          # brand family (gitignored)
+echo 'my-domain-noun' > .flavor-tokens-domain                  # domain family (gitignored)
+bash scripts/scan-flavor.sh                                    # target: 0 occurrences
+\`\`\`
+
+Without those files the script falls back to a small example pattern — replace it with your own. Consumers should run this as a CI ratchet: the count must never increase.`;
+
+export const mockDocs: DocDetail[] = [
+  { slug: 'onboarding', title: 'Onboarding', file: 'ONBOARDING.md', markdown: onboardingMd },
+  { slug: 'extending', title: 'Extending', file: 'EXTENDING.md', markdown: extendingMd },
+  { slug: 'neutrality', title: 'Neutrality', file: 'NEUTRALITY.md', markdown: neutralityMd },
+];
 
 // --- Session 1 detail: the subagent showcase (mirrors subagent-session.jsonl)
 
@@ -764,5 +968,27 @@ export const mockApi = {
   async statsToday(): Promise<StatsToday> {
     await delay(100);
     return { ...mockStatsToday };
+  },
+
+  async statsOverview(day: string): Promise<StatsOverview> {
+    await delay(120);
+    return mockStatsOverview(day);
+  },
+
+  async health(): Promise<HealthResponse> {
+    await delay(60);
+    return { ...mockHealth };
+  },
+
+  async docs(): Promise<DocMeta[]> {
+    await delay(90);
+    return mockDocs.map(({ slug, title, file }) => ({ slug, title, file }));
+  },
+
+  async doc(slug: string): Promise<DocDetail> {
+    await delay(110);
+    const found = mockDocs.find((d) => d.slug === slug);
+    if (!found) throw new Error(`mock: doc ${slug} not found`);
+    return { ...found };
   },
 };

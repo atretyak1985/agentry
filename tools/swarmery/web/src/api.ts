@@ -3,9 +3,13 @@
 // declare API types here.
 
 import type {
+  DocDetail,
+  DocMeta,
+  HealthResponse,
   ProjectsResponse,
   SessionDetailResponse,
   SessionsResponse,
+  StatsOverview,
   StatsToday,
 } from './api/types';
 import { mockApi } from './mock/data';
@@ -49,4 +53,25 @@ export function fetchSession(id: number | string): Promise<SessionDetailResponse
 export function fetchStatsToday(): Promise<StatsToday> {
   if (MOCK) return mockApi.statsToday();
   return get('/api/stats/today');
+}
+
+/** Day-scoped overview stats + trailing series (parity contract). */
+export function fetchStatsOverview(day: string): Promise<StatsOverview> {
+  if (MOCK) return mockApi.statsOverview(day);
+  return get(`/api/stats/overview?day=${encodeURIComponent(day)}`);
+}
+
+export function fetchHealth(): Promise<HealthResponse> {
+  if (MOCK) return mockApi.health();
+  return get('/api/health');
+}
+
+export function fetchDocs(): Promise<DocMeta[]> {
+  if (MOCK) return mockApi.docs();
+  return get('/api/docs');
+}
+
+export function fetchDoc(slug: string): Promise<DocDetail> {
+  if (MOCK) return mockApi.doc(slug);
+  return get(`/api/docs/${encodeURIComponent(slug)}`);
 }

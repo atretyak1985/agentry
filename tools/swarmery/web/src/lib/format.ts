@@ -73,3 +73,44 @@ export function fmtAgo(iso: string): string {
 export function fmtTodayHeader(): string {
   return new Date().toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+
+/* ----- day-key helpers (local YYYY-MM-DD, for /api/stats/overview?day=) ----- */
+
+/** Local calendar day of a Date → "2026-07-12". */
+export function isoDay(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Parse a "YYYY-MM-DD" day key as a LOCAL date (not UTC). */
+export function parseDay(day: string): Date {
+  const [y = 1970, m = 1, d = 1] = day.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Shift a "YYYY-MM-DD" day key by ±n days. */
+export function addDays(day: string, delta: number): string {
+  const d = parseDay(day);
+  d.setDate(d.getDate() + delta);
+  return isoDay(d);
+}
+
+/** "2026-07-12" → "Sunday, Jul 12" (day-title header of the Overview). */
+export function fmtDayTitle(day: string): string {
+  return parseDay(day).toLocaleDateString([], {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/** "2026-07-12" → "Sun, Jul 12". */
+export function fmtDayShort(day: string): string {
+  return parseDay(day).toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
