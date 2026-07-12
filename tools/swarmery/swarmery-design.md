@@ -476,5 +476,206 @@ Reporter — теж агент системи, його робота видна 
 4. **Editor + git**: запис файлів, версіонування, rollback, lint.
 5. **Tasks queue**: tasks + запуск headless-сесій (`claude -p --output-format stream-json`).
 6. **Rollups + Analytics**, потім **Evals**.
+7. **Insights + MCP-памʼять** (розділ 5): loop detector → heatmap → MCP-сервер → mining.
+8. **Developer superpowers** (розділ 6): по одному, за ROI.
 
 Схема з п.1 вже містить усі FK для наступних шарів — міграції будуть адитивними (нові таблиці), без переписування ядра.
+
+---
+
+## 5. Фаза 4+: Insights і MCP-памʼять
+
+Усе в цьому розділі будується поверх наявного ядра (`events`, `turns`,
+`file_changes`, `narratives`) — тільки адитивні таблиці й нові read-шляхи,
+ядро не переписується. Дані вже збираються з фази 1; тут вони починають
+працювати на користувача.
+
+### 5.1 Візуалізації
+
+- **Codebase heatmap** — які файли/директорії агенти чіпають найчастіше
+  (агрегат по `file_changes`): гарячі зони = кандидати на рефакторинг,
+  на окремий skill або на жорсткіші boundaries в промптах.
+- **Activity heatmap** — активність по днях тижня × годинах (по `events`),
+  включно з часом, спаленим у `waiting_approval`: видно і власний розклад
+  роботи з агентами, і де сесії простоюють, чекаючи людину.
+- **Cost Sankey** — потік вартості: проєкт → сесія → агент/субагент → модель.
+  Одна діаграма відповідає на "куди течуть гроші" краще за десять таблиць.
+- **Agent quality curve** — success-rate / revert-rate агента в часі
+  з анотаціями версій (`agent_versions`): видно, яка саме зміна промпта
+  покращила чи зламала агента.
+
+### 5.2 Pattern mining
+
+- **Loop detector (real-time).** Демон дивиться на хвіст `events` живої
+  сесії: N повторів циклу edit→test→fail по тих самих файлах = аномалія →
+  рядок в `anomalies` + push-нотифікація. Це єдиний детектор, що працює
+  live: є шанс зупинити сесію до того, як вона спалить бюджет.
+- **Repeated-instruction mining.** `user_prompt`-и кластеризуються
+  (embeddings або дешева модель): "ти написав це 14 разів — додати
+  в CLAUDE.md чи зробити skill?" Результат — `instruction_clusters`
+  з лічильником повторів і запропонованою дією.
+- **Context-waste detector.** Сесії, де підвантажений контекст (роздутий
+  CLAUDE.md, зайві rules) домінує над корисною роботою — кандидати
+  на чистку; звʼязується з findings лінтера (`config_lint_findings`).
+
+```sql
+-- ============ Insights (фаза 4+): аномалії та кластери інструкцій ============
+
+CREATE TABLE anomalies (
+    id          INTEGER PRIMARY KEY,
+    session_id  INTEGER NOT NULL REFERENCES sessions(id),
+    kind        TEXT NOT NULL,               -- loop | context_waste | cost_spike
+    detected_at TEXT NOT NULL,
+    window_start_event_id INTEGER REFERENCES events(id),
+    window_end_event_id   INTEGER REFERENCES events(id),
+    score       REAL,                        -- впевненість детектора 0..1
+    details     TEXT,                        -- JSON: файли циклу, лічильники повторів
+    notified    INTEGER NOT NULL DEFAULT 0,  -- push уже надіслано
+    resolved_at TEXT                         -- людина подивилась/закрила
+);
+CREATE INDEX idx_anomalies_session ON anomalies(session_id, detected_at);
+CREATE INDEX idx_anomalies_open    ON anomalies(kind, resolved_at);
+
+CREATE TABLE instruction_clusters (
+    id           INTEGER PRIMARY KEY,
+    project_id   INTEGER REFERENCES projects(id),  -- NULL = крос-проєктний патерн
+    label        TEXT NOT NULL,              -- людський підпис кластера
+    example_text TEXT NOT NULL,              -- репрезентативний промпт
+    occurrences  INTEGER NOT NULL DEFAULT 0,
+    first_seen   TEXT NOT NULL,
+    last_seen    TEXT NOT NULL,
+    suggestion   TEXT,                       -- claude_md | skill | ignore
+    status       TEXT NOT NULL DEFAULT 'open'  -- open | actioned | dismissed
+);
+CREATE INDEX idx_ic_status ON instruction_clusters(status, occurrences DESC);
+```
+
+### 5.3 MCP-сервер: памʼять для агентів
+
+`swarmery mcp` — stdio-процес з read-only доступом до SQLite. Claude Code
+підключає його як звичайний MCP-сервер — і кожен агент отримує памʼять
+про минулі сесії, рішення і фейли, якої не має жоден свіжий контекст.
+
+Tools v1:
+
+- `search_past_sessions` — повнотекстовий пошук (FTS5) по промптах і наративах
+- `get_decisions` — минулі рішення з `narratives.summary_json` (decisions[])
+  по темі/файлу
+- `who_touched` — хто/коли/навіщо чіпав файл (`file_changes` + сесії)
+- `get_failures` — минулі провали по темі: що ламалось і чим закінчилось
+- `get_project_conventions` — вижимка конвенцій проєкту, накопичених у наративах
+
+Правила:
+
+- Відповіді компактні і token-limited: MCP-виклик не має роздувати контекст
+  сесії, яка ним користується.
+- Та сама редакція секретів, що й на ingest, — назовні не виходить нічого,
+  чого немає права бачити транскрипту.
+- Кожен MCP-виклик пишеться в `events` (телеметрія): в Analytics зʼявляється
+  зріз "сесії з памʼяттю vs без" — чи справді памʼять покращує метрики,
+  а не просто гріє контекст.
+
+### 5.4 Predictions
+
+kNN по embeddings завершених задач — без ML-інфраструктури:
+
+- **Оцінка нової задачі**: ~час, ~вартість, ризик потрапити
+  в needs_review/failed — по найближчих сусідах серед минулих задач.
+- **Budget alerts**: прогноз перевитрати бюджету за поточним темпом.
+- **Cost anomalies**: сесія коштує ×3 від подібних — сигнал подивитись,
+  ще до того, як спрацює loop detector.
+
+---
+
+## 6. Developer superpowers (фаза 5+)
+
+Кожен пункт — окрема, незалежно доставлювана фіча поверх наявних даних.
+Впроваджуються по одному, за ROI (пріоритет — наприкінці розділу).
+
+### 6.1 Conflict radar
+
+Паралельні сесії, що чіпають ті самі файли: join `file_changes` по
+`file_path` серед активних сесій. Шляхи нормалізуються worktree → parent
+repo, щоб `/wt-feature/src/x.ts` і `/repo/src/x.ts` рахувались одним файлом.
+Попередження в Overview до того, як виникне merge-конфлікт.
+
+### 6.2 Session-scoped revert
+
+З `file_changes` сесії будується revert-patch; на старті сесії —
+auto-checkpoint (git tag або stash). Відмінність від `/rewind` у Claude Code:
+працює **після** завершення сесії, крос-сесійно і з дашборда — не потрібен
+живий REPL тієї самої сесії.
+
+### 6.3 Model routing advisor
+
+По історії: задачі цього класу дешевша модель закриває з тим самим
+success-rate → підказка при створенні задачі "цю можна на дешевшій моделі".
+Просто читає `tasks` + `turns` (модель, вартість, reverted) — жодного
+нового збору даних.
+
+### 6.4 Relay handoff
+
+Передача задачі між сесіями/агентами без перечитування повного транскрипта:
+сесія, що зупиняється, лишає компактний пакет (контекст, що зроблено,
+що лишилось, відкриті питання) → наступна стартує з нього.
+
+```sql
+-- ============ Superpowers (фаза 5+): handoff між сесіями ============
+
+CREATE TABLE handoff_packets (
+    id              INTEGER PRIMARY KEY,
+    task_id         INTEGER REFERENCES tasks(id),
+    from_session_id INTEGER NOT NULL REFERENCES sessions(id),
+    to_session_id   INTEGER REFERENCES sessions(id), -- NULL, поки не підхоплено
+    packet_json     TEXT NOT NULL,           -- {context, done[], remaining[],
+                    -- open_questions[]} — генерує Reporter-пайплайн
+    created_at      TEXT NOT NULL,
+    consumed_at     TEXT
+);
+CREATE INDEX idx_handoff_open ON handoff_packets(task_id, consumed_at);
+```
+
+### 6.5 Quality gates
+
+`gates.yaml` у проєкті: перелік перевірок (tests pass, lint clean,
+відсутність out-of-scope змін, diff ≤ N рядків). Демон проганяє gates
+по done-задачі; результати пишуться в `task_checklist_items`
+з `checked_by='gate'`; failed gate → задача повертається в `needs_review`.
+Людська оцінка (`result_note`) лишається фінальним словом.
+
+### 6.6 Playbooks
+
+Багатокрокові сценарії (release, dependency bump, security patch):
+послідовність spec-driven задач із залежностями; кожен крок — звичайний
+рядок у `tasks`, тож увесь наявний конвеєр (черга, checklist, звіти,
+gates) працює без змін.
+
+```sql
+-- ============ Superpowers (фаза 5+): playbooks ============
+
+CREATE TABLE playbooks (
+    id          INTEGER PRIMARY KEY,
+    project_id  INTEGER REFERENCES projects(id), -- NULL = глобальний
+    name        TEXT NOT NULL,
+    definition  TEXT NOT NULL,             -- YAML/JSON: кроки, залежності,
+                -- шаблони промптів (Context/Objective/Boundaries/Validation)
+    created_at  TEXT NOT NULL,
+    UNIQUE(project_id, name)
+);
+
+-- Адитивна міграція: крок playbook-а знає свій playbook
+ALTER TABLE tasks ADD COLUMN playbook_id INTEGER REFERENCES playbooks(id);
+```
+
+### 6.7 Git/PR linkage
+
+Звʼязка сесія → commit → PR: commit-події вже є в `events`; додатково
+інджестяться pr-link записи (у MVP свідомо ignored). У Session detail
+і звітах зʼявляються лінки на PR; статус PR-review повертається в task
+як зовнішній сигнал якості — поруч із gates і людською оцінкою.
+
+---
+
+Пріоритет впровадження (за ROI, по одному): loop detector → conflict radar →
+session revert → MCP memory → quality gates → playbooks → model routing →
+relay handoff → mining → git/PR linkage.
