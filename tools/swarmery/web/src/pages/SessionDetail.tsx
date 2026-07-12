@@ -1,5 +1,5 @@
-// Session detail (design §3.3, MVP scope): header with status/model/token/cost
-// facts, then ONLY the Timeline and Diffs tabs (Context and Tree are later
+// Session detail (design §3.3): header with status/model/token/cost facts,
+// then the Timeline, Diffs, and Chat tabs (Context and Tree are later
 // phases). Live: session_updated merges header state; event_appended is
 // attributed via its sessionId and appended to the open timeline.
 
@@ -12,6 +12,7 @@ import { useLiveUpdates } from '../lib/ws';
 import { ErrorBox, Loading } from '../components/ui';
 import { Timeline } from './detail/Timeline';
 import { Diffs } from './detail/Diffs';
+import { Chat } from './detail/Chat';
 import { SummaryChips } from './detail/SummaryChips';
 
 const STATUS_TONES: Record<SessionStatus, string> = {
@@ -22,7 +23,7 @@ const STATUS_TONES: Record<SessionStatus, string> = {
   killed: 'text-red',
 };
 
-type Tab = 'timeline' | 'diffs';
+type Tab = 'timeline' | 'diffs' | 'chat';
 
 function Kv({ label, value, tone = 'text-ink' }: { label: string; value: string; tone?: string }): JSX.Element {
   return (
@@ -140,9 +141,14 @@ export function SessionDetailPage(): JSX.Element {
         <TabButton active={tab === 'diffs'} onClick={() => setTab('diffs')}>
           {`Diffs${diffCount > 0 ? ` · ${diffCount}` : ''}`}
         </TabButton>
+        <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>
+          Chat
+        </TabButton>
       </div>
 
-      {tab === 'timeline' ? <Timeline detail={detail} /> : <Diffs changes={detail.fileChanges} />}
+      {tab === 'timeline' && <Timeline detail={detail} />}
+      {tab === 'diffs' && <Diffs changes={detail.fileChanges} />}
+      {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
     </>
   );
 }

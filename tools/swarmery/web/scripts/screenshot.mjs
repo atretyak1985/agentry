@@ -53,6 +53,13 @@ await shot(mobile, '/sessions', 'sessions.png');
 await shot(mobile, '/sessions/1', 'session-detail-timeline.png', { fullPage: true });
 // Viewport-only shot: agents/skills summary chips visible without scrolling.
 await shot(mobile, '/sessions/1', 'session-detail-chips.png');
+// Chat tab: the conversation view (user bubbles + assistant markdown prose).
+// force: the live mock WS keeps appending events, shifting layout mid-click.
+await mobile.getByRole('tab', { name: 'Chat' }).click({ force: true });
+await mobile.getByRole('tab', { name: 'Chat' }).scrollIntoViewIfNeeded();
+await mobile.waitForTimeout(300);
+await mobile.screenshot({ path: join(outDir, 'session-detail-chat.png') });
+console.log('✓ session-detail-chat.png');
 await mobile.getByRole('tab', { name: /Diffs/ }).click();
 await mobile.waitForTimeout(300);
 await mobile.screenshot({ path: join(outDir, 'session-detail-diffs.png'), fullPage: true });

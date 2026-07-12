@@ -172,6 +172,30 @@ export const mockStatsToday: StatsToday = {
 
 // --- Session 1 detail: the subagent showcase (mirrors subagent-session.jsonl)
 
+const s1AssistantText = `I'll port both templates to the provider v2 API. Here's the plan:
+
+## What changed in v2
+
+- **Single template document** per template — locales render from one doc instead of a part per locale
+- \`CreateTemplate\` is replaced by \`CreateEmailTemplate\` with a typed request
+- Old v1 template names remain valid as *aliases* until the next release
+
+I delegated the port to the **backend-tests** agent. The first test run failed:
+
+\`\`\`
+FAIL: TestRenderOrderConfirmation — missing field .VendorName (exit 1)
+\`\`\`
+
+The v2 request schema requires \`VendorName\` on order events; the fixture predates the field. After adding it to \`providerv2.go\` the suite is green:
+
+1. \`internal/mail/providerv2.go\` — new v2 client wrapper (+70 −1)
+2. \`internal/mail/templates.go\` — locale loop replaced with one template doc (+18 −41)
+3. \`internal/mail/render_test.go\` — vendor-name assertion (+12 −3)
+
+Backwards compatibility is preserved: old event payloads without \`VendorName\` fall back to the account display name, so nothing breaks for queued v1 events.
+
+Ready for the full suite whenever you are.`;
+
 const s1Turns: Turn[] = [
   {
     id: 11,
@@ -186,6 +210,7 @@ const s1Turns: Turn[] = [
     tokensCacheRead: null,
     tokensCacheWrite: null,
     costUsd: null,
+    text: 'Port the order-confirmation and vendor-notify templates to the provider v2 API. Keep backwards compatibility with old event payloads.',
   },
   {
     id: 12,
@@ -200,6 +225,7 @@ const s1Turns: Turn[] = [
     tokensCacheRead: 220_000,
     tokensCacheWrite: 18_000,
     costUsd: 0.61,
+    text: s1AssistantText,
   },
   {
     id: 13,
@@ -214,6 +240,7 @@ const s1Turns: Turn[] = [
     tokensCacheRead: null,
     tokensCacheWrite: null,
     costUsd: null,
+    text: 'Looks good — run the full suite and commit.',
   },
   {
     id: 14,
@@ -228,6 +255,8 @@ const s1Turns: Turn[] = [
     tokensCacheRead: 61_000,
     tokensCacheWrite: 4_000,
     costUsd: 0.23,
+    // No prose yet (running turn) — the Chat tab shows only the tool one-liner.
+    text: null,
   },
 ];
 
@@ -516,6 +545,7 @@ const s2Turns: Turn[] = [
     tokensCacheRead: null,
     tokensCacheWrite: null,
     costUsd: null,
+    text: 'Analyze the agent system and summarize orchestration.',
   },
   {
     id: 22,
@@ -530,6 +560,7 @@ const s2Turns: Turn[] = [
     tokensCacheRead: 98_000,
     tokensCacheWrite: 6_000,
     costUsd: 0.34,
+    text: 'I fanned the analysis out to five *general-purpose* agents, one per subsystem. Early signal: orchestration is **queue-driven** — the planner emits tasks, workers claim them via `claimNextTask()`, and the reviewer gates every merge.',
   },
 ];
 
@@ -610,7 +641,7 @@ function simpleDetail(session: Session, events: Event[], turns: Turn[]): Session
   return { ...session, turns, events, fileChanges: [] };
 }
 
-function promptTurn(id: number, seq: number, ts: string): Turn {
+function promptTurn(id: number, seq: number, ts: string, text: string | null): Turn {
   return {
     id,
     seq,
@@ -624,6 +655,7 @@ function promptTurn(id: number, seq: number, ts: string): Turn {
     tokensCacheRead: null,
     tokensCacheWrite: null,
     costUsd: seq % 2 === 0 ? 0.11 : null,
+    text,
   };
 }
 
@@ -639,8 +671,15 @@ function buildDetails(): Map<number, SessionDetail> {
   }
   let eventId = 500;
   for (const session of mockSessions.slice(2)) {
-    const t1 = promptTurn(session.id * 10 + 1, 1, session.startedAt);
-    const t2 = promptTurn(session.id * 10 + 2, 2, session.startedAt);
+    const t1 = promptTurn(session.id * 10 + 1, 1, session.startedAt, session.title);
+    const t2 = promptTurn(
+      session.id * 10 + 2,
+      2,
+      session.startedAt,
+      session.status === 'killed'
+        ? null
+        : `Starting from \`README.md\` and a quick \`git status\` — I'll report back once I've mapped the task.`,
+    );
     const events: Event[] = [
       {
         id: (eventId += 1),
