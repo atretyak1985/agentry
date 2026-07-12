@@ -139,6 +139,11 @@ type ingester struct {
 	// live-pipeline bookkeeping (consumed by the event bus after commit).
 	sessionCreated bool
 	newEventIDs    []int64
+	// Existing event rows whose duration was refined this run (async subagent
+	// reconcile). They were already broadcast once with the stale launch
+	// roundtrip (~0.1s) — the pipeline re-publishes them so live clients can
+	// replace their copies.
+	updatedEventIDs []int64
 
 	// pending tool_use calls awaiting their tool_result (keyed by toolu_… id).
 	pending map[string]*pendingTool
@@ -878,11 +883,20 @@ func (in *ingester) reconcileAsyncSubagent(parentID int64, lastTS string) error 
 	if d <= 0 {
 		return nil
 	}
-	_, err = in.tx.Exec(
+	res, err := in.tx.Exec(
 		`UPDATE events SET duration_ms = ?
 		 WHERE id IN (?, ?) AND (duration_ms IS NULL OR duration_ms < ?)`,
 		d, parentID, stopID, d)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		// Both rows were already pushed over WS with the launch roundtrip
+		// duration — mark them for re-broadcast so open dashboards don't keep
+		// showing "· 0.1s" agent pills until a reload.
+		in.updatedEventIDs = append(in.updatedEventIDs, parentID, stopID)
+	}
+	return nil
 }
 
 // ── row helpers ──────────────────────────────────────────────────────────────

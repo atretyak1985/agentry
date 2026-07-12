@@ -180,6 +180,12 @@ func (p *Pipeline) tailOne(path string, logPickup bool) {
 	for _, id := range res.NewEventIDs {
 		p.bus.Publish(Notification{Type: NoteEventAppended, SessionID: res.SessionID, EventID: id})
 	}
+	// Refined rows (async subagent duration reconcile) were already broadcast
+	// once with the launch roundtrip duration — re-publish so live clients
+	// replace their stale copies instead of showing "0.1s" pills forever.
+	for _, id := range res.UpdatedEventIDs {
+		p.bus.Publish(Notification{Type: NoteEventAppended, SessionID: res.SessionID, EventID: id})
+	}
 }
 
 // rescan is the 2s safety net: stat every discovered file and tail the ones
