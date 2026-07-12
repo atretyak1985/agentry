@@ -225,6 +225,84 @@ func TestTailSidechainBeforeMainAdoptsOrphans(t *testing.T) {
 	}
 }
 
+// TestTailAsyncReconcileRepublishesRefinedEvents: the main-transcript batch
+// closes an async Agent's subagent_stop with the launch roundtrip (~150ms —
+// the "⬡ general-purpose · 0.1s" pill) and broadcasts it; when a later
+// sidechain batch reconciles the real duration, the refined start/stop rows
+// must be reported in UpdatedEventIDs so the pipeline re-publishes them —
+// otherwise live dashboards keep the stale 0.1s copy until a reload.
+func TestTailAsyncReconcileRepublishesRefinedEvents(t *testing.T) {
+	db := testDB(t)
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "background-agent-session.jsonl")
+	sidePath := filepath.Join(dir, "background-agent-session", "subagents", "agent-ba09fe87dc65ba43a.jsonl")
+	for src, dst := range map[string]string{
+		filepath.Join(fixtures, "background-agent-session.jsonl"):                                             mainPath,
+		filepath.Join(fixtures, "background-agent-session", "subagents", "agent-ba09fe87dc65ba43a.jsonl"):     sidePath,
+		filepath.Join(fixtures, "background-agent-session", "subagents", "agent-ba09fe87dc65ba43a.meta.json"): sidePath[:len(sidePath)-len(".jsonl")] + ".meta.json",
+	} {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, dst, string(b))
+	}
+
+	// 1. Main first: the async tool_result closes start/stop with the launch
+	// roundtrip (12:00:05.000 → 12:00:05.150 = 150ms). Nothing to refine yet.
+	res1, err := TailFile(db, mainPath, Thresholds{})
+	if err != nil {
+		t.Fatalf("tail main: %v", err)
+	}
+	if len(res1.UpdatedEventIDs) != 0 {
+		t.Errorf("main pass UpdatedEventIDs = %v, want none (no sidechain rows yet)", res1.UpdatedEventIDs)
+	}
+	var startID, stopID, stopDuration int64
+	if err := db.QueryRow(`SELECT id FROM events WHERE type='subagent_start'`).Scan(&startID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(
+		`SELECT id, duration_ms FROM events WHERE type='subagent_stop'`).Scan(&stopID, &stopDuration); err != nil {
+		t.Fatal(err)
+	}
+	if stopDuration != 150 {
+		t.Fatalf("stop duration_ms after main = %d, want 150 (launch roundtrip)", stopDuration)
+	}
+
+	// 2. Sidechain arrives: reconcile refines both rows to the sidechain span
+	// (12:00:05.000 → 12:20:05.000 = 20 min) and reports them for re-publish.
+	res2, err := TailFile(db, sidePath, Thresholds{})
+	if err != nil {
+		t.Fatalf("tail sidechain: %v", err)
+	}
+	wantIDs := map[int64]bool{startID: false, stopID: false}
+	for _, id := range res2.UpdatedEventIDs {
+		if _, ok := wantIDs[id]; ok {
+			wantIDs[id] = true
+		}
+	}
+	if !wantIDs[startID] || !wantIDs[stopID] {
+		t.Errorf("UpdatedEventIDs = %v, want both start %d and stop %d", res2.UpdatedEventIDs, startID, stopID)
+	}
+	const wantDuration = 20 * 60 * 1000
+	if err := db.QueryRow(
+		`SELECT duration_ms FROM events WHERE type='subagent_stop'`).Scan(&stopDuration); err != nil {
+		t.Fatal(err)
+	}
+	if stopDuration != wantDuration {
+		t.Errorf("stop duration_ms after sidechain = %d, want %d", stopDuration, wantDuration)
+	}
+
+	// 3. No-op pass: nothing new, nothing re-published.
+	res3, err := TailFile(db, sidePath, Thresholds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res3.UpdatedEventIDs) != 0 {
+		t.Errorf("no-op pass UpdatedEventIDs = %v, want none", res3.UpdatedEventIDs)
+	}
+}
+
 // fixtureRoot builds a temp projects root mirroring ~/.claude/projects layout
 // from the committed fixtures (main transcripts + sidechain companion).
 func fixtureRoot(t *testing.T) string {
@@ -287,6 +365,47 @@ func TestRepeatedBackfillNoDuplicates(t *testing.T) {
 
 // TestCorruptFileDoesNotStopScanner: a binary-garbage file and an unreadable
 // file must be skipped/counted while every healthy file is still ingested.
+// TestBackfillHealsNullProjectNames: rows written before display names
+// existed (name IS NULL) are healed to base(path) by the next Backfill pass
+// (i.e. within seconds of a daemon restart), while a non-NULL name — a future
+// rename UI — is never overwritten.
+func TestBackfillHealsNullProjectNames(t *testing.T) {
+	db := testDB(t)
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Legacy row: NULL name, real path.
+	mustExec(`INSERT INTO projects (path, slug, first_seen) VALUES (?, ?, ?)`,
+		"/Volumes/Work/swarmery", "-Volumes-Work-swarmery", "2026-07-10T12:00:00Z")
+	// Renamed row: user-chosen name must survive.
+	mustExec(`INSERT INTO projects (path, slug, name, first_seen) VALUES (?, ?, ?, ?)`,
+		"/Users/user/work/orders-api", "-Users-user-work-orders-api", "Orders API", "2026-07-10T12:00:00Z")
+
+	// Empty projects root: no transcripts change, so healing must not depend
+	// on any file being re-ingested.
+	NewPipeline(db, Config{ProjectsRoot: t.TempDir()}, nil).Backfill(context.Background())
+
+	var healed string
+	if err := db.QueryRow(
+		`SELECT name FROM projects WHERE path = '/Volumes/Work/swarmery'`).Scan(&healed); err != nil {
+		t.Fatal(err)
+	}
+	if healed != "swarmery" {
+		t.Errorf("healed name = %q, want %q", healed, "swarmery")
+	}
+	var kept string
+	if err := db.QueryRow(
+		`SELECT name FROM projects WHERE path = '/Users/user/work/orders-api'`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != "Orders API" {
+		t.Errorf("non-NULL name overwritten: got %q, want %q", kept, "Orders API")
+	}
+}
+
 func TestCorruptFileDoesNotStopScanner(t *testing.T) {
 	db := testDB(t)
 	root := fixtureRoot(t)

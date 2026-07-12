@@ -22,6 +22,9 @@ type TailResult struct {
 	Lines          int     // parseable records processed this pass
 	SkippedLines   int     // malformed lines skipped this pass
 	NewEventIDs    []int64 // events created this pass, in insert order
+	// Existing events whose duration was refined this pass (async subagent
+	// reconcile) — re-published so live clients replace their stale copies.
+	UpdatedEventIDs []int64
 	StartOffset    int64   // byte offset the pass started reading from
 	NextOffset     int64   // byte offset persisted after the pass
 	Reset          bool    // offset was reset to 0 (recreated/truncated file)
@@ -131,6 +134,7 @@ func TailFile(db *sql.DB, path string, th Thresholds) (TailResult, error) {
 	res.SessionCreated = ing.sessionCreated
 	res.Lines = len(recs)
 	res.NewEventIDs = ing.newEventIDs
+	res.UpdatedEventIDs = ing.updatedEventIDs
 	res.NextOffset = start + consumed
 	for i := len(recs) - 1; i >= 0; i-- {
 		if recs[i].Timestamp != "" {

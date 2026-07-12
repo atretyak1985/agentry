@@ -1,15 +1,16 @@
-// Session detail (Redesign parity): header with status/model facts and
-// TOKENS/COST/ERRORS numerals top-right, then the Timeline, Diffs, and Chat
-// tabs beside a desktop right rail (agents / skills / files changed; mobile
-// keeps the SummaryChips strip). Live: session_updated merges header state;
-// event_appended is attributed via its sessionId and appended to the open
-// timeline.
+// Session detail (Redesign parity): the header block (breadcrumb, title,
+// facts row, TOKENS/COST/ERRORS numerals, tab strip) is PINNED — only the tab
+// content (Chat | Timeline | Diffs, Chat first and default) scrolls, and the
+// desktop right rail (agents / skills / files changed) scrolls in its own
+// column. Tabs deep-link via ?tab=timeline|diffs. Live: session_updated
+// merges header state; event_appended is attributed via its sessionId and
+// appended (or, for refined durations, replaced in place) on the open detail.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { SessionDetail, SessionStatus, WSMessage } from '../api/types';
 import { fetchSession } from '../api';
-import { fmtAgo, fmtCost, fmtDateTime, fmtSpan, fmtTokens } from '../lib/format';
+import { fmtAgo, fmtCost, fmtDateTime, fmtSpan, fmtTokens, projectLabel } from '../lib/format';
 import { useLiveUpdates } from '../lib/ws';
 import { ErrorBox, Loading } from '../components/ui';
 import { Timeline } from './detail/Timeline';
@@ -26,7 +27,12 @@ const STATUS_TONES: Record<SessionStatus, string> = {
   killed: 'text-red',
 };
 
-type Tab = 'timeline' | 'diffs' | 'chat';
+type Tab = 'chat' | 'timeline' | 'diffs';
+
+/** ?tab=timeline|diffs deep-links; anything else (or absent) is the Chat default. */
+function parseTab(value: string | null): Tab {
+  return value === 'timeline' || value === 'diffs' ? value : 'chat';
+}
 
 function Kv({ label, value, tone = 'text-ink' }: { label: string; value: string; tone?: string }): JSX.Element {
   return (
@@ -40,7 +46,11 @@ export function SessionDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('timeline');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseTab(searchParams.get('tab'));
+  const setTab = (next: Tab): void => {
+    setSearchParams(next === 'chat' ? {} : { tab: next }, { replace: true });
+  };
 
   const load = useCallback((): void => {
     if (id === undefined) return;
@@ -65,10 +75,16 @@ export function SessionDetailPage(): JSX.Element {
         return msg.payload.id === prev.id ? { ...prev, ...msg.payload } : prev;
       }
       // event_appended: attributed directly via the payload's sessionId
-      // (step-10 contract change).
+      // (step-10 contract change). A known id is a re-broadcast of a refined
+      // row (async subagent duration reconcile) — replace it in place.
       const { sessionId, event } = msg.payload;
       if (sessionId !== prev.id) return prev;
-      if (prev.events.some((e) => e.id === event.id)) return prev;
+      const idx = prev.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) {
+        const events = prev.events.slice();
+        events[idx] = event;
+        return { ...prev, events };
+      }
       return { ...prev, events: [...prev.events, event] };
     });
   }, []);
@@ -113,14 +129,14 @@ export function SessionDetailPage(): JSX.Element {
   const diffCount = detail.fileChanges.length;
 
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col">
       <div className="mb-2.5 flex items-center gap-2 pt-0.5 text-[12px] text-ink-dim">
         <Link to="/sessions" className="shrink-0 transition-colors hover:text-ink">
           ← Sessions
         </Link>
         <span aria-hidden="true">/</span>
         <span className="truncate font-mono text-[11px] text-brand">
-          {detail.projectSlug}
+          {projectLabel(detail.projectName, detail.projectSlug)}
           {detail.gitBranch !== null ? ` · ${detail.gitBranch}` : ''}
         </span>
       </div>
@@ -154,30 +170,37 @@ export function SessionDetailPage(): JSX.Element {
       </div>
 
       {/* Mobile at-a-glance strip; the desktop rail replaces it at ≥1280px. */}
-      <div className="wide:hidden">
+      <div className="shrink-0 wide:hidden">
         <SummaryChips events={detail.events} />
       </div>
 
-      <div className="mt-4 wide:grid wide:grid-cols-[minmax(0,1fr)_300px] wide:items-start wide:gap-6">
-        <div className="min-w-0">
-          <div className="flex gap-0.5 border-b border-line" role="tablist">
+      {/* Only this region scrolls: the tab panel (and, ≥1280px, the rail in
+          its own column) — breadcrumb/title/facts/tab strip stay pinned. */}
+      <div className="mt-4 flex min-h-0 flex-1 flex-col wide:grid wide:grid-cols-[minmax(0,1fr)_300px] wide:grid-rows-[minmax(0,1fr)] wide:gap-6">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 gap-0.5 border-b border-line" role="tablist">
+            <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>
+              Chat
+            </TabButton>
             <TabButton active={tab === 'timeline'} onClick={() => setTab('timeline')}>
               Timeline
             </TabButton>
             <TabButton active={tab === 'diffs'} onClick={() => setTab('diffs')}>
               {`Diffs${diffCount > 0 ? ` · ${diffCount}` : ''}`}
             </TabButton>
-            <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>
-              Chat
-            </TabButton>
           </div>
 
-          {tab === 'timeline' && <Timeline detail={detail} />}
-          {tab === 'diffs' && <Diffs changes={detail.fileChanges} />}
-          {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
+          <div
+            role="tabpanel"
+            className="min-h-0 flex-1 overflow-y-auto [-webkit-overflow-scrolling:touch]"
+          >
+            {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
+            {tab === 'timeline' && <Timeline detail={detail} />}
+            {tab === 'diffs' && <Diffs changes={detail.fileChanges} />}
+          </div>
         </div>
 
-        <div className="hidden wide:block">
+        <div className="hidden min-h-0 wide:block wide:overflow-y-auto">
           <DetailRail
             events={detail.events}
             fileChanges={detail.fileChanges}
@@ -185,7 +208,7 @@ export function SessionDetailPage(): JSX.Element {
           />
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

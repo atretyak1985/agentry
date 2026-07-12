@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import type { Session } from '../api/types';
-import { fmtSpan, fmtTime } from '../lib/format';
-import { LiveDot, StatusChip } from './ui';
+import { projectColor } from '../lib/colors';
+import { fmtSpan, fmtTime, projectLabel } from '../lib/format';
+import { DurationPill, LiveDot, SESSION_ROW_GRID, StatusChip } from './ui';
 
 function meta(session: Session): string {
   const parts: string[] = [];
@@ -27,6 +28,17 @@ const CARD_BORDERS: Partial<Record<Session['status'], string>> = {
   waiting_approval: 'border-amber/35 hover:border-amber/70',
 };
 
+/** Small project accent dot (stable color by slug). */
+function ProjectDot({ slug }: { slug: string }): JSX.Element {
+  return (
+    <span
+      className="h-1.5 w-1.5 shrink-0 rounded-full"
+      style={{ background: projectColor(slug) }}
+      aria-hidden="true"
+    />
+  );
+}
+
 export function SessionCard({
   session,
   now = null,
@@ -38,22 +50,17 @@ export function SessionCard({
   /** Row inside a grouped list card (no own border — hover fill instead). */
   flat?: boolean;
 }): JSX.Element {
-  const shell = flat
-    ? 'block px-3.5 py-[11px] transition-colors hover:bg-surface2'
-    : `mb-2.5 block rounded-xl border bg-surface px-3.5 py-[11px] transition-colors ${
-        CARD_BORDERS[session.status] ?? 'border-line hover:border-ink-dim/50'
-      }`;
-  return (
-    <Link
-      to={`/sessions/${session.id}`}
-      className={`${shell} focus-visible:outline-2 focus-visible:outline-brand`}
-    >
+  const liveNow = now !== null && NOW_STATUSES.has(session.status);
+
+  /* Stacked card — standalone cards and the <900px rows inside day groups. */
+  const card = (
+    <>
       <div className="flex items-center gap-2">
         <LiveDot status={session.status} />
         <span
           className={`min-w-0 flex-1 truncate font-mono text-[11px] ${flat ? 'text-ink-3' : 'text-ink'}`}
         >
-          {session.projectSlug}
+          {projectLabel(session.projectName, session.projectSlug)}
         </span>
         <StatusChip status={session.status} suffix={chipSuffix(session)} />
       </div>
@@ -61,9 +68,64 @@ export function SessionCard({
         {session.title ?? session.sessionUuid}
       </div>
       <div className="truncate font-mono text-[11px] text-ink-dim">{meta(session)}</div>
-      {now !== null && NOW_STATUSES.has(session.status) && (
+      {liveNow && (
         <div className="mt-[3px] truncate font-mono text-[10.5px] text-green">now: {now}</div>
       )}
+    </>
+  );
+
+  if (!flat) {
+    return (
+      <Link
+        to={`/sessions/${session.id}`}
+        className={`mb-2.5 block rounded-xl border bg-surface px-3.5 py-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-brand ${
+          CARD_BORDERS[session.status] ?? 'border-line hover:border-ink-dim/50'
+        }`}
+      >
+        {card}
+      </Link>
+    );
+  }
+
+  /* Flat rows: mobile keeps the stacked card; ≥900px renders the aligned
+   * table row (Redesign sessions grid — one column template per day group). */
+  return (
+    <Link
+      to={`/sessions/${session.id}`}
+      className="block transition-colors hover:bg-surface2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+    >
+      <div className="px-3.5 py-[11px] desk:hidden">{card}</div>
+      <div className={`hidden items-center gap-3 px-3.5 py-[9px] desk:grid ${SESSION_ROW_GRID}`}>
+        <span className="flex justify-center">
+          <LiveDot status={session.status} />
+        </span>
+        <span className="flex min-w-0 items-center gap-[7px]">
+          <ProjectDot slug={session.projectSlug} />
+          <span className="truncate font-mono text-[11px] text-ink-3">
+            {projectLabel(session.projectName, session.projectSlug)}
+          </span>
+        </span>
+        <span className="min-w-0">
+          <span
+            className={`block truncate text-[13px] ${
+              session.title === null ? 'font-normal text-ink-dim italic' : 'font-semibold text-ink'
+            }`}
+          >
+            {session.title ?? '(no title)'}
+          </span>
+          {liveNow && (
+            <span className="block truncate font-mono text-[10.5px] text-green">now: {now}</span>
+          )}
+        </span>
+        <span className="truncate font-mono text-[11px] text-ink-dim">{session.model ?? '—'}</span>
+        <span className="truncate font-mono text-[11px] text-ink-dim">
+          {session.gitBranch ?? '—'}
+        </span>
+        <span className="font-mono text-[11px] text-ink-3">{fmtTime(session.startedAt)}</span>
+        <span className="justify-self-end">
+          <DurationPill status={session.status} startedAt={session.startedAt} endedAt={session.endedAt} />
+        </span>
+      </div>
     </Link>
   );
 }

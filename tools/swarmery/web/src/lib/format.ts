@@ -13,13 +13,27 @@ export function fmtCost(n: number | null): string {
   return `$${n.toFixed(2)}`;
 }
 
+/**
+ * Clean project display label: prefer the project name, fall back to the
+ * slug ("-Volumes-Work-swarmery") only while the name is still unset.
+ */
+export function projectLabel(name: string | null | undefined, slug: string): string {
+  return name != null && name !== '' ? name : slug;
+}
+
 /** Duration in ms → "0.3s" / "8.4s" / "4m 12s". */
 export function fmtDurationMs(ms: number | null): string {
   if (ms === null) return '';
   if (ms < 100) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
+  // 59 950–59 999 would render "60.0s" — treat as minute territory instead.
+  if (ms < 59_950) return `${(ms / 1000).toFixed(1)}s`;
+  let m = Math.floor(ms / 60_000);
+  let s = Math.round((ms % 60_000) / 1000);
+  if (s === 60) {
+    // Seconds rounding must carry into minutes: 479 700ms is "8m 00s", not "7m 60s".
+    m += 1;
+    s = 0;
+  }
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 

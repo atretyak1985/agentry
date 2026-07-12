@@ -4,14 +4,85 @@
 
 import type { ReactNode } from 'react';
 import type { SessionStatus } from '../api/types';
+import { fmtSpan } from '../lib/format';
+
+/* ----- shared eyebrow rhythm — one token for every section heading -----
+ * Redesign h2 spec: margin 26px 0 10px. The SAME vertical rhythm applies to
+ * the display eyebrows ("Active now · 1", rail headers) and the mono
+ * day-group rules on Sessions, so all screens breathe identically. */
+
+export const EYEBROW_SPACING = 'mt-[26px] mb-2.5';
 
 /* ----- section heading — the Redesign Space Grotesk eyebrow ----- */
 
-export function SectionTitle({ children }: { children: ReactNode }): JSX.Element {
+export function SectionTitle({
+  children,
+  flush = false,
+}: {
+  children: ReactNode;
+  /** Align with a sibling card top instead of the standard 26px rhythm
+   * (Docs rail — the eyebrow sits beside content, not between sections). */
+  flush?: boolean;
+}): JSX.Element {
   return (
-    <h2 className="mt-[26px] mb-2.5 font-display text-[13px] font-medium tracking-[0.14em] text-ink-dim uppercase first:mt-1">
+    <h2
+      className={`${flush ? 'mt-1 mb-2.5' : EYEBROW_SPACING} font-display text-[13px] font-medium tracking-[0.14em] text-ink-dim uppercase`}
+    >
       {children}
     </h2>
+  );
+}
+
+/* ----- mono group header — day rules on Sessions ("today · sun, jul 12 ·
+ * 9 sessions" + trailing hairline), same rhythm as SectionTitle ----- */
+
+export function GroupHeader({ children }: { children: ReactNode }): JSX.Element {
+  return (
+    <div
+      className={`${EYEBROW_SPACING} flex items-center gap-2 font-mono text-[10.5px] tracking-[0.1em] text-ink-dim uppercase`}
+    >
+      {children}
+      <span className="h-px flex-1 bg-line" aria-hidden="true" />
+    </div>
+  );
+}
+
+/* ----- session-table column templates (≥900px) -----
+ * One column system shared by the Sessions day groups and the Overview
+ * "Recently completed" card so both read as the same table:
+ *   [status dot] [project] [title 1fr] [model] [branch] [start] [duration]
+ * Overview drops the status-dot and branch columns (completed rows). */
+
+export const SESSION_ROW_GRID =
+  'desk:grid-cols-[14px_120px_minmax(0,1fr)_110px_80px_40px_max-content]';
+export const COMPLETED_ROW_GRID =
+  'desk:grid-cols-[120px_minmax(0,1fr)_110px_40px_max-content]';
+
+/* ----- duration pill — right column of session table rows -----
+ * Active rows get the green-tinted "active · 3 h 43 min" pill; everything
+ * else is a plain hairline duration ("37 s", "69 h 29 min"). */
+
+export function DurationPill({
+  status,
+  startedAt,
+  endedAt,
+}: {
+  status: SessionStatus;
+  startedAt: string;
+  endedAt: string | null;
+}): JSX.Element {
+  const span = fmtSpan(startedAt, endedAt);
+  if (status === 'active') {
+    return (
+      <span className="rounded-full border border-green/40 bg-green/10 px-2 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-green">
+        active · {span}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-ink-dim">
+      {span}
+    </span>
   );
 }
 

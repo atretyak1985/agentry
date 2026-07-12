@@ -139,6 +139,11 @@ type ingester struct {
 	// live-pipeline bookkeeping (consumed by the event bus after commit).
 	sessionCreated bool
 	newEventIDs    []int64
+	// Existing event rows whose duration was refined this run (async subagent
+	// reconcile). They were already broadcast once with the stale launch
+	// roundtrip (~0.1s) — the pipeline re-publishes them so live clients can
+	// replace their copies.
+	updatedEventIDs []int64
 
 	// pending tool_use calls awaiting their tool_result (keyed by toolu_… id).
 	pending map[string]*pendingTool
@@ -243,7 +248,9 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 		sessionUUID).Scan(&in.sessionID, &in.projectID)
 	switch {
 	case err == sql.ErrNoRows:
-		// Project keyed by cwd path; slug derived as '/' → '-' (§1).
+		// Project keyed by cwd path; slug derived as '/' → '-' (§1); display
+		// name is the path base — filled only while NULL so a future rename
+		// UI always wins over the derived default.
 		if cwd == "" {
 			cwd = "(unknown)"
 		}
@@ -252,8 +259,8 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 		switch {
 		case perr == sql.ErrNoRows:
 			res, err := in.tx.Exec(
-				`INSERT INTO projects (path, slug, first_seen, last_activity) VALUES (?, ?, ?, ?)`,
-				cwd, slug, firstTS, lastTS)
+				`INSERT INTO projects (path, slug, name, first_seen, last_activity) VALUES (?, ?, ?, ?, ?)`,
+				cwd, slug, projectNameFor(cwd), firstTS, lastTS)
 			if err != nil {
 				return fmt.Errorf("insert project: %w", err)
 			}
@@ -261,6 +268,13 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 			in.stats.Projects++
 		case perr != nil:
 			return perr
+		default:
+			// Pre-existing row (older ingests left name NULL) — heal in place.
+			if _, err := in.tx.Exec(
+				`UPDATE projects SET name = ? WHERE id = ? AND name IS NULL`,
+				projectNameFor(cwd), in.projectID); err != nil {
+				return err
+			}
 		}
 
 		res, err := in.tx.Exec(
@@ -869,11 +883,20 @@ func (in *ingester) reconcileAsyncSubagent(parentID int64, lastTS string) error 
 	if d <= 0 {
 		return nil
 	}
-	_, err = in.tx.Exec(
+	res, err := in.tx.Exec(
 		`UPDATE events SET duration_ms = ?
 		 WHERE id IN (?, ?) AND (duration_ms IS NULL OR duration_ms < ?)`,
 		d, parentID, stopID, d)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		// Both rows were already pushed over WS with the launch roundtrip
+		// duration — mark them for re-broadcast so open dashboards don't keep
+		// showing "· 0.1s" agent pills until a reload.
+		in.updatedEventIDs = append(in.updatedEventIDs, parentID, stopID)
+	}
+	return nil
 }
 
 // ── row helpers ──────────────────────────────────────────────────────────────
@@ -1002,6 +1025,51 @@ func (in *ingester) dedupKey(r *record, path, scope string) string {
 	}
 	sum := sha256.Sum256(append([]byte(path+"\n"), r.raw...))
 	return hex.EncodeToString(sum[:])
+}
+
+// ── project display names ────────────────────────────────────────────────────
+
+// projectNameFor derives the default display name of a project from its cwd
+// path: the last path element ("/Volumes/Work/swarmery" → "swarmery").
+func projectNameFor(path string) string {
+	return filepath.Base(path)
+}
+
+// HealProjectNames backfills projects.name = base(path) for rows where the
+// name is still NULL (rows written before names existed). Non-NULL names are
+// NEVER overwritten — a user rename must always win over the derived default.
+// Called from every Backfill pass, so existing databases heal on the first
+// daemon restart (or `swarmery backfill`) after upgrading.
+func HealProjectNames(db *sql.DB) (int, error) {
+	rows, err := db.Query(`SELECT id, path FROM projects WHERE name IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id   int64
+		path string
+	}
+	var todo []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		todo = append(todo, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, r := range todo {
+		if _, err := db.Exec(
+			`UPDATE projects SET name = ? WHERE id = ? AND name IS NULL`,
+			projectNameFor(r.path), r.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(todo), nil
 }
 
 // ── small utilities ──────────────────────────────────────────────────────────

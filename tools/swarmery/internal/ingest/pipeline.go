@@ -104,6 +104,14 @@ func (p *Pipeline) discover() []string {
 // are logged and counted, never fatal.
 func (p *Pipeline) Backfill(ctx context.Context) Metrics {
 	start := time.Now()
+	// Heal legacy NULL project names first: unchanged transcripts are offset
+	// no-ops (TailFile returns early at size == offset), so pre-existing
+	// projects would otherwise never get their derived display name.
+	if healed, err := HealProjectNames(p.db); err != nil {
+		log.Printf("warn: ingest: heal project names: %v", err)
+	} else if healed > 0 {
+		log.Printf("ingest: healed %d project name(s) from path", healed)
+	}
 	files := p.discover()
 	for _, f := range files {
 		if ctx.Err() != nil {
@@ -170,6 +178,12 @@ func (p *Pipeline) tailOne(path string, logPickup bool) {
 	}
 	p.bus.Publish(Notification{Type: typ, SessionID: res.SessionID})
 	for _, id := range res.NewEventIDs {
+		p.bus.Publish(Notification{Type: NoteEventAppended, SessionID: res.SessionID, EventID: id})
+	}
+	// Refined rows (async subagent duration reconcile) were already broadcast
+	// once with the launch roundtrip duration — re-publish so live clients
+	// replace their stale copies instead of showing "0.1s" pills forever.
+	for _, id := range res.UpdatedEventIDs {
 		p.bus.Publish(Notification{Type: NoteEventAppended, SessionID: res.SessionID, EventID: id})
 	}
 }

@@ -18,11 +18,19 @@ import {
   fmtTokens,
   isoDay,
   parseDay,
+  projectLabel,
 } from '../lib/format';
 import { liveActionText } from '../lib/payload';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { Sparkline } from '../components/Sparkline';
-import { Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
+import {
+  COMPLETED_ROW_GRID,
+  DurationPill,
+  Empty,
+  ErrorBox,
+  Loading,
+  SectionTitle,
+} from '../components/ui';
 
 const DAY_WINDOW = 7; // day chips: today-6 … today
 
@@ -185,7 +193,9 @@ function HeroCard({ session, now }: { session: Session; now: string | null }): J
               style={{ background: projectColor(session.projectSlug) }}
               aria-hidden="true"
             />
-            <span className="truncate font-mono text-[11px] text-ink">{session.projectSlug}</span>
+            <span className="truncate font-mono text-[11px] text-ink">
+              {projectLabel(session.projectName, session.projectSlug)}
+            </span>
           </span>
           {meta !== '' && (
             <span className="truncate font-mono text-[11px] text-ink-dim">{meta}</span>
@@ -210,13 +220,15 @@ function HeroCard({ session, now }: { session: Session; now: string | null }): J
   );
 }
 
-/* ----- day-scoped completed rows (Redesign table-like list) ----- */
+/* ----- day-scoped completed rows — same column system as the Sessions
+ * table (project | title | model | start | duration pill) so Overview and
+ * Sessions read as one table. Mobile keeps project | title | pill. ----- */
 
 function CompletedRow({ session }: { session: Session }): JSX.Element {
   return (
     <Link
       to={`/sessions/${String(session.id)}`}
-      className="grid grid-cols-[110px_minmax(0,1fr)_90px] items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface2 wide:grid-cols-[120px_minmax(0,1fr)_130px_60px_100px]"
+      className={`grid grid-cols-[110px_minmax(0,1fr)_max-content] items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface2 ${COMPLETED_ROW_GRID}`}
     >
       <span className="flex min-w-0 items-center gap-[7px]">
         <span
@@ -224,21 +236,27 @@ function CompletedRow({ session }: { session: Session }): JSX.Element {
           style={{ background: projectColor(session.projectSlug) }}
           aria-hidden="true"
         />
-        <span className="truncate font-mono text-[11px] text-ink-3">{session.projectSlug}</span>
+        <span className="truncate font-mono text-[11px] text-ink-3">
+          {projectLabel(session.projectName, session.projectSlug)}
+        </span>
       </span>
       <span
         className={`truncate text-[13px] font-semibold ${session.title === null ? 'font-normal text-ink-dim italic' : ''}`}
       >
         {session.title ?? '(no title)'}
       </span>
-      <span className="hidden truncate font-mono text-[11px] text-ink-dim wide:block">
+      <span className="hidden truncate font-mono text-[11px] text-ink-dim desk:block">
         {session.model ?? '—'}
       </span>
-      <span className="hidden font-mono text-[11px] text-ink-dim wide:inline">
-        {session.endedAt !== null ? fmtTime(session.endedAt) : '—'}
+      <span className="hidden font-mono text-[11px] text-ink-3 desk:inline">
+        {fmtTime(session.startedAt)}
       </span>
-      <span className="justify-self-end rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-ink-dim">
-        {fmtSpan(session.startedAt, session.endedAt)}
+      <span className="justify-self-end">
+        <DurationPill
+          status={session.status}
+          startedAt={session.startedAt}
+          endedAt={session.endedAt}
+        />
       </span>
     </Link>
   );
@@ -281,7 +299,7 @@ function Rail({ stats, isToday }: { stats: StatsOverview; isToday: boolean }): J
         {stats.errors_by_project.map((row) => (
           <div key={row.slug} className="mt-2.5">
             <div className="flex justify-between font-mono text-[11px]">
-              <span className="truncate text-ink-3">{row.name ?? row.slug}</span>
+              <span className="truncate text-ink-3">{projectLabel(row.name, row.slug)}</span>
               <span className="text-red">{row.errors}</span>
             </div>
             <Bar pct={errTotal > 0 ? row.errors / errTotal : 0} className="bg-red/65" />
@@ -322,7 +340,7 @@ function Rail({ stats, isToday }: { stats: StatsOverview; isToday: boolean }): J
               aria-hidden="true"
             />
             <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-ink">
-              {row.slug}
+              {projectLabel(row.name, row.slug)}
             </span>
             <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-dim">
               {row.sessions} {isToday ? 'today' : 'this day'}
