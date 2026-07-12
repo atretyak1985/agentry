@@ -163,3 +163,27 @@ conflict with):
     sessionTitle?: string | null;
   }
   ```
+
+---
+
+## Step-2.6 resolutions (2026-07-13, integration)
+
+- **GET /api/approvals filter semantics** — ANSWERED & ALREADY IMPLEMENTED.
+  The backend (internal/api/approvals.go `listApprovals`) supports exactly the
+  requested value set: no param / `pending` → pending only; **`status=resolved`
+  → meta-filter for every terminal status** (`WHERE status != 'pending'`);
+  `all` → everything; a concrete status name filters exactly. Ordered
+  `requested_at DESC, id DESC`; `limit` is an optional query param (the UI's
+  client-side slice-to-50 remains harmless belt-and-braces). Covered by
+  `TestListApprovals`.
+- **POST /api/approvals/{id} conflict status** — ANSWERED & ALREADY
+  IMPLEMENTED. Racing a terminal state returns **409**
+  `{"error":"permission request already resolved"}` (`ErrAlreadyResolved` in
+  `resolveApproval`); 404 for unknown ids, 400 for bad action/body. The UI's
+  "any non-2xx → silent refetch, WS is authoritative" behavior is therefore
+  intentional. Covered by the double-resolve test (second resolve = 409).
+- **denormalized projectSlug/projectName/sessionTitle on PermissionRequest** —
+  DEFERRED (phase-2 backlog): additive but not trivial — it touches the frozen
+  DTO golden key-set in `ws_test.go`, mock fixtures, and a multi-prop refactor
+  of `Approvals.tsx`/`Overview` attribution; the existing lazy `/api/sessions`
+  join already covers the UX with a `session #N` fallback.

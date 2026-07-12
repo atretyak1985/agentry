@@ -105,6 +105,51 @@ Previous: [step-2.5-quality-gate-parallel-wave.md](step-2.5-quality-gate-paralle
 
 ### Completion Report
 
-```
-(заповнюється виконавцем після завершення — з фактичними вимірами P1–P10)
-```
+Status: **DONE (integration scope)** — both wave branches merged into main,
+all verification green. The human-in-the-loop live protocol (P1–P10) was NOT
+run in this session — it needs a co-driver and real `claude` sessions; it
+moves to the Gate 2.7 checklist as the remaining evidence.
+
+**Merge order & conflict resolution** (merge main INTO each branch, verify,
+push, then merge the PR — both PRs conflicted because E-lite/workspaces
+landed on main after they forked):
+
+1. `feat/swarmery-hooks` ← `origin/main` (PR #25, MERGED):
+   - `internal/api/routes.go` — only textual conflict; resolved as the union
+     of wave blocks: `// phase 3.5: workspaces` (tasks endpoints) + `// phase
+     2: approvals` (hooks/approvals endpoints), both kept.
+   - `handlers.go` (sessionSelect task-attribution columns), `ws_test.go`
+     (golden keys: task fields + PermissionRequest keys), `cmd/swarmery/main.go`
+     (`wscan` wiring + `--bind`/`hook`/`hooks`) auto-merged as clean unions;
+     migrations `0006_workspaces` + `0007_approvals` coexist.
+   - Verified: `gofmt` clean, `go vet ./...`, `go test -race ./...` all green.
+2. `feat/swarmery-approvals-ui` ← `origin/main` (PR #24, MERGED):
+   - `web/src/api.ts`, `web/src/mock/data.ts` — union: approvals client +
+     mocks alongside tasks client + mocks.
+   - `web/src/pages/Overview.tsx` (4 hunks) — union: PENDING APPROVALS rail +
+     live `waiting approval` subline AND the `Tasks · 14 days` slice; both
+     load paths + reload wiring kept.
+   - `web/CONTRACT-REQUESTS.md` — union of the phase-3.5 resolutions section
+     and the phase-2 wave-B requests.
+   - `web/src/lib/ws.ts` — no conflict; the shared-connection refactor already
+     carries the 60 s reconcile + malformed-frame guard.
+   - Verified: `tsc --noEmit` strict + `npm run build` green; all screenshots
+     regenerated via `VITE_MOCK=1 vite :5199` + `scripts/screenshot.mjs`
+     (desktop Overview visually confirmed to show approvals badge + rail +
+     tasks slice together).
+
+**Merged-main verification** (commit `348c8f0`): `gofmt` clean,
+`go vet ./...` green, `go test -race ./...` green (api, approvals, cost,
+hookcfg, hookshim, ingest, installer, wsingest), `tsc --noEmit` green,
+`npm run build` green (324 kB JS / 101 kB gzip).
+
+**Contract requests reconciled** — see "Step-2.6 resolutions" in
+`web/CONTRACT-REQUESTS.md`: `status=resolved`/`all` meta-filters and the 409
+conflict contract were already implemented server-side (answered, no code
+change); the denormalized `projectSlug`/`projectName`/`sessionTitle` DTO
+fields are deferred to the phase-2 backlog (frozen ws_test golden key-set +
+mock fixtures + multi-prop UI refactor > trivial; lazy join covers the UX).
+
+**Left for Gate 2.7**: live protocol P1–P10 with measurements (P2 latency,
+P5 fail-open), launchd binary swap check, `phase2-backlog.md` "Phase 2
+dogfooding" section, dogfood-rollout decision.

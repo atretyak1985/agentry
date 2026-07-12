@@ -123,7 +123,12 @@ gate stops the phase; executors append Completion Reports to their step file.
 
 ## Progress checklist
 
-- [x] 2.1 [x] 2.2-GATE [ ] 2.3 [ ] 2.4 [ ] 2.5-GATE [ ] 2.6 [ ] 2.7-GATE
+- [x] 2.1 [x] 2.2-GATE [x] 2.3 [x] 2.4 [x] 2.5-GATE [x] 2.6 [ ] 2.7-GATE
+
+(2.3/2.4/2.5 wave-gate evidence lives in the PR descriptions of #25
+`feat/swarmery-hooks` and #24 `feat/swarmery-approvals-ui`; 2.6 integration
+evidence in [step-2.6](step-2.6-integration-live-test.md) — the live P1–P10
+protocol moved to the 2.7 gate.)
 
 ## Files Analyzed
 
