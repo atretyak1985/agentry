@@ -1,7 +1,9 @@
-// Session detail (design §3.3): header with status/model/token/cost facts,
-// then the Timeline, Diffs, and Chat tabs (Context and Tree are later
-// phases). Live: session_updated merges header state; event_appended is
-// attributed via its sessionId and appended to the open timeline.
+// Session detail (Redesign parity): header with status/model facts and
+// TOKENS/COST/ERRORS numerals top-right, then the Timeline, Diffs, and Chat
+// tabs beside a desktop right rail (agents / skills / files changed; mobile
+// keeps the SummaryChips strip). Live: session_updated merges header state;
+// event_appended is attributed via its sessionId and appended to the open
+// timeline.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -14,6 +16,7 @@ import { Timeline } from './detail/Timeline';
 import { Diffs } from './detail/Diffs';
 import { Chat } from './detail/Chat';
 import { SummaryChips } from './detail/SummaryChips';
+import { DetailRail } from './detail/DetailRail';
 
 const STATUS_TONES: Record<SessionStatus, string> = {
   active: 'text-green',
@@ -79,7 +82,14 @@ export function SessionDetailPage(): JSX.Element {
       tokens += (turn.tokensIn ?? 0) + (turn.tokensOut ?? 0);
       if (turn.costUsd !== null) cost = (cost ?? 0) + turn.costUsd;
     }
-    return { tokens, cost };
+    const errors = detail.events.filter(
+      (e) =>
+        e.type === 'error' ||
+        e.status === 'error' ||
+        e.status === 'denied' ||
+        e.status === 'timeout',
+    ).length;
+    return { tokens, cost, errors };
   }, [detail]);
 
   if (error !== null) {
@@ -114,42 +124,87 @@ export function SessionDetailPage(): JSX.Element {
           {detail.gitBranch !== null ? ` · ${detail.gitBranch}` : ''}
         </span>
       </div>
-      <h1 className="mb-2 font-display text-[21px] leading-[1.3] font-bold tracking-[0.01em]">
-        {detail.title ?? detail.sessionUuid}
-      </h1>
-      <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 font-mono text-[11.5px] text-ink-dim">
-        <Kv label="status" value={detail.status} tone={STATUS_TONES[detail.status]} />
-        {detail.model !== null && <Kv label="model" value={detail.model} />}
-        <Kv label="tokens" value={fmtTokens(facts.tokens)} />
-        <Kv label="cost" value={fmtCost(facts.cost)} tone="text-brand" />
-        <Kv label="started" value={fmtDateTime(detail.startedAt)} />
-        <Kv
-          label={detail.endedAt !== null ? 'duration' : 'running'}
-          value={fmtSpan(detail.startedAt, detail.endedAt)}
-        />
-        {lastEvent !== undefined && detail.endedAt === null && (
-          <Kv label="last event" value={fmtAgo(lastEvent.ts)} />
-        )}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="mb-2 font-display text-[21px] leading-[1.3] font-bold tracking-[0.01em]">
+            {detail.title ?? detail.sessionUuid}
+          </h1>
+          <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 font-mono text-[11.5px] text-ink-dim">
+            <Kv label="status" value={detail.status} tone={STATUS_TONES[detail.status]} />
+            {detail.model !== null && <Kv label="model" value={detail.model} />}
+            <Kv label="started" value={fmtDateTime(detail.startedAt)} />
+            <Kv
+              label={detail.endedAt !== null ? 'duration' : 'running'}
+              value={fmtSpan(detail.startedAt, detail.endedAt)}
+            />
+            {lastEvent !== undefined && detail.endedAt === null && (
+              <Kv label="last event" value={fmtAgo(lastEvent.ts)} />
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-[22px] text-right">
+          <HeadStat value={fmtTokens(facts.tokens)} label="tokens" />
+          <HeadStat value={fmtCost(facts.cost)} label="cost" tone="text-brand" />
+          <HeadStat
+            value={String(facts.errors)}
+            label="errors"
+            tone={facts.errors > 0 ? 'text-red' : 'text-ink-dim'}
+          />
+        </div>
       </div>
 
-      <SummaryChips events={detail.events} />
-
-      <div className="mt-4 flex gap-0.5 border-b border-line" role="tablist">
-        <TabButton active={tab === 'timeline'} onClick={() => setTab('timeline')}>
-          Timeline
-        </TabButton>
-        <TabButton active={tab === 'diffs'} onClick={() => setTab('diffs')}>
-          {`Diffs${diffCount > 0 ? ` · ${diffCount}` : ''}`}
-        </TabButton>
-        <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>
-          Chat
-        </TabButton>
+      {/* Mobile at-a-glance strip; the desktop rail replaces it at ≥1280px. */}
+      <div className="wide:hidden">
+        <SummaryChips events={detail.events} />
       </div>
 
-      {tab === 'timeline' && <Timeline detail={detail} />}
-      {tab === 'diffs' && <Diffs changes={detail.fileChanges} />}
-      {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
+      <div className="mt-4 wide:grid wide:grid-cols-[minmax(0,1fr)_300px] wide:items-start wide:gap-6">
+        <div className="min-w-0">
+          <div className="flex gap-0.5 border-b border-line" role="tablist">
+            <TabButton active={tab === 'timeline'} onClick={() => setTab('timeline')}>
+              Timeline
+            </TabButton>
+            <TabButton active={tab === 'diffs'} onClick={() => setTab('diffs')}>
+              {`Diffs${diffCount > 0 ? ` · ${diffCount}` : ''}`}
+            </TabButton>
+            <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>
+              Chat
+            </TabButton>
+          </div>
+
+          {tab === 'timeline' && <Timeline detail={detail} />}
+          {tab === 'diffs' && <Diffs changes={detail.fileChanges} />}
+          {tab === 'chat' && <Chat detail={detail} onShowTimeline={() => setTab('timeline')} />}
+        </div>
+
+        <div className="hidden wide:block">
+          <DetailRail
+            events={detail.events}
+            fileChanges={detail.fileChanges}
+            onShowDiffs={() => setTab('diffs')}
+          />
+        </div>
+      </div>
     </>
+  );
+}
+
+function HeadStat({
+  value,
+  label,
+  tone = 'text-ink',
+}: {
+  value: string;
+  label: string;
+  tone?: string;
+}): JSX.Element {
+  return (
+    <div>
+      <div className={`font-mono text-[18px] leading-none font-bold ${tone}`}>{value}</div>
+      <div className="mt-1 font-mono text-[10px] tracking-[0.06em] text-ink-dim uppercase">
+        {label}
+      </div>
+    </div>
   );
 }
 
