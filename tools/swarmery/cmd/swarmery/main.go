@@ -5,6 +5,8 @@
 //	swarmery serve                 serve the API/SPA + live ingest pipeline
 //	swarmery recost                recompute cost_usd for all turns
 //	swarmery install               launchd auto-start (uninstall / status)
+//	swarmery hook <event>          runtime shim invoked by Claude Code hooks
+//	swarmery hooks <cmd>           manage hook entries in project settings
 package main
 
 import (
@@ -12,13 +14,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/api"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/approvals"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookcfg"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookshim"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
@@ -48,6 +55,11 @@ func main() {
 		err = installer.CmdUninstall(os.Args[2:])
 	case "status":
 		err = installer.CmdStatus(os.Args[2:])
+	case "hook":
+		// Runtime shim: NEVER fails (fail-open D3) — exit code is always 0.
+		os.Exit(cmdHook(os.Args[2:]))
+	case "hooks":
+		err = hookcfg.Cmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -64,13 +76,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   swarmery ingest   [--db <path>] <file.jsonl>
   swarmery backfill [--db <path>] [--projects-root <dir>] [--rebuild-text]
-  swarmery serve    [--db <path>] [--port <n>] [--projects-root <dir>]
-                    [--rescan <dur>] [--status-tick <dur>]
+  swarmery serve    [--db <path>] [--port <n>] [--bind <addr>] [--projects-root <dir>]
+                    [--rescan <dur>] [--status-tick <dur>] [--approval-timeout <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
   swarmery recost   [--db <path>]
   swarmery install  [--port <n>]   launchd auto-start
   swarmery uninstall               remove launchd service (keeps logs+db)
   swarmery status                  service health, pid, uptime, db size
+  swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)
+  swarmery hooks <install|uninstall|status> [--project <path>] [--all] [--port <n>]
   env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING`)
 }
 
@@ -201,7 +215,11 @@ func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dbPath := dbFlag(fs)
 	port := fs.Int("port", envPort(), "HTTP port (env: SWARMERY_PORT)")
+	// D4 hardening: loopback by default; --bind is the conscious override.
+	bind := fs.String("bind", "127.0.0.1", "listen address (default loopback; set explicitly to expose beyond this machine)")
 	noIngest := fs.Bool("no-ingest", false, "serve the API only, without the live ingest pipeline")
+	approvalTimeout := fs.Duration("approval-timeout", approvals.DefaultTimeout,
+		"how long a permission request stays pending before fail-open expiry")
 	cfg := pipelineFlags(fs)
 	fs.Parse(args)
 
@@ -211,8 +229,9 @@ func cmdServe(args []string) error {
 	}
 	defer db.Close()
 
+	var bus *ingest.Bus
 	if !*noIngest {
-		bus := ingest.NewBus()
+		bus = ingest.NewBus()
 		api.AttachBus(bus)
 		pipeline := ingest.NewPipeline(db, *cfg, bus)
 		go func() {
@@ -223,13 +242,41 @@ func cmdServe(args []string) error {
 		log.Printf("swarmery ingest pipeline watching %s (rescan %s)", cfg.ProjectsRoot, cfg.RescanInterval)
 	}
 
+	// phase 2: approvals — long-poll registry + expiry sweeper + heartbeat.
+	svc := approvals.New(db, bus, approvals.Options{
+		Timeout:    *approvalTimeout,
+		Thresholds: cfg.Thresholds,
+	})
+	api.AttachApprovals(svc)
+	go svc.RunSweeper(context.Background())
+
 	handler, err := api.NewServer(db, !*noIngest)
 	if err != nil {
 		return err
 	}
-	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("swarmery serving on http://localhost%s (db: %s)", addr, *dbPath)
+	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
+	log.Printf("swarmery serving on http://%s (db: %s)", addr, *dbPath)
 	return http.ListenAndServe(addr, handler)
+}
+
+// cmdHook runs the `swarmery hook <event>` shim. It ALWAYS exits 0 (fail-open
+// D3): any transport/daemon problem means "no decision", and Claude Code then
+// shows its native permission dialog.
+func cmdHook(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: swarmery hook <permission-request|stop>")
+		return 0
+	}
+	logPath := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		logPath = filepath.Join(home, ".swarmery", "hook.log")
+	}
+	return hookshim.Run(args[0], os.Stdin, hookshim.Config{
+		BaseURL: fmt.Sprintf("http://127.0.0.1:%d", envPort()),
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
+		LogPath: logPath,
+	})
 }
 
 func envPort() int {
