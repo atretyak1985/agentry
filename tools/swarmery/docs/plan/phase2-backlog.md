@@ -10,7 +10,7 @@
 - [ ] (наступні записи — під час dogfooding)
 - [x] [session-detail] wave subagent blocks show 0.1s duration while agents ran ~20 min — subagent_stop duration/parenting for background (run_in_background) agents needs investigation → fixed in ingest: "async_launched" results are no longer errors and the duration is derived from the sidechain span (subagent_start.ts → last sidechain record, refined on every tail batch); migration 0004 heals existing rows (2026-07-12)
 - [x] [session-detail] "unassigned events" bucket appears at the bottom of the timeline — events without turn attribution (likely events whose turn linkage is null); investigate attribution rule → root cause: sidechain events tailed before their subagent_start existed (live-tail race) kept parent_event_id NULL; fixed in ingest — orphans are adopted by dedup-key scope (agentId) as soon as the parent appears; migration 0003 heals existing rows; no frontend change needed (2026-07-12)
-- [ops] launchd reinstall race: bootout is async, immediate bootstrap fails with exit 5 — installer should retry bootstrap with short backoff
+- [x] [ops] launchd reinstall race: bootout is async, immediate bootstrap fails with exit 5 — installer should retry bootstrap with short backoff → fixed: install now polls `launchctl print` until the old registration disappears (10 × 200ms) and retries bootstrap up to 5 × 500ms on failure; fake-runner tests cover both the poll and the exit-5 retry paths (2026-07-12)
 
 ## Known candidates carried from MVP
 
