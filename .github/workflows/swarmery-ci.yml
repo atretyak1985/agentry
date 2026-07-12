@@ -33,6 +33,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: tools/swarmery/go.mod
+          cache-dependency-path: tools/swarmery/go.sum
           check-latest: true
 
       - name: Vet
