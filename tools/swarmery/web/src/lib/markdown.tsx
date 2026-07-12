@@ -1,8 +1,9 @@
-// Minimal hand-rolled markdown renderer for the Chat tab — no dependencies.
-// XSS-safe by construction: it never builds HTML strings (no
+// Minimal hand-rolled markdown renderer (Chat tab + Docs screen) — no
+// dependencies. XSS-safe by construction: it never builds HTML strings (no
 // dangerouslySetInnerHTML); every fragment becomes a React text node, which
 // React escapes. Supported: paragraphs, headings (#–####), fenced code
-// blocks, unordered/ordered lists, **bold**, *italic*, `inline code`.
+// blocks, unordered/ordered lists, pipe tables, **bold**, *italic*,
+// `inline code`.
 
 import type { ReactNode } from 'react';
 
@@ -50,6 +51,60 @@ const HEADING_SIZES: Record<number, string> = {
   4: 'text-[13px]',
 };
 
+/* ----- pipe tables — `| a | b |` header + `|---|---|` separator ----- */
+
+function isTableRow(s: string): boolean {
+  return s.trimStart().startsWith('|');
+}
+
+function isTableSeparator(s: string): boolean {
+  const t = s.trim();
+  return /^\|?[\s:|-]+\|?$/.test(t) && t.includes('-') && t.includes('|');
+}
+
+/** `| a | b |` → ['a', 'b'] (no escaped-pipe support — docs don't use it). */
+function splitCells(row: string): string[] {
+  return row
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+function renderTable(header: string, body: string[], key: string): ReactNode {
+  return (
+    <table key={key} className="my-2 w-full border-collapse first:mt-0 last:mb-0">
+      <thead>
+        <tr>
+          {splitCells(header).map((cell, c) => (
+            <th
+              key={`${key}-h-${String(c)}`}
+              className="border-b border-line px-2.5 py-1.5 text-left font-mono text-[10.5px] font-medium tracking-[0.06em] text-ink-dim uppercase"
+            >
+              {renderInline(cell, `${key}-h-${String(c)}`)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {body.map((row, r) => (
+          <tr key={`${key}-r-${String(r)}`}>
+            {splitCells(row).map((cell, c) => (
+              <td
+                key={`${key}-r-${String(r)}-${String(c)}`}
+                className="border-b border-line-soft px-2.5 py-[7px] align-top text-[13px] leading-normal"
+              >
+                {renderInline(cell, `${key}-r-${String(r)}-${String(c)}`)}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function flushParagraph(lines: string[], key: string, out: ReactNode[]): void {
   if (lines.length === 0) return;
   out.push(
@@ -89,6 +144,20 @@ export function Markdown({ text }: { text: string }): JSX.Element {
           <code>{code.join('\n')}</code>
         </pre>,
       );
+      continue;
+    }
+
+    // Pipe table: header row + `|---|` separator, then body rows.
+    if (isTableRow(line) && isTableSeparator(lines[i + 1] ?? '')) {
+      flushParagraph(para, `${key}-p`, out);
+      const header = line;
+      i += 2; // header + separator
+      const body: string[] = [];
+      while (i < lines.length && isTableRow(lines[i] ?? '') && !isTableSeparator(lines[i] ?? '')) {
+        body.push(lines[i] ?? '');
+        i += 1;
+      }
+      out.push(renderTable(header, body, key));
       continue;
     }
 

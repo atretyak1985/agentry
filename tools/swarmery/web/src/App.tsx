@@ -1,16 +1,38 @@
 // App shell: sticky app bar, bottom nav (mobile) / sidebar (≥900px), routed
 // screens in <Outlet>. Redesign dark editorial language: navy surfaces,
-// slate hairlines, Space Grotesk wordmark with the amber diamond.
+// slate hairlines, Space Grotesk wordmark with the amber diamond. The Docs
+// nav item appears only when /api/docs has entries; the sidebar bottom shows
+// the daemon health line.
 
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { MOCK } from './api';
+import { fetchDocs, MOCK } from './api';
+import { HealthFooter } from './components/HealthFooter';
 
-const NAV_ITEMS = [
+interface NavItem {
+  to: string;
+  icon: string;
+  label: string;
+}
+
+const BASE_NAV: NavItem[] = [
   { to: '/', icon: '◉', label: 'Overview' },
   { to: '/sessions', icon: '☰', label: 'Sessions' },
-] as const;
+];
+
+const DOCS_NAV: NavItem = { to: '/docs', icon: '❐', label: 'Docs' };
 
 export function App(): JSX.Element {
+  const [hasDocs, setHasDocs] = useState(false);
+
+  useEffect(() => {
+    fetchDocs()
+      .then((docs) => setHasDocs(docs.length > 0))
+      .catch(() => setHasDocs(false)); // empty/unreachable → hide the Docs item
+  }, []);
+
+  const items = hasDocs ? [...BASE_NAV, DOCS_NAV] : BASE_NAV;
+
   return (
     <div className="min-h-dvh pb-[76px] desk:pb-0 desk:pl-[210px]">
       <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-line bg-bg/90 px-4 py-3 backdrop-blur-md">
@@ -33,7 +55,7 @@ export function App(): JSX.Element {
       </header>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 flex justify-around border-t border-line bg-bg/95 px-1 pt-2 pb-[calc(8px+env(safe-area-inset-bottom))] backdrop-blur-md desk:top-[53px] desk:right-auto desk:bottom-0 desk:left-0 desk:w-[210px] desk:flex-col desk:justify-start desk:gap-1 desk:border-t-0 desk:border-r desk:px-3 desk:py-4">
-        {NAV_ITEMS.map((item) => (
+        {items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -50,9 +72,12 @@ export function App(): JSX.Element {
             {item.label}
           </NavLink>
         ))}
+        <span className="hidden desk:contents">
+          <HealthFooter />
+        </span>
       </nav>
 
-      <main className="mx-auto max-w-[820px] p-4 desk:px-7 desk:py-6">
+      <main className="mx-auto max-w-[1360px] p-4 desk:px-7 desk:py-6">
         <Outlet />
       </main>
     </div>

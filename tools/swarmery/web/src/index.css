@@ -44,6 +44,8 @@
 
   /* sidebar breakpoint (Redesign fixed 210px sidebar) */
   --breakpoint-desk: 900px;
+  /* right-rail breakpoint (Redesign: rails collapse under 1280px) */
+  --breakpoint-wide: 1280px;
 
   --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
   @keyframes pulse-dot {
