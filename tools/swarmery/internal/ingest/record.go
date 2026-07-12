@@ -53,6 +53,7 @@ type contentBlock struct {
 	Input     json.RawMessage `json:"input"`       // tool_use
 	ToolUseID string          `json:"tool_use_id"` // tool_result
 	IsError   bool            `json:"is_error"`    // tool_result
+	Text      string          `json:"text"`        // text (turn prose → turns.text)
 }
 
 // agentResult is toolUseResult of an Agent completion (§7). Background
