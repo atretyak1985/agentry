@@ -5,6 +5,7 @@
 // eyebrow rules, each day one navy list card with hairline dividers.
 
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { Project, Session, SessionStatus, WSMessage } from '../api/types';
 import { fetchProjects, fetchSessions } from '../api';
 import { liveActionText } from '../lib/payload';
@@ -74,8 +75,10 @@ function groupByDay(sorted: Session[]): DayGroup[] {
 }
 
 export function Sessions(): JSX.Element {
+  // Deep-linkable project filter (?project=<slug> — Overview rail rows).
+  const [searchParams] = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState<string | null>(null);
+  const [project, setProject] = useState<string | null>(searchParams.get('project'));
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -72,6 +72,10 @@ export interface Session {
   endedAt: string | null;
   title: string | null;
   source: SessionSource;
+  /** Aggregate SUM(turns.tokens_in + tokens_out) — parity wave; optional until backend lands. */
+  tokens?: number | null;
+  /** Aggregate SUM(turns.cost_usd) — parity wave; optional until backend lands. */
+  costUsd?: number | null;
 }
 
 /** Go: turnDTO */
@@ -150,6 +154,54 @@ export interface StatsToday {
   tokens_out: number;
   cost_usd: number | null;
   errors: number;
+}
+
+// --- Parity wave (design parity pass — frozen contract) ----------------------
+
+/** GET /api/health */
+export interface HealthResponse {
+  status: 'ok';
+  version: string;
+  db_size_bytes: number;
+  watching: boolean;
+}
+
+/** GET /api/docs — list item. */
+export interface DocMeta {
+  slug: string;
+  title: string;
+  file: string;
+}
+
+/** GET /api/docs/{slug} */
+export interface DocDetail extends DocMeta {
+  markdown: string;
+}
+
+/** One point of the trailing series in StatsOverview (14 days, ascending). */
+export interface StatsSeriesPoint {
+  day: string;
+  sessions: number;
+  tokens: number;
+  cost_usd: number | null;
+  errors: number;
+}
+
+/** GET /api/stats/overview?day=YYYY-MM-DD */
+export interface StatsOverview {
+  day: string;
+  sessions: number;
+  active: number;
+  waiting_approval: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number | null;
+  errors: number;
+  /** Trailing 14 days ending at `day`, ascending. */
+  series: StatsSeriesPoint[];
+  errors_by_project: { slug: string; name: string | null; errors: number }[];
+  cost_by_model: { model: string; cost_usd: number }[];
+  projects: { slug: string; name: string | null; sessions: number }[];
 }
 
 /** WS event names — frozen; implemented by Agent A on /api/ws. */

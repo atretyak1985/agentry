@@ -54,7 +54,8 @@ function deriveAgents(events: Event[]): AgentChip[] {
   }));
 }
 
-function deriveSkills(events: Event[]): string[] {
+/** Distinct skill names used in the session (shared with the desktop rail). */
+export function deriveSkills(events: Event[]): string[] {
   const names = new Set<string>();
   for (const event of events) {
     if (event.type !== 'skill_use') continue;

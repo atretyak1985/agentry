@@ -5,6 +5,7 @@ import { App } from './App';
 import { Overview } from './pages/Overview';
 import { Sessions } from './pages/Sessions';
 import { SessionDetailPage } from './pages/SessionDetail';
+import { Docs } from './pages/Docs';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -15,6 +16,8 @@ const router = createBrowserRouter([
       { index: true, element: <Overview /> },
       { path: 'sessions', element: <Sessions /> },
       { path: 'sessions/:id', element: <SessionDetailPage /> },
+      { path: 'docs', element: <Docs /> },
+      { path: 'docs/:slug', element: <Docs /> },
     ],
   },
 ]);
