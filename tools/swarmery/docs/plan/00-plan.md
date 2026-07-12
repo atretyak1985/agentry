@@ -130,7 +130,8 @@ R7 `--port`/`SWARMERY_PORT`. New in v2:
 
 ## Roadmap after MVP (design doc §4 — separate plans later)
 
-2. Approvals (`permission_requests` + PreToolUse hooks) ← backlog from Gate 12 ·
+2. Approvals (`permission_requests` + PermissionRequest hooks →
+[phase-2-approvals/00-phase-2-plan.md](phase-2-approvals/00-phase-2-plan.md)) ← backlog from Gate 12 ·
 2.5. Reporter + Reports (narratives, self-filling checklists, live view, weekly
 digest → [phase-2.5-reporter-agent-d.md](phase-2.5-reporter-agent-d.md)) ·
 3. Agents registry read-only · 4. Editor + git versioning · 5. Tasks queue
