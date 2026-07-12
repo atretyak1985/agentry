@@ -23,4 +23,8 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/docs", h.listDocs)
 	mux.HandleFunc("GET /api/docs/{slug}", h.getDoc)
 	mux.HandleFunc("GET /api/stats/overview", h.statsOverview)
+
+	// phase 3.5: workspaces
+	mux.HandleFunc("GET /api/tasks", h.listTasks)
+	mux.HandleFunc("GET /api/tasks/{id}", h.getTask)
 }
