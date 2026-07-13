@@ -342,6 +342,7 @@ function ItemsTab({
               kind={kind}
               id={selectedId}
               refreshKey={refreshKey}
+              projectNames={projectNames}
               onClose={() => onSelect(null)}
               onMutated={onMutated}
               onDeleted={onDeleted}

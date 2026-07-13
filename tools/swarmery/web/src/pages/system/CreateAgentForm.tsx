@@ -165,7 +165,7 @@ export function CreateAgentForm({
                 <option value="">— pick —</option>
                 {projects.map((p) => (
                   <option key={p.id} value={String(p.id)}>
-                    {p.slug}
+                    {p.name ?? p.slug}
                   </option>
                 ))}
               </select>

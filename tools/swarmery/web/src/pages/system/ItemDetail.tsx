@@ -365,6 +365,7 @@ export function SystemItemPanel({
   kind,
   id,
   refreshKey,
+  projectNames,
   onClose,
   onMutated,
   onDeleted,
@@ -374,6 +375,8 @@ export function SystemItemPanel({
   id: number;
   /** Bumped on WS system_item_updated / local writes — refetches the detail. */
   refreshKey: number;
+  /** slug → short display name lookup (from /api/projects). */
+  projectNames?: Record<string, string>;
   onClose: () => void;
   /** A write landed — the parent refetches list + summary + this detail. */
   onMutated: () => void;
@@ -546,7 +549,15 @@ export function SystemItemPanel({
           <span className="font-mono text-[10.5px] text-ink-dim">{detail.model}</span>
         )}
         <span className="ml-auto flex items-center gap-1.5">
-          <ScopeBadge scope={detail.scope} projectSlug={detail.projectSlug} />
+          <ScopeBadge
+            scope={detail.scope}
+            projectSlug={detail.projectSlug}
+            projectName={
+              detail.projectSlug !== null
+                ? (projectNames?.[detail.projectSlug] ?? detail.projectSlug)
+                : null
+            }
+          />
           <OriginBadge origin={detail.origin} pluginName={detail.pluginName} />
           {detail.deleted && (
             <span className="rounded-full border border-red/40 px-2 py-px font-mono text-[10px] text-red">

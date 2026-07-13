@@ -55,10 +55,12 @@ function groupByEvent(hooks: SystemHook[]): [string, SystemHook[]][] {
 
 function HookRow({
   hook,
+  projectName,
   onMutated,
   onReadonly,
 }: {
   hook: SystemHook;
+  projectName?: string | null;
   /** A write landed or the row went stale — refetch the list. */
   onMutated: () => void;
   /** A write hit the global readonly kill-switch — page-level banner. */
@@ -168,7 +170,7 @@ function HookRow({
           </button>
           <span className="font-mono text-[11.5px] text-ink">{hook.matcher ?? '*'}</span>
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
-            <ScopeBadge scope={hook.scope} projectSlug={hook.projectSlug} />
+            <ScopeBadge scope={hook.scope} projectSlug={hook.projectSlug} projectName={projectName} />
             {managed && (
               <span
                 className="rounded-full border border-brand/40 px-2 py-px font-mono text-[10px] whitespace-nowrap text-brand"
@@ -332,6 +334,8 @@ export function HooksTab({
   );
   const { rows, error, retry } = useSystemList(fetcher, scope, project, refreshKey);
 
+  const projectNames = Object.fromEntries(projects.map((p) => [p.slug, p.name ?? p.slug]));
+
   if (error !== null) return <ErrorBox message={error} onRetry={retry} />;
 
   const lintFiltered =
@@ -379,7 +383,13 @@ export function HooksTab({
               </GroupHeader>
               <div className="overflow-hidden rounded-xl border border-line bg-surface">
                 {entries.map((hook) => (
-                  <HookRow key={hook.id} hook={hook} onMutated={retry} onReadonly={onReadonly} />
+                  <HookRow
+                    key={hook.id}
+                    hook={hook}
+                    projectName={hook.projectSlug !== null ? (projectNames[hook.projectSlug] ?? hook.projectSlug) : null}
+                    onMutated={retry}
+                    onReadonly={onReadonly}
+                  />
                 ))}
               </div>
             </div>
