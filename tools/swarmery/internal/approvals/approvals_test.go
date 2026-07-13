@@ -348,6 +348,43 @@ func TestUnknownSessionCreatesHookRow(t *testing.T) {
 	}
 }
 
+// TestExcludedCwdServedWithoutRows: a hook from an excluded cwd (throwaway
+// /tmp project) is answered — ErrExcludedProject maps to 204 fail-open — but
+// persists NO session/project/permission_request rows. An already-tracked
+// session keeps working even if its cwd would match the exclude list.
+func TestExcludedCwdServedWithoutRows(t *testing.T) {
+	db := testDB(t)
+	svc := New(db, nil, Options{Exclude: ingest.ParseExcludeList(ingest.DefaultExclude)})
+
+	_, _, _, err := svc.Open(hookInput(t, "uuid-excluded", "Bash", "ls")) // cwd /tmp/proj
+	if err != ErrExcludedProject {
+		t.Fatalf("err = %v, want ErrExcludedProject", err)
+	}
+	for _, table := range []string{"sessions", "projects", "permission_requests", "events"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s = %d rows after excluded hook, want 0", table, n)
+		}
+	}
+
+	// Exclusion gates row CREATION only: a session that already exists (e.g.
+	// ingested before the exclude list was configured) proceeds normally.
+	seedSession(t, db, "uuid-preexisting") // cwd /tmp/proj
+	if _, _, _, err := svc.Open(hookInput(t, "uuid-preexisting", "Bash", "ls")); err != nil {
+		t.Fatalf("pre-existing session must still be served with rows: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM permission_requests`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("permission_requests = %d, want 1", n)
+	}
+}
+
 // TestHookWithoutCwdFallsBackToUnknown: only a genuinely absent cwd may mint
 // the '(unknown)' placeholder (healed later by the ingest upsert).
 func TestHookWithoutCwdFallsBackToUnknown(t *testing.T) {

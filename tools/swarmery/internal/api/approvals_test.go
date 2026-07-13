@@ -433,3 +433,23 @@ func TestHookBadPayload(t *testing.T) {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// TestHookExcludedCwd204: a hook from an excluded cwd is answered 204
+// immediately (no decision -> the shim fails open to the native dialog) and
+// persists nothing.
+func TestHookExcludedCwd204(t *testing.T) {
+	srv, db, _ := approvalsTestServer(t, approvals.Options{
+		Exclude: ingest.ParseExcludeList(ingest.DefaultExclude),
+	})
+	r := <-postHook(srv, context.Background(), hookBody("excluded-cwd", "Bash", "ls"))
+	if r.err != nil || r.status != http.StatusNoContent {
+		t.Fatalf("excluded hook: status = %d, err = %v; want 204", r.status, r.err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("sessions = %d after excluded hook, want 0", n)
+	}
+}

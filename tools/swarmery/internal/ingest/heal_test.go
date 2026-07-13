@@ -161,7 +161,7 @@ func TestHealStubSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	healed, err := HealStubSessions(db, root)
+	healed, err := HealStubSessions(db, root, nil)
 	if err != nil {
 		t.Fatalf("heal: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestHealStubSessions(t *testing.T) {
 		`DELETE FROM sessions WHERE session_uuid = 'aaaaaaaa-0000-4000-8000-000000000001'`); err != nil {
 		t.Fatal(err)
 	}
-	healed, err = HealStubSessions(db, root)
+	healed, err = HealStubSessions(db, root, nil)
 	if err != nil {
 		t.Fatalf("heal (2nd pass): %v", err)
 	}

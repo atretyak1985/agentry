@@ -43,6 +43,11 @@ var (
 	ErrAlreadyResolved = errors.New("permission request already resolved")
 	ErrTooManyPending  = errors.New("too many pending requests for session")
 	ErrBadRequest      = errors.New("malformed hook payload")
+	// ErrExcludedProject: the hook cwd matches the exclude list and no session
+	// row exists yet. The request is still SERVED — the API answers 204 (no
+	// decision) and the shim fails open to the native dialog — but no
+	// session/project rows are persisted for the excluded path.
+	ErrExcludedProject = errors.New("project excluded from tracking")
 )
 
 // maxPendingPerSession caps runaway hook storms: beyond it Open fails fast
@@ -67,10 +72,11 @@ type Decision struct {
 
 // Options tunes a Service; zero values fall back to defaults.
 type Options struct {
-	Timeout       time.Duration     // approval_timeout (default 120s)
-	SweepInterval time.Duration     // expiry sweeper cadence (default 5s)
-	Thresholds    ingest.Thresholds // session status heuristic windows
-	Now           func() time.Time  // test seam (default time.Now)
+	Timeout       time.Duration      // approval_timeout (default 120s)
+	SweepInterval time.Duration      // expiry sweeper cadence (default 5s)
+	Thresholds    ingest.Thresholds  // session status heuristic windows
+	Exclude       ingest.ExcludeList // cwd globs that never mint session/project rows
+	Now           func() time.Time   // test seam (default time.Now)
 }
 
 // Service owns the approvals lifecycle. Bus may be nil (no live WS updates,
@@ -300,6 +306,12 @@ func (s *Service) resolveSessionLocked(in HookInput) (int64, error) {
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
+	}
+
+	// Exclusion (row creation only — an already-tracked session proceeds
+	// normally above): excluded cwds are still served, but persist nothing.
+	if in.CWD != "" && s.opt.Exclude.MatchPath(in.CWD) {
+		return 0, ErrExcludedProject
 	}
 
 	// The hook stdin carries the real cwd (docs/hooks-format.md E1) — attribute

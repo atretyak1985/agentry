@@ -89,7 +89,12 @@ type stubSession struct {
 // alone. Once no session references it any more, the '(unknown)' projects
 // row is deleted. Returns the ids of healed sessions so callers can emit
 // session_updated and dashboards converge without a reload.
-func HealStubSessions(db *sql.DB, projectsRoot string) ([]int64, error) {
+//
+// Exclusion gates row CREATION only: re-pointing a stub at an
+// already-tracked project is always allowed, but an excluded cwd never mints
+// a new projects row (the owner removes such data with a one-off cleanup,
+// and the scanner skips the dirs going forward).
+func HealStubSessions(db *sql.DB, projectsRoot string, exclude ExcludeList) ([]int64, error) {
 	rows, err := db.Query(
 		`SELECT s.id, s.session_uuid, s.cwd, s.started_at, p.path
 		 FROM sessions s JOIN projects p ON p.id = s.project_id
@@ -127,6 +132,16 @@ func HealStubSessions(db *sql.DB, projectsRoot string) ([]int64, error) {
 		changed := false
 
 		if meta.CWD != "" && s.projectPath == UnknownProjectPath {
+			if exclude.MatchPath(meta.CWD) {
+				var known int
+				if err := db.QueryRow(
+					`SELECT COUNT(*) FROM projects WHERE path = ?`, meta.CWD).Scan(&known); err != nil {
+					return healed, err
+				}
+				if known == 0 {
+					continue // excluded cwd with no existing project row — leave the stub
+				}
+			}
 			projectID, _, err := UpsertProject(db, meta.CWD, meta.FirstTS, "")
 			if err != nil {
 				return healed, err
