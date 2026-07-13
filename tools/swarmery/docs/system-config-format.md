@@ -543,6 +543,47 @@ commits there.
 
 ---
 
+## 10. Hook disable mechanism (`_swarmery_disabled_hooks`, step-10)
+
+There is no native per-hook disable in Claude Code (§3.3) and JSON carries no
+comments, so a dormant entry cannot stay in place. Disable therefore **moves**
+the entry into a service top-level key `_swarmery_disabled_hooks` (same entry
+shape + its original event and position); enable is the exact reverse move.
+CC tolerates unknown top-level settings keys (§3.5: unknown keys are data, not
+errors), so the parked entries are inert. `sysscan` recognizes the section and
+lists such entries with `enabled=0`.
+
+Before:
+
+```json
+{ "hooks": { "PreToolUse": [
+    { "matcher": "Bash", "hooks": [ { "type": "command", "command": "./check.sh" } ] } ] } }
+```
+
+After `toggle {enabled:false}` (the emptied matcher group is dropped; the
+record keeps the original matcher plus group/hook indices so enable restores
+the exact position):
+
+```json
+{ "_swarmery_disabled_hooks": [
+    { "event": "PreToolUse", "groupIndex": 0, "hookIndex": 0, "matcher": "Bash",
+      "hook": { "type": "command", "command": "./check.sh" } } ],
+  "hooks": {} }
+```
+
+Serialization standard (recorded, not silently downgraded): the canonical
+stdlib form hookcfg has always written — `json.MarshalIndent`, 2-space indent,
+sorted object keys, trailing newline. A file already in canonical form
+roundtrips **byte-for-byte** (golden test); a non-canonical file is normalized
+(semantically identical, stable ordering) on its first edit, after which every
+edit is byte-surgical (single-hunk diff, test-asserted). Hooks with
+`managed=swarmery` are refused (403) — they are the daemon's own data-collection
+channel and are managed only via `swarmery hooks`.
+
+Observed on: 2026-07-13, machine-local.
+
+---
+
 ## Open questions
 
 1. **Plugin-shipped `hooks/hooks.json`** (§5.4): active-but-not-in-settings hooks are

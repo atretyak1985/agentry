@@ -367,6 +367,12 @@ func cmdServe(args []string) error {
 			}
 		}()
 		log.Printf("swarmery system scanner watching %s (rescan %s)", sysCfg.ClaudeDir, sysscan.DefaultRescanInterval)
+
+		// phase 4 Stage 2 (step-10): hooks toggle/edit go through the sysedit
+		// pipeline against the same scanner instance (the post-write rescan
+		// converges the registry). Without ingest there is no scanner, so the
+		// endpoints stay detached and serve 503.
+		api.AttachHookEditor(sysedit.New(db, sys, sysedit.Config{ClaudeDir: sysCfg.ClaudeDir}))
 	}
 
 	// phase 2: approvals — long-poll registry + expiry sweeper + heartbeat.
