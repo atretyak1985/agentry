@@ -376,6 +376,10 @@ func cmdServe(args []string) error {
 	api.AttachApprovals(svc)
 	go svc.RunSweeper(context.Background())
 
+	// phase 4: system — GET /api/system/overlays reads overlays/*/project.json
+	// live from this dir on every request (empty disables the listing).
+	api.AttachOverlaysDir(sysCfg.OverlaysDir)
+
 	handler, err := api.NewServer(db, !*noIngest)
 	if err != nil {
 		return err

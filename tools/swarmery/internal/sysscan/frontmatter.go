@@ -82,6 +82,14 @@ func splitFrontmatter(content []byte) (block, body []byte, err error) {
 	return nil, nil, fmt.Errorf("unterminated frontmatter (no closing ---)")
 }
 
+// SplitFrontmatter is the exported form of splitFrontmatter for the API
+// layer (step-05 detail endpoints serve frontmatter and body separately).
+// Same contract: raw YAML block + markdown body; helper files (no leading
+// `---`) and unterminated blocks return a non-nil error.
+func SplitFrontmatter(content []byte) (block, body []byte, err error) {
+	return splitFrontmatter(content)
+}
+
 // isFrontmatterStart reports whether the first line of content is exactly
 // `---` (trailing CR/space tolerated).
 func isFrontmatterStart(content []byte) bool {
