@@ -433,7 +433,10 @@ erDiagram
         initPanZoom(svgEl);
       } catch (err) {
         console.error(err);
-        host.innerHTML = `<div class="error-banner">Failed to render diagram: ${err?.message ?? err}</div>`;
+        const banner = document.createElement('div');
+        banner.className = 'error-banner';
+        banner.textContent = `Failed to render diagram: ${err?.message ?? err}`;
+        host.replaceChildren(banner);
       }
     }
 
