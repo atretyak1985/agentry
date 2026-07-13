@@ -72,35 +72,9 @@ func TestWSMessageShape(t *testing.T) {
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
 
-	// Wait for the subscription to be registered before publishing: the
-	// handler subscribes after the upgrade completes, so poll-publish.
-	published := false
-	readFrame := func() map[string]json.RawMessage {
-		t.Helper()
-		for {
-			if !published {
-				bus.Publish(ingest.Notification{Type: ingest.NoteSessionStarted, SessionID: 1})
-			}
-			readCtx, readCancel := context.WithTimeout(ctx, 300*time.Millisecond)
-			typ, data, err := c.Read(readCtx)
-			readCancel()
-			if err != nil {
-				if ctx.Err() != nil {
-					t.Fatalf("read: %v", err)
-				}
-				continue // handler not subscribed yet — republish and retry
-			}
-			published = true
-			if typ != websocket.MessageText {
-				t.Fatalf("frame type = %v, want text", typ)
-			}
-			var frame map[string]json.RawMessage
-			if err := json.Unmarshal(data, &frame); err != nil {
-				t.Fatalf("frame is not a JSON object: %v\n%s", err, data)
-			}
-			return frame
-		}
-	}
+	readFrame := newFrameReader(t, ctx, c, func() {
+		bus.Publish(ingest.Notification{Type: ingest.NoteSessionStarted, SessionID: 1})
+	})
 
 	// session_started (poll-published above).
 	frame := readFrame()
@@ -217,35 +191,11 @@ func TestWSPermissionMessageShape(t *testing.T) {
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
 
-	published := false
-	readFrame := func(note ingest.Notification) map[string]json.RawMessage {
-		t.Helper()
-		for {
-			if !published {
-				bus.Publish(note)
-			}
-			readCtx, readCancel := context.WithTimeout(ctx, 300*time.Millisecond)
-			typ, data, err := c.Read(readCtx)
-			readCancel()
-			if err != nil {
-				if ctx.Err() != nil {
-					t.Fatalf("read: %v", err)
-				}
-				continue // handler not subscribed yet — republish and retry
-			}
-			published = true
-			if typ != websocket.MessageText {
-				t.Fatalf("frame type = %v, want text", typ)
-			}
-			var frame map[string]json.RawMessage
-			if err := json.Unmarshal(data, &frame); err != nil {
-				t.Fatalf("frame is not a JSON object: %v\n%s", err, data)
-			}
-			return frame
-		}
-	}
+	readFrame := newFrameReader(t, ctx, c, func() {
+		bus.Publish(ingest.Notification{Type: ingest.NotePermissionRequested, SessionID: 1, RequestID: reqID})
+	})
 
-	frame := readFrame(ingest.Notification{Type: ingest.NotePermissionRequested, SessionID: 1, RequestID: reqID})
+	frame := readFrame()
 	assertEnvelope(t, frame, "permission_requested")
 	assertPayloadKeys(t, frame, permissionRequestKeys)
 	var pr struct {
@@ -277,7 +227,7 @@ func TestWSPermissionMessageShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-ch
-	frame = readFrame(ingest.Notification{Type: ingest.NotePermissionResolved, SessionID: 1, RequestID: reqID})
+	frame = readFrame()
 	for {
 		var typ string
 		json.Unmarshal(frame["type"], &typ)
@@ -285,7 +235,7 @@ func TestWSPermissionMessageShape(t *testing.T) {
 			break
 		}
 		// Skip the session_updated/event_appended frames the resolve produced.
-		frame = readFrame(ingest.Notification{})
+		frame = readFrame()
 	}
 	assertPayloadKeys(t, frame, permissionRequestKeys)
 	var resolved struct {
@@ -300,6 +250,70 @@ func TestWSPermissionMessageShape(t *testing.T) {
 	if resolved.Status != "denied" || resolved.ResolvedVia == nil || *resolved.ResolvedVia != "dashboard" ||
 		resolved.Reason == nil || *resolved.Reason != "nope" || resolved.ResolvedAt == nil {
 		t.Errorf("permission_resolved payload = %+v", resolved)
+	}
+}
+
+// newFrameReader wires the poll-publish handshake: the /api/ws handler
+// subscribes to the bus only after the upgrade returns, so poll is republished
+// on an interval until its first frame arrives. Reads carry the test's full
+// deadline — in coder/websocket an expired Read context closes the ENTIRE
+// connection (setupReadTimeout → c.close()), so a short per-read timeout is
+// unrecoverable once the first read misses (the CI-only 10 s hang this
+// replaces). Republishing can deliver the polled frame more than once; after
+// the first frame is returned, later duplicates of its type are skipped.
+func newFrameReader(t *testing.T, ctx context.Context, c *websocket.Conn, poll func()) func() map[string]json.RawMessage {
+	t.Helper()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			poll()
+			select {
+			case <-stop:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+	subscribed := false
+	t.Cleanup(func() {
+		if !subscribed {
+			close(stop)
+		}
+		<-done
+	})
+	var pollType string
+	return func() map[string]json.RawMessage {
+		t.Helper()
+		for {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if typ != websocket.MessageText {
+				t.Fatalf("frame type = %v, want text", typ)
+			}
+			var frame map[string]json.RawMessage
+			if err := json.Unmarshal(data, &frame); err != nil {
+				t.Fatalf("frame is not a JSON object: %v\n%s", err, data)
+			}
+			var frameType string
+			if err := json.Unmarshal(frame["type"], &frameType); err != nil {
+				t.Fatalf("frame type is not a JSON string: %v\n%s", err, data)
+			}
+			if !subscribed {
+				subscribed = true
+				pollType = frameType
+				close(stop)
+				<-done
+				return frame
+			}
+			if frameType == pollType {
+				continue // duplicate of the poll-published note
+			}
+			return frame
+		}
 	}
 }
 
