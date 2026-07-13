@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { Session } from '../api/types';
 import { projectColor } from '../lib/colors';
 import { fmtSpan, fmtTime, projectLabel } from '../lib/format';
@@ -53,7 +53,9 @@ export function SessionCard({
   /** Row inside a grouped list card (no own border — hover fill instead). */
   flat?: boolean;
 }): JSX.Element {
+  const navigate = useNavigate();
   const liveNow = now !== null && NOW_STATUSES.has(session.status);
+  const goToDetail = (): void => { navigate(`/sessions/${session.id}`); };
 
   /* Stacked card — standalone cards and the <900px rows inside day groups. */
   const card = (
@@ -85,33 +87,41 @@ export function SessionCard({
         <div className="mt-[3px] truncate font-mono text-[10.5px] text-green">now: {now}</div>
       )}
       {session.procPid != null && (
-        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-        <div className="mt-[3px] flex" onClick={(e) => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); }}>
+        <div className="mt-[3px] flex" onClick={(e) => e.stopPropagation()}>
           <KillButton session={session} />
         </div>
       )}
     </>
   );
 
+  /* Navigation via div+useNavigate instead of <Link> so that KillButton's
+   * stopPropagation reliably blocks navigation — <a> tags intercept clicks at
+   * the browser level before React's synthetic event system can stop them. */
   if (!flat) {
     return (
-      <Link
-        to={`/sessions/${session.id}`}
-        className={`mb-2.5 block rounded-xl border bg-surface px-3.5 py-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-brand ${
+      <div
+        role="link"
+        tabIndex={0}
+        onClick={goToDetail}
+        onKeyDown={(e) => { if (e.key === 'Enter') goToDetail(); }}
+        className={`mb-2.5 block cursor-pointer rounded-xl border bg-surface px-3.5 py-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-brand ${
           CARD_BORDERS[session.status] ?? 'border-line hover:border-ink-dim/50'
         }`}
       >
         {card}
-      </Link>
+      </div>
     );
   }
 
   /* Flat rows: mobile keeps the stacked card; ≥900px renders the aligned
    * table row (Redesign sessions grid — one column template per day group). */
   return (
-    <Link
-      to={`/sessions/${session.id}`}
-      className="block transition-colors hover:bg-surface2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
+    <div
+      role="link"
+      tabIndex={0}
+      onClick={goToDetail}
+      onKeyDown={(e) => { if (e.key === 'Enter') goToDetail(); }}
+      className="block cursor-pointer transition-colors hover:bg-surface2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
     >
       <div className="px-3.5 py-[11px] desk:hidden">{card}</div>
       <div className={`hidden items-center gap-3 px-3.5 py-[9px] desk:grid ${SESSION_ROW_GRID}`}>
@@ -145,8 +155,7 @@ export function SessionCard({
             <span className="block truncate font-mono text-[10.5px] text-green">now: {now}</span>
           )}
           {session.procPid != null && (
-            // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-            <span className="mt-[2px] flex" onClick={(e) => { e.stopPropagation(); e.nativeEvent.stopImmediatePropagation(); }}>
+            <span className="mt-[2px] flex" onClick={(e) => e.stopPropagation()}>
               <KillButton session={session} />
             </span>
           )}
@@ -161,6 +170,6 @@ export function SessionCard({
           <DurationPill status={session.status} startedAt={session.startedAt} endedAt={session.endedAt} />
         </span>
       </div>
-    </Link>
+    </div>
   );
 }

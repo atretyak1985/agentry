@@ -71,13 +71,7 @@ export function KillButton({ session }: { session: Session }): JSX.Element | nul
     }
   };
 
-  // Prevent the enclosing <Link> from navigating when Kill is clicked.
-  // stopImmediatePropagation blocks native DOM handlers; stopPropagation
-  // blocks React's synthetic bubbling — both are needed inside a <Link>.
-  const stop = (e: MouseEvent): void => {
-    e.stopPropagation();
-    e.nativeEvent.stopImmediatePropagation();
-  };
+  const stop = (e: MouseEvent): void => { e.stopPropagation(); };
 
   if (forceReady && session.procState && KILLABLE.has(session.procState)) {
     return (
