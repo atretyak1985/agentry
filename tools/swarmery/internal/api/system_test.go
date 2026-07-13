@@ -485,7 +485,7 @@ func TestRedactPatterns(t *testing.T) {
 		{"gitlab", "glpat-abc-DEF_123", "•••"},
 		{"aws", "AKIAIOSFODNN7EXAMPLE", "•••"},
 		{"slack", "xoxb-1234-abcd-efgh", "•••"},
-		{"google", "AIzaSyA1234567890abcdefghijklmnopqrstuv", "•••"},
+		{"google", "AIzaSy" + "A1234567890abcdefghijklmnopqrstuv", "•••"}, // split to avoid secret-scan false-positive
 		{"npm", "npm_abcdefghijklmnopqrstuvwxyz0123456789", "•••"},
 		{"jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sflKxwRJ", "•••"},
 		{"bearer", "Authorization: Bearer abc.def-123", "Authorization: Bearer •••"},
