@@ -5,18 +5,55 @@ import { fmtCost } from '../lib/format';
 
 const KILLABLE = new Set(['running', 'orphaned']);
 
+export type KillSlotKind = 'killable' | 'exited' | 'none';
+
+/**
+ * Decide what the action slot next to a session should show, purely from
+ * session fields (no state, no rendering) — kept separate from the component
+ * so the decision table is unit-testable without a DOM/test-renderer.
+ *
+ * - 'none': no known PID, or no proc_state yet reported — nothing to render.
+ * - 'exited': PID known but the process already exited (`procState: 'dead'`).
+ *   There is nothing left to signal (and re-signaling a recycled PID would be
+ *   unsafe), but the row must still say *why* there is no action rather than
+ *   silently dropping the slot and looking stuck with no controls at all.
+ * - 'killable': process is confirmed alive (`running`/`orphaned`) — render
+ *   the interactive Kill button.
+ */
+export function killSlotKind(session: Session): KillSlotKind {
+  if (!session.procPid || !session.procState) return 'none';
+  if (KILLABLE.has(session.procState)) return 'killable';
+  if (session.procState === 'dead') return 'exited';
+  return 'none';
+}
+
 /**
  * Kill button for live sessions with a known PID.
  * Flow: Kill → confirmation dialog → SIGTERM sent → if still alive after 10 s
  * the button becomes "Force kill" → SIGKILL.
  * Sessions from remote machines (procPid null) never show a button.
+ *
+ * Terminal proc states (e.g. `dead`) render a disabled "exited" tag instead of
+ * disappearing outright — see `killSlotKind`.
  */
 export function KillButton({ session }: { session: Session }): JSX.Element | null {
   const [confirming, setConfirming] = useState(false);
   const [killing, setKilling] = useState(false);
   const [forceReady, setForceReady] = useState(false);
 
-  if (!session.procPid || !session.procState || !KILLABLE.has(session.procState)) return null;
+  const kind = killSlotKind(session);
+  if (kind === 'none') return null;
+
+  if (kind === 'exited') {
+    return (
+      <span
+        className="rounded border border-ink-dim/20 px-2 py-0.5 font-mono text-[10.5px] font-medium text-ink-dim"
+        title="Process already exited — nothing to kill"
+      >
+        exited
+      </span>
+    );
+  }
 
   const doKill = async (force: boolean) => {
     setKilling(true);

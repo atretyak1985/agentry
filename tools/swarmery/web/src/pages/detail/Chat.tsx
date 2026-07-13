@@ -174,7 +174,14 @@ export function Chat({
     return <Empty>no conversation in this session yet</Empty>;
   }
   const assistantTurns = turns.filter((t) => t.role === 'assistant');
-  const needsBackfill = assistantTurns.length > 0 && assistantTurns.every((t) => t.text === null);
+  // Suppress the backfill hint for active/idle sessions: text === null is normal
+  // while the ingest pipeline hasn't yet processed in-flight turns. The hint is
+  // only useful for completed/killed sessions whose rows predate migration 0005.
+  const needsBackfill =
+    assistantTurns.length > 0 &&
+    assistantTurns.every((t) => t.text === null) &&
+    detail.status !== 'active' &&
+    detail.status !== 'idle';
   return (
     <div className="mt-3">
       {turns.map((turn) => (

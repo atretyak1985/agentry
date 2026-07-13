@@ -7,8 +7,8 @@
 // contentHash as base_hash (step-10 contract); managed=swarmery entries stay
 // read-only (installer-owned), and a stale hash is resolved ONLY by refetch.
 
-import { useCallback, useState } from 'react';
-import type { LintSeverity, SystemHook } from '../../api/types';
+import { useCallback, useEffect, useState } from 'react';
+import type { LintSeverity, Project, SystemHook } from '../../api/types';
 import {
   fetchSystemHooks,
   toggleSystemHook,
@@ -296,9 +296,12 @@ function HookRow({
   );
 }
 
+const SEARCH_DEBOUNCE_MS = 150;
+
 export function HooksTab({
   scope,
   project,
+  projects,
   lint,
   refreshKey,
   onScope,
@@ -307,6 +310,7 @@ export function HooksTab({
 }: {
   scope: 'global' | 'project' | null;
   project: string | null;
+  projects: Project[];
   /** Summary-badge lint filter: only hook_no_timeout (warn) applies to hooks. */
   lint: LintSeverity | null;
   refreshKey: number;
@@ -315,47 +319,72 @@ export function HooksTab({
   /** A write hit the global readonly kill-switch — page-level banner. */
   onReadonly: () => void;
 }): JSX.Element {
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim().toLowerCase()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const fetcher = useCallback(
     (filters: SystemListFilters) => fetchSystemHooks(filters),
     [],
   );
-  const { rows, error, projectOptions, retry } = useSystemList(fetcher, scope, project, refreshKey);
+  const { rows, error, retry } = useSystemList(fetcher, scope, project, refreshKey);
 
   if (error !== null) return <ErrorBox message={error} onRetry={retry} />;
 
-  const filtered =
+  const lintFiltered =
     rows === null ? null : lint === 'warn' ? rows.filter((h) => h.timeout === null) : lint !== null ? [] : rows;
+  const filtered =
+    lintFiltered === null
+      ? null
+      : query === ''
+        ? lintFiltered
+        : lintFiltered.filter((h) =>
+            [h.command, h.event, h.matcher].some(
+              (v) => v != null && v.toLowerCase().includes(query),
+            ),
+          );
 
   return (
-    <div>
-      <FiltersRow
-        scope={scope}
-        project={project}
-        projectOptions={projectOptions}
-        onScope={onScope}
-        onProject={onProject}
-      />
-      {filtered === null && <Loading label="hooks…" />}
-      {filtered !== null && filtered.length === 0 && (
-        <Empty>
-          {rows !== null && rows.length > 0
-            ? 'no hooks match the current filter'
-            : 'no hooks registered — no hooks blocks in ~/.claude/settings.json or any scanned project settings on this machine'}
-        </Empty>
-      )}
-      {filtered !== null &&
-        groupByEvent(filtered).map(([event, entries]) => (
-          <div key={event}>
-            <GroupHeader>
-              {event} · {String(entries.length)}
-            </GroupHeader>
-            <div className="overflow-hidden rounded-xl border border-line bg-surface">
-              {entries.map((hook) => (
-                <HookRow key={hook.id} hook={hook} onMutated={retry} onReadonly={onReadonly} />
-              ))}
+    <div className="flex h-full flex-col">
+      {/* filters — never scroll */}
+      <div className="shrink-0 pt-3 pb-2">
+        <FiltersRow
+          scope={scope}
+          project={project}
+          projects={projects}
+          search={search}
+          onSearch={setSearch}
+          onScope={onScope}
+          onProject={onProject}
+        />
+      </div>
+      {/* scrollable hook list */}
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">
+        {filtered === null && <Loading label="hooks…" />}
+        {filtered !== null && filtered.length === 0 && (
+          <Empty>
+            {rows !== null && rows.length > 0
+              ? 'no hooks match the current filter'
+              : 'no hooks registered — no hooks blocks in ~/.claude/settings.json or any scanned project settings on this machine'}
+          </Empty>
+        )}
+        {filtered !== null &&
+          groupByEvent(filtered).map(([event, entries]) => (
+            <div key={event}>
+              <GroupHeader>
+                {event} · {String(entries.length)}
+              </GroupHeader>
+              <div className="overflow-hidden rounded-xl border border-line bg-surface">
+                {entries.map((hook) => (
+                  <HookRow key={hook.id} hook={hook} onMutated={retry} onReadonly={onReadonly} />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+      </div>
     </div>
   );
 }

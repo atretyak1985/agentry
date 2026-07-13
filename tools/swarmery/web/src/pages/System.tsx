@@ -8,7 +8,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { LintSeverity, SystemItem, SystemSummary, WSMessage } from '../api/types';
+import type { LintSeverity, Project, SystemItem, SystemSummary, WSMessage } from '../api/types';
+import { fetchProjects } from '../api';
 import {
   fetchSystemCommands,
   fetchSystemItems,
@@ -103,11 +104,13 @@ function SummaryHeader({
 
 function ItemRow({
   item,
+  projectName,
   selected,
   selectable,
   onSelect,
 }: {
   item: SystemItem;
+  projectName?: string | null;
   selected: boolean;
   selectable: boolean;
   onSelect: () => void;
@@ -123,7 +126,7 @@ function ItemRow({
           <span className="font-mono text-[10.5px] text-ink-dim">{item.model}</span>
         )}
         <span className="ml-auto flex items-center gap-1.5">
-          <ScopeBadge scope={item.scope} projectSlug={item.projectSlug} />
+          <ScopeBadge scope={item.scope} projectSlug={item.projectSlug} projectName={projectName} />
           <OriginBadge origin={item.origin} pluginName={item.pluginName} />
         </span>
       </div>
@@ -174,11 +177,14 @@ const ITEM_EMPTY: Record<'agents' | 'skills' | 'commands', string> = {
     'no commands on this machine — ~/.claude/commands/ and the scanned projects’ .claude/commands/ are absent or empty',
 };
 
+const SEARCH_DEBOUNCE_MS = 150;
+
 function ItemsTab({
   kind,
   selectable,
   scope,
   project,
+  projects,
   lint,
   selectedId,
   refreshKey,
@@ -194,6 +200,7 @@ function ItemsTab({
   selectable: boolean;
   scope: 'global' | 'project' | null;
   project: string | null;
+  projects: Project[];
   lint: LintSeverity | null;
   selectedId: number | null;
   refreshKey: number;
@@ -209,6 +216,13 @@ function ItemsTab({
 }): JSX.Element {
   // "+ new agent" (step-12) — the form collapses back into the button.
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim().toLowerCase()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const fetcher = useCallback(
     (filters: SystemListFilters): Promise<SystemItem[]> =>
       kind === 'commands'
@@ -226,45 +240,30 @@ function ItemsTab({
         : fetchSystemItems(kind, filters),
     [kind],
   );
-  const { rows, error, projectOptions, retry } = useSystemList(fetcher, scope, project, refreshKey);
+  const { rows, error, retry } = useSystemList(fetcher, scope, project, refreshKey);
 
   if (error !== null) return <ErrorBox message={error} onRetry={retry} />;
 
-  const filtered = rows === null ? null : lint !== null ? rows.filter((r) => r.lintMax === lint) : rows;
+  const lintFiltered = rows === null ? null : lint !== null ? rows.filter((r) => r.lintMax === lint) : rows;
+  const filtered =
+    lintFiltered === null
+      ? null
+      : query === ''
+        ? lintFiltered
+        : lintFiltered.filter((r) =>
+            [r.name, r.description, r.path].some(
+              (v) => v != null && v.toLowerCase().includes(query),
+            ),
+          );
   const detailOpen = selectable && selectedId !== null;
 
-  const list = (
-    <div>
-      <FiltersRow
-        scope={scope}
-        project={project}
-        projectOptions={projectOptions}
-        onScope={onScope}
-        onProject={onProject}
-      />
-      {kind === 'agents' && (
-        <div className="mt-3">
-          {creating ? (
-            <CreateAgentForm
-              onCancel={() => setCreating(false)}
-              onCreated={(id) => {
-                setCreating(false);
-                onMutated();
-                onSelect(id);
-              }}
-              onReadonly={onReadonly}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-surface2"
-            >
-              + new agent
-            </button>
-          )}
-        </div>
-      )}
+  // name lookup map for ScopeBadge — avoids passing projects[] into every row
+  const projectNames = Object.fromEntries(
+    projects.map((p) => [p.slug, p.name ?? p.slug]),
+  );
+
+  const listContent = (
+    <>
       {filtered === null && <Loading label={`${kind}…`} />}
       {filtered !== null && filtered.length === 0 && (
         <Empty>
@@ -279,6 +278,7 @@ function ItemsTab({
             <ItemRow
               key={item.id}
               item={item}
+              projectName={item.projectSlug !== null ? (projectNames[item.projectSlug] ?? item.projectSlug) : null}
               selectable={selectable}
               selected={selectedId === item.id}
               onSelect={() => onSelect(selectedId === item.id ? null : item.id)}
@@ -286,24 +286,70 @@ function ItemsTab({
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 
-  if (!detailOpen || kind === 'commands') return list;
   return (
-    <div className="wide:grid wide:grid-cols-[minmax(300px,380px)_minmax(0,1fr)] wide:items-start wide:gap-6">
-      {list}
-      <div className="mt-4 min-w-0 wide:mt-3">
-        <SystemItemPanel
-          kind={kind}
-          id={selectedId}
-          refreshKey={refreshKey}
-          onClose={() => onSelect(null)}
-          onMutated={onMutated}
-          onDeleted={onDeleted}
-          onReadonly={onReadonly}
+    <div className="flex h-full flex-col">
+      {/* filters + new agent — never scroll */}
+      <div className="shrink-0 pt-3 pb-2">
+        <FiltersRow
+          scope={scope}
+          project={project}
+          projects={projects}
+          search={search}
+          onSearch={setSearch}
+          onScope={onScope}
+          onProject={onProject}
         />
+        {kind === 'agents' && (
+          <div className="mt-3">
+            {creating ? (
+              <CreateAgentForm
+                onCancel={() => setCreating(false)}
+                onCreated={(id) => {
+                  setCreating(false);
+                  onMutated();
+                  onSelect(id);
+                }}
+                onReadonly={onReadonly}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreating(true)}
+                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-surface2"
+              >
+                + new agent
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* scrollable area — list only (no detail) or 2-col grid with independent scrolls */}
+      {!detailOpen || kind === 'commands' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">
+          {listContent}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 wide:grid wide:grid-cols-[minmax(300px,380px)_minmax(0,1fr)] wide:gap-6 wide:overflow-hidden">
+          <div className="overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">
+            {listContent}
+          </div>
+          <div className="overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">
+            <SystemItemPanel
+              kind={kind}
+              id={selectedId}
+              refreshKey={refreshKey}
+              onClose={() => onSelect(null)}
+              onMutated={onMutated}
+              onDeleted={onDeleted}
+              onReadonly={onReadonly}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -319,6 +365,7 @@ export function System(): JSX.Element {
   const itemParam = searchParams.get('item');
   const selectedId = itemParam !== null && /^\d+$/.test(itemParam) ? Number(itemParam) : null;
 
+  const [projects, setProjects] = useState<Project[]>([]);
   const [summary, setSummary] = useState<SystemSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -342,6 +389,12 @@ export function System(): JSX.Element {
     },
     [setSearchParams],
   );
+
+  useEffect(() => {
+    fetchProjects()
+      .then(setProjects)
+      .catch(() => setProjects([]));
+  }, []);
 
   const loadSummary = useCallback((): void => {
     fetchSystemSummary()
@@ -400,45 +453,49 @@ export function System(): JSX.Element {
   };
 
   return (
-    <div>
-      <SummaryHeader summary={summary} lint={lint} onLint={onLint} />
-      {summaryError !== null && <ErrorBox message={summaryError} onRetry={loadSummary} />}
-      {readonly && (
-        <div
-          className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3.5 py-2.5 font-mono text-[12px] text-amber"
-          role="alert"
-        >
-          ▲ System is in readonly mode — the daemon rejected a write
-          (SWARMERY_SYSTEM_READONLY). Edits, toggles, rollbacks and deletes stay off until the
-          kill-switch is lifted.
-        </div>
-      )}
-
-      <div
-        className="mt-4 flex gap-0.5 overflow-x-auto border-b border-line [-webkit-overflow-scrolling:touch]"
-        role="tablist"
-      >
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={`-mb-px shrink-0 border-b-2 px-3.5 py-2 text-[12.5px] font-medium whitespace-nowrap transition-colors ${
-              tab === t ? 'border-brand text-brand' : 'border-transparent text-ink-dim hover:text-ink'
-            }`}
+    <div className="flex h-full flex-col">
+      {/* sticky header: title + summary + lint badges + readonly banner + tabs */}
+      <div className="shrink-0">
+        <SummaryHeader summary={summary} lint={lint} onLint={onLint} />
+        {summaryError !== null && <ErrorBox message={summaryError} onRetry={loadSummary} />}
+        {readonly && (
+          <div
+            className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3.5 py-2.5 font-mono text-[12px] text-amber"
+            role="alert"
           >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
+            ▲ System is in readonly mode — the daemon rejected a write
+            (SWARMERY_SYSTEM_READONLY). Edits, toggles, rollbacks and deletes stay off until the
+            kill-switch is lifted.
+          </div>
+        )}
+        <div
+          className="mt-4 flex gap-0.5 overflow-x-auto border-b border-line [-webkit-overflow-scrolling:touch]"
+          role="tablist"
+        >
+          {TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`-mb-px shrink-0 border-b-2 px-3.5 py-2 text-[12.5px] font-medium whitespace-nowrap transition-colors ${
+                tab === t ? 'border-brand text-brand' : 'border-transparent text-ink-dim hover:text-ink'
+              }`}
+            >
+              {TAB_LABELS[t]}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div role="tabpanel">
+      {/* content area — each tab manages its own internal scroll */}
+      <div className="min-h-0 flex-1 overflow-hidden" role="tabpanel">
         {tab === 'agents' && (
           <ItemsTab
             kind="agents"
             selectable
+            projects={projects}
             selectedId={selectedId}
             onSelect={onSelect}
             onMutated={refresh}
@@ -451,6 +508,7 @@ export function System(): JSX.Element {
           <ItemsTab
             kind="skills"
             selectable
+            projects={projects}
             selectedId={selectedId}
             onSelect={onSelect}
             onMutated={refresh}
@@ -459,11 +517,12 @@ export function System(): JSX.Element {
             {...listProps}
           />
         )}
-        {tab === 'hooks' && <HooksTab onReadonly={onReadonly} {...listProps} />}
+        {tab === 'hooks' && <HooksTab projects={projects} onReadonly={onReadonly} {...listProps} />}
         {tab === 'commands' && (
           <ItemsTab
             kind="commands"
             selectable={false}
+            projects={projects}
             selectedId={null}
             onSelect={onSelect}
             onMutated={refresh}
@@ -472,7 +531,11 @@ export function System(): JSX.Element {
             {...listProps}
           />
         )}
-        {tab === 'templates' && <TemplatesTab refreshKey={refreshKey} />}
+        {tab === 'templates' && (
+          <div className="h-full overflow-y-auto pb-4 pt-3 [-webkit-overflow-scrolling:touch]">
+            <TemplatesTab refreshKey={refreshKey} />
+          </div>
+        )}
       </div>
     </div>
   );

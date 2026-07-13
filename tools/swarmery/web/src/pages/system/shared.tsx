@@ -3,23 +3,30 @@
 // hook every tab uses. Visual language mirrors components/ui.tsx (hairline
 // pill chips, mono micro-type); tooltips are native `title` attributes.
 
-import { useEffect, useState } from 'react';
-import type { LintSeverity } from '../../api/types';
+import { useEffect, useRef, useState } from 'react';
+import type { LintSeverity, Project } from '../../api/types';
 import type { SystemListFilters } from '../../api/system';
+import { projectColor } from '../../lib/colors';
 
 /* ----- badges ----- */
 
 export function ScopeBadge({
   scope,
   projectSlug,
+  projectName,
 }: {
   scope: 'global' | 'project';
   projectSlug: string | null;
+  projectName?: string | null | undefined;
 }): JSX.Element {
   if (scope === 'project') {
+    const label = projectName ?? projectSlug;
     return (
-      <span className="rounded-full border border-blue/40 px-2 py-px font-mono text-[10px] whitespace-nowrap text-blue">
-        project{projectSlug !== null ? ` · ${projectSlug}` : ''}
+      <span
+        className="rounded-full border border-blue/40 px-2 py-px font-mono text-[10px] whitespace-nowrap text-blue"
+        title={projectSlug ?? undefined}
+      >
+        project{label !== null ? ` · ${label}` : ''}
       </span>
     );
   }
@@ -102,46 +109,178 @@ export function FilterChip({
   );
 }
 
-/** Scope (all/global/project) + project-slug chips — pushed to the API as
- * `?scope=&project=` (the step-05 handlers filter server-side). */
+/* ----- project dropdown (Sessions-style headless select) ----- */
+
+const ALL_DOT = '#7c8da3';
+
+function Dot({ color }: { color: string }): JSX.Element {
+  return (
+    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} aria-hidden="true" />
+  );
+}
+
+function DropdownOption({
+  selected,
+  dot,
+  label,
+  onSelect,
+}: {
+  selected: boolean;
+  dot: string;
+  label: string;
+  onSelect: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      onClick={onSelect}
+      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-surface2 ${selected ? 'text-ink' : 'text-ink-dim'}`}
+    >
+      <Dot color={dot} />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {selected && <span aria-hidden="true">✓</span>}
+    </button>
+  );
+}
+
+export function ProjectDropdown({
+  projects,
+  value,
+  onChange,
+}: {
+  projects: Project[];
+  value: string | null;
+  onChange: (slug: string | null) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (e: MouseEvent): void => {
+      if (rootRef.current !== null && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { setOpen(false); buttonRef.current?.focus(); }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const focusOption = (delta: 1 | -1): void => {
+    const opts = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+    if (!opts?.length) return;
+    const list = Array.from(opts);
+    const idx = list.indexOf(document.activeElement as HTMLButtonElement);
+    list[(idx + delta + list.length) % list.length]?.focus();
+  };
+
+  const select = (slug: string | null): void => {
+    onChange(slug);
+    setOpen(false);
+    buttonRef.current?.focus();
+  };
+
+  const selected = value !== null ? (projects.find((p) => p.slug === value) ?? null) : null;
+  const label = value === null ? 'all projects' : (selected?.name ?? selected?.slug ?? value);
+  const dot = value === null ? ALL_DOT : projectColor(value);
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="filter by project"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'ArrowDown' && open) { e.preventDefault(); focusOption(1); } }}
+        className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-ink-dim aria-expanded:bg-surface2 aria-expanded:text-ink"
+      >
+        <Dot color={dot} />
+        <span className="truncate">{label}</span>
+        <span aria-hidden="true" className="text-[8px]">▾</span>
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label="project"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusOption(e.key === 'ArrowDown' ? 1 : -1); }
+          }}
+          className="absolute top-full left-0 z-20 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-xl shadow-black/40"
+        >
+          <DropdownOption selected={value === null} dot={ALL_DOT} label="all projects" onSelect={() => select(null)} />
+          {projects.map((p) => (
+            <DropdownOption
+              key={p.id}
+              selected={value === p.slug}
+              dot={projectColor(p.slug)}
+              label={p.name ?? p.slug}
+              onSelect={() => select(p.slug)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Search input + project dropdown + scope chips — the top filter bar of every
+ * System tab. Search is client-side; scope/project are pushed to the API. */
 export function FiltersRow({
   scope,
   project,
-  projectOptions,
+  projects,
+  search,
+  onSearch,
   onScope,
   onProject,
 }: {
   scope: 'global' | 'project' | null;
   project: string | null;
-  projectOptions: string[];
+  projects: Project[];
+  search: string;
+  onSearch: (s: string) => void;
   onScope: (scope: 'global' | 'project' | null) => void;
   onProject: (slug: string | null) => void;
 }): JSX.Element {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-1.5">
-      <FilterChip selected={scope === null} onClick={() => onScope(null)}>
-        all scopes
-      </FilterChip>
-      <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>
-        global
-      </FilterChip>
-      <FilterChip selected={scope === 'project'} onClick={() => onScope('project')}>
-        project
-      </FilterChip>
-      {projectOptions.length > 0 && (
-        <>
-          <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
-          {projectOptions.map((slug) => (
-            <FilterChip
-              key={slug}
-              selected={project === slug}
-              onClick={() => onProject(project === slug ? null : slug)}
-            >
-              {slug}
-            </FilterChip>
-          ))}
-        </>
-      )}
+    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2">
+      <div className="relative w-full desk:w-[240px]">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="filter by name…"
+          aria-label="filter by name"
+          className="w-full rounded-lg border border-line bg-surface px-3 py-[6px] pr-8 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-dim focus:border-ink-dim"
+        />
+        {search !== '' && (
+          <button
+            type="button"
+            onClick={() => onSearch('')}
+            aria-label="clear search"
+            className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <ProjectDropdown projects={projects} value={project} onChange={onProject} />
+      <span className="mx-1 w-px shrink-0 self-stretch bg-line" aria-hidden="true" />
+      <FilterChip selected={scope === null} onClick={() => onScope(null)}>all scopes</FilterChip>
+      <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>global</FilterChip>
+      <FilterChip selected={scope === 'project'} onClick={() => onScope('project')}>project</FilterChip>
     </div>
   );
 }
