@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +44,10 @@ var (
 	ErrAlreadyResolved = errors.New("permission request already resolved")
 	ErrTooManyPending  = errors.New("too many pending requests for session")
 	ErrBadRequest      = errors.New("malformed hook payload")
+	// ErrInvalidAnswer: an {action:"answer"} body failed the AskUserQuestion
+	// validation matrix (wrong tool, unparseable questions, missing/unknown/
+	// malformed answers). Mapped to HTTP 400 with the specific reason.
+	ErrInvalidAnswer = errors.New("invalid answer")
 	// ErrExcludedProject: the hook cwd matches the exclude list and no session
 	// row exists yet. The request is still SERVED — the API answers 204 (no
 	// decision) and the shim fails open to the native dialog — but no
@@ -60,23 +65,40 @@ const DefaultTimeout = 120 * time.Second
 // DefaultSweepInterval is the expiry sweeper cadence.
 const DefaultSweepInterval = 5 * time.Second
 
+// AskUserQuestionTool is the only tool_name resolvable via {action:"answer"}.
+const AskUserQuestionTool = "AskUserQuestion"
+
+// Answer delivery modes (serve --answer-delivery): the wire form a dashboard
+// answer takes on the long-poll 200. updated-input is the spike-verified
+// default (E12a/b/c); deny-message is the fallback for runtimes that ignore
+// updatedInput — it flips ONLY the wire form, the row stays approved.
+const (
+	DeliveryUpdatedInput = "updated-input"
+	DeliveryDenyMessage  = "deny-message"
+)
+
 // tsFormat matches the millisecond-Z style of the ws-protocol examples.
 const tsFormat = "2006-01-02T15:04:05.000Z"
 
 // Decision is what wakes a long-poll waiter: the terminal status of the row
 // plus the human-entered reason (delivered to Claude verbatim on deny).
+// UpdatedInput is set only by Answer (AskUserQuestion dashboard answers,
+// spike E12): the {questions, answers} object the shim forwards verbatim as
+// hookSpecificOutput.decision.updatedInput.
 type Decision struct {
-	Status string // approved | denied | expired | resolved_elsewhere
-	Reason string
+	Status       string // approved | denied | expired | resolved_elsewhere
+	Reason       string
+	UpdatedInput json.RawMessage
 }
 
 // Options tunes a Service; zero values fall back to defaults.
 type Options struct {
-	Timeout       time.Duration      // approval_timeout (default 120s)
-	SweepInterval time.Duration      // expiry sweeper cadence (default 5s)
-	Thresholds    ingest.Thresholds  // session status heuristic windows
-	Exclude       ingest.ExcludeList // cwd globs that never mint session/project rows
-	Now           func() time.Time   // test seam (default time.Now)
+	Timeout        time.Duration      // approval_timeout (default 120s)
+	SweepInterval  time.Duration      // expiry sweeper cadence (default 5s)
+	Thresholds     ingest.Thresholds  // session status heuristic windows
+	Exclude        ingest.ExcludeList // cwd globs that never mint session/project rows
+	AnswerDelivery string             // DeliveryUpdatedInput (default) | DeliveryDenyMessage
+	Now            func() time.Time   // test seam (default time.Now)
 }
 
 // Service owns the approvals lifecycle. Bus may be nil (no live WS updates,
@@ -103,6 +125,9 @@ func New(db *sql.DB, bus *ingest.Bus, opt Options) *Service {
 	if opt.SweepInterval <= 0 {
 		opt.SweepInterval = DefaultSweepInterval
 	}
+	if opt.AnswerDelivery == "" {
+		opt.AnswerDelivery = DeliveryUpdatedInput
+	}
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
@@ -111,6 +136,9 @@ func New(db *sql.DB, bus *ingest.Bus, opt Options) *Service {
 
 // Timeout returns the configured approval_timeout.
 func (s *Service) Timeout() time.Duration { return s.opt.Timeout }
+
+// AnswerDelivery returns the configured dashboard-answer wire form.
+func (s *Service) AnswerDelivery() string { return s.opt.AnswerDelivery }
 
 // Heartbeat records a hook check-in (both /api/hooks/* endpoints call it).
 func (s *Service) Heartbeat() {
@@ -354,10 +382,10 @@ func (s *Service) resolveSessionLocked(in HookInput) (int64, error) {
 func (s *Service) Resolve(id int64, status, via, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.resolveLocked(id, status, via, reason)
+	return s.resolveLocked(id, status, via, reason, nil)
 }
 
-func (s *Service) resolveLocked(id int64, status, via, reason string) error {
+func (s *Service) resolveLocked(id int64, status, via, reason string, updatedInput json.RawMessage) error {
 	var sessionID int64
 	var cur string
 	err := s.db.QueryRow(
@@ -404,7 +432,7 @@ func (s *Service) resolveLocked(id int64, status, via, reason string) error {
 	s.publish(ingest.Notification{Type: ingest.NoteEventAppended, SessionID: sessionID, EventID: eventID})
 	s.publish(ingest.Notification{Type: ingest.NotePermissionResolved, SessionID: sessionID, RequestID: id})
 
-	d := Decision{Status: status, Reason: reason}
+	d := Decision{Status: status, Reason: reason, UpdatedInput: updatedInput}
 	for ch := range s.waiters[id] {
 		ch <- d // each channel is buffered(1) and receives exactly one decision
 	}
@@ -456,7 +484,7 @@ func (s *Service) Detach(id int64, ch chan Decision) {
 		return
 	}
 	delete(s.waiters, id)
-	if err := s.resolveLocked(id, StatusResolvedElsewhere, "terminal", ""); err != nil &&
+	if err := s.resolveLocked(id, StatusResolvedElsewhere, "terminal", "", nil); err != nil &&
 		!errors.Is(err, ErrAlreadyResolved) && !errors.Is(err, ErrNotFound) {
 		log.Printf("warn: approvals: resolve_elsewhere request %d: %v", id, err)
 	}
@@ -471,6 +499,161 @@ func (s *Service) Expire(id int64) error {
 		return nil
 	}
 	return err
+}
+
+// ── answer (dashboard → AskUserQuestion answers, spike E12) ──────────────────
+
+// answerQuestion is the subset of the upstream AskUserQuestion tool_input
+// schema the validation matrix needs (docs/hooks-format.md E12).
+type answerQuestion struct {
+	Question    string `json:"question"`
+	MultiSelect bool   `json:"multiSelect"`
+}
+
+// Answer resolves a pending AskUserQuestion request with the operator's
+// answers. Validation (each failure wraps ErrInvalidAnswer → HTTP 400):
+//
+//   - the row's tool_name must be AskUserQuestion;
+//   - the stored request_json's tool_input.questions must parse;
+//   - every question must be answered; no unknown question keys;
+//   - an array value is only legal for a multiSelect:true question;
+//   - any non-empty string is legal (options are suggestions — free text is
+//     first-class, same as the native dialog).
+//
+// On success the row resolves as approved (resolved_via 'dashboard') with
+// reason = the human summary «Q» → A · «Q2» → B, C, and the Decision fans
+// out to all dedup waiters carrying UpdatedInput {questions, answers} built
+// from the stored request_json (questions echoed verbatim, E12a; multiSelect
+// answers as arrays of labels, E12c).
+func (s *Service) Answer(id int64, answers map[string]json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var cur, toolName, requestJSON string
+	err := s.db.QueryRow(
+		`SELECT status, tool_name, request_json FROM permission_requests WHERE id = ?`, id).
+		Scan(&cur, &toolName, &requestJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if cur != StatusPending {
+		return ErrAlreadyResolved
+	}
+	if toolName != AskUserQuestionTool {
+		return fmt.Errorf("%w: action 'answer' requires tool %s, request %d is %s",
+			ErrInvalidAnswer, AskUserQuestionTool, id, toolName)
+	}
+
+	rawQuestions, questions, err := parseQuestions(requestJSON)
+	if err != nil {
+		return err
+	}
+	byText := make(map[string]answerQuestion, len(questions))
+	for _, q := range questions {
+		byText[q.Question] = q
+	}
+	for key := range answers {
+		if _, ok := byText[key]; !ok {
+			return fmt.Errorf("%w: unknown question %q", ErrInvalidAnswer, key)
+		}
+	}
+	values := make(map[string][]string, len(questions))
+	for _, q := range questions {
+		raw, ok := answers[q.Question]
+		if !ok {
+			return fmt.Errorf("%w: question %q has no answer", ErrInvalidAnswer, q.Question)
+		}
+		vals, err := answerValues(q, raw)
+		if err != nil {
+			return err
+		}
+		values[q.Question] = vals
+	}
+
+	// updatedInput = {questions verbatim, answers as validated} — built
+	// server-side so the shim (and the audit trail) never trust
+	// dashboard-echoed questions.
+	updatedInput, err := json.Marshal(struct {
+		Questions json.RawMessage            `json:"questions"`
+		Answers   map[string]json.RawMessage `json:"answers"`
+	}{Questions: rawQuestions, Answers: answers})
+	if err != nil {
+		return fmt.Errorf("marshal updatedInput: %w", err)
+	}
+	return s.resolveLocked(id, StatusApproved, "dashboard", answerSummary(questions, values), updatedInput)
+}
+
+// parseQuestions extracts tool_input.questions from a stored request_json
+// (the verbatim hook stdin): the raw value (echoed verbatim into
+// updatedInput) plus the parsed validation subset.
+func parseQuestions(requestJSON string) (json.RawMessage, []answerQuestion, error) {
+	var p struct {
+		ToolInput struct {
+			Questions json.RawMessage `json:"questions"`
+		} `json:"tool_input"`
+	}
+	if err := json.Unmarshal([]byte(requestJSON), &p); err != nil {
+		return nil, nil, fmt.Errorf("%w: request_json does not parse: %v", ErrInvalidAnswer, err)
+	}
+	if len(p.ToolInput.Questions) == 0 {
+		return nil, nil, fmt.Errorf("%w: tool_input.questions missing", ErrInvalidAnswer)
+	}
+	var questions []answerQuestion
+	if err := json.Unmarshal(p.ToolInput.Questions, &questions); err != nil {
+		return nil, nil, fmt.Errorf("%w: tool_input.questions does not parse: %v", ErrInvalidAnswer, err)
+	}
+	if len(questions) == 0 {
+		return nil, nil, fmt.Errorf("%w: tool_input.questions is empty", ErrInvalidAnswer)
+	}
+	for _, q := range questions {
+		if q.Question == "" {
+			return nil, nil, fmt.Errorf("%w: a question without text", ErrInvalidAnswer)
+		}
+	}
+	return p.ToolInput.Questions, questions, nil
+}
+
+// answerValues validates one answer value: a non-empty string for any
+// question (label or free text), a non-empty array of non-empty strings for
+// multiSelect only (E12c: arrays of labels are the emitted form).
+func answerValues(q answerQuestion, raw json.RawMessage) ([]string, error) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if strings.TrimSpace(s) == "" {
+			return nil, fmt.Errorf("%w: empty answer for question %q", ErrInvalidAnswer, q.Question)
+		}
+		return []string{s}, nil
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, fmt.Errorf("%w: answer for question %q must be a string or an array of strings",
+			ErrInvalidAnswer, q.Question)
+	}
+	if !q.MultiSelect {
+		return nil, fmt.Errorf("%w: array answer for single-select question %q", ErrInvalidAnswer, q.Question)
+	}
+	if len(arr) == 0 {
+		return nil, fmt.Errorf("%w: empty answer for question %q", ErrInvalidAnswer, q.Question)
+	}
+	for _, v := range arr {
+		if strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("%w: empty option in answer for question %q", ErrInvalidAnswer, q.Question)
+		}
+	}
+	return arr, nil
+}
+
+// answerSummary renders the History-facing reason: «Q» → A · «Q2» → B, C
+// (questions in tool_input order, multiSelect values comma-joined).
+func answerSummary(questions []answerQuestion, values map[string][]string) string {
+	parts := make([]string, 0, len(questions))
+	for _, q := range questions {
+		parts = append(parts, fmt.Sprintf("«%s» → %s", q.Question, strings.Join(values[q.Question], ", ")))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // ── expiry sweeper ───────────────────────────────────────────────────────────

@@ -107,9 +107,13 @@ func isLocalOrigin(origin string) bool {
 // ── POST /api/hooks/permission-request (long-poll) ───────────────────────────
 
 // hookDecisionResponse is the 200 body the shim maps onto hookSpecificOutput.
+// updatedInput (additive, hooks-protocol amendment 1) accompanies allow only:
+// the {questions, answers} object of an AskUserQuestion answered from the
+// dashboard, forwarded verbatim by the shim (spike E12).
 type hookDecisionResponse struct {
-	Decision string `json:"decision"` // allow | deny
-	Message  string `json:"message,omitempty"`
+	Decision     string          `json:"decision"` // allow | deny
+	Message      string          `json:"message,omitempty"`
+	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 }
 
 func (h *Handler) hookPermissionRequest(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +179,22 @@ func (h *Handler) hookPermissionRequest(w http.ResponseWriter, r *http.Request) 
 
 	switch d.Status {
 	case approvals.StatusApproved:
-		writeJSON(w, hookDecisionResponse{Decision: "allow"}, nil)
+		resp := hookDecisionResponse{Decision: "allow"}
+		if len(d.UpdatedInput) > 0 {
+			if approvalsSvc.AnswerDelivery() == approvals.DeliveryDenyMessage {
+				// Fallback wire form (--answer-delivery=deny-message): the row
+				// stays approved — the human genuinely answered — only the
+				// delivery flips; deny messages reach Claude verbatim as the
+				// tool result (E3), so the agent continues with the answers.
+				resp = hookDecisionResponse{
+					Decision: "deny",
+					Message:  "User answered via dashboard: " + d.Reason,
+				}
+			} else {
+				resp.UpdatedInput = d.UpdatedInput
+			}
+		}
+		writeJSON(w, resp, nil)
 	case approvals.StatusDenied:
 		writeJSON(w, hookDecisionResponse{Decision: "deny", Message: d.Reason}, nil)
 	default:
@@ -209,31 +228,44 @@ func (h *Handler) resolveApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Action string `json:"action"`
-		Reason string `json:"reason"`
+		Action  string                     `json:"action"`
+		Reason  string                     `json:"reason"`
+		Answers map[string]json.RawMessage `json:"answers"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 		return
 	}
-	var status string
 	switch body.Action {
 	case "approve":
-		status = approvals.StatusApproved
+		err = approvalsSvc.Resolve(id, approvals.StatusApproved, "dashboard", body.Reason)
 	case "deny":
-		status = approvals.StatusDenied
+		err = approvalsSvc.Resolve(id, approvals.StatusDenied, "dashboard", body.Reason)
+	case "answer":
+		// AskUserQuestion answers (hooks-protocol amendment 1, spike E12).
+		err = approvalsSvc.Answer(id, body.Answers)
+	case "terminal":
+		// "Answer in terminal →": deliberately NO decision — a plain allow
+		// would resolve AskUserQuestion with empty answers (E12d). The row
+		// resolves as resolved_elsewhere so the long-poll answers 204, the
+		// shim fails open, and the native selector renders (E12e).
+		err = approvalsSvc.Resolve(id, approvals.StatusResolvedElsewhere, "dashboard", "handed off to terminal")
 	default:
-		http.Error(w, `{"error":"action must be 'approve' or 'deny'"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"action must be 'approve', 'deny', 'answer' or 'terminal'"}`, http.StatusBadRequest)
 		return
 	}
 
-	err = approvalsSvc.Resolve(id, status, "dashboard", body.Reason)
 	switch {
 	case errors.Is(err, approvals.ErrNotFound):
 		http.Error(w, `{"error":"permission request not found"}`, http.StatusNotFound)
 		return
 	case errors.Is(err, approvals.ErrAlreadyResolved):
 		http.Error(w, `{"error":"permission request already resolved"}`, http.StatusConflict)
+		return
+	case errors.Is(err, approvals.ErrInvalidAnswer):
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	case err != nil:
 		writeErr(w, err)
