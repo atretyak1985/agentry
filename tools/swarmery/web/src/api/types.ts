@@ -259,7 +259,8 @@ export type WSMessageType =
   | 'session_updated'
   | 'event_appended'
   | 'permission_requested'
-  | 'permission_resolved';
+  | 'permission_resolved'
+  | 'system_item_updated';
 
 /** Messages pushed over /api/ws — see docs/ws-protocol.md. */
 export type WSMessage =
@@ -267,7 +268,30 @@ export type WSMessage =
   | { type: 'session_updated'; payload: Session }
   | { type: 'event_appended'; payload: { sessionId: number; event: Event } }
   | { type: 'permission_requested'; payload: PermissionRequest }
-  | { type: 'permission_resolved'; payload: PermissionRequest };
+  | { type: 'permission_resolved'; payload: PermissionRequest }
+  | { type: 'system_item_updated'; payload: SystemItemUpdate };
+
+// --- Phase 4: system registry (Stage 1) — additive contracts ------------------
+
+/**
+ * system_item_updated payload kind — which registry table itemId points into
+ * (agents / skills / hooks / commands). Mirrors the Kind constants in
+ * internal/sysscan.
+ */
+export type SystemItemKind = 'agent' | 'skill' | 'hook' | 'command';
+
+/**
+ * Payload of `system_item_updated` (phase 4 — system registry, frozen at
+ * step-03): a cache-invalidation hint that one config item was created,
+ * changed content (new version), or was soft-deleted. Carries ids only —
+ * clients refetch the item via the /api/system endpoints (step-05). The
+ * WS-side emission lands with those endpoints; the bus contract
+ * (ingest.NoteSystemItemUpdated + Kind/ItemID) is frozen now.
+ */
+export interface SystemItemUpdate {
+  kind: SystemItemKind;
+  itemId: number;
+}
 
 // --- Phase 3.5: workspaces (E-lite) — additive task contracts -----------------
 
