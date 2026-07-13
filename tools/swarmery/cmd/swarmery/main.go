@@ -82,6 +82,7 @@ func usage() {
   swarmery serve    [--db <path>] [--port <n>] [--bind <addr>] [--projects-root <dir>]
                     [--rescan <dur>] [--status-tick <dur>] [--approval-timeout <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
+                    [--exclude-projects <globs>]  (default '/tmp/*,/private/tmp/*')
   swarmery recost   [--db <path>]
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery install  [--port <n>]   launchd auto-start
@@ -89,7 +90,7 @@ func usage() {
   swarmery status                  service health, pid, uptime, db size
   swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)
   swarmery hooks <install|uninstall|status> [--project <path>] [--all] [--port <n>]
-  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING`)
+  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE`)
 }
 
 // defaultProjectsRoot resolves SWARMERY_PROJECTS_ROOT, falling back to
@@ -106,14 +107,25 @@ func defaultProjectsRoot() string {
 }
 
 func pipelineFlags(fs *flag.FlagSet) *ingest.Config {
-	cfg := &ingest.Config{}
+	cfg := &ingest.Config{Exclude: defaultExclude()}
 	fs.StringVar(&cfg.ProjectsRoot, "projects-root", defaultProjectsRoot(),
 		"Claude Code projects root to ingest (env: SWARMERY_PROJECTS_ROOT)")
 	fs.DurationVar(&cfg.RescanInterval, "rescan", 2*time.Second, "fallback rescan interval")
 	fs.DurationVar(&cfg.StatusInterval, "status-tick", 10*time.Second, "session-status recompute interval")
 	fs.DurationVar(&cfg.Thresholds.Active, "active-window", 2*time.Minute, "session considered active within this window")
 	fs.DurationVar(&cfg.Thresholds.Idle, "idle-window", 30*time.Minute, "session considered idle within this window")
+	fs.Var(&cfg.Exclude, "exclude-projects",
+		"comma-separated path globs never tracked as projects (env: SWARMERY_EXCLUDE; '' disables)")
 	return cfg
+}
+
+// defaultExclude resolves SWARMERY_EXCLUDE, falling back to the throwaway-dir
+// default. An explicitly EMPTY env value disables exclusion.
+func defaultExclude() ingest.ExcludeList {
+	if v, ok := os.LookupEnv("SWARMERY_EXCLUDE"); ok {
+		return ingest.ParseExcludeList(v)
+	}
+	return ingest.ParseExcludeList(ingest.DefaultExclude)
 }
 
 func dbFlag(fs *flag.FlagSet) *string {
@@ -295,6 +307,7 @@ func cmdServe(args []string) error {
 	svc := approvals.New(db, bus, approvals.Options{
 		Timeout:    *approvalTimeout,
 		Thresholds: cfg.Thresholds,
+		Exclude:    cfg.Exclude,
 	})
 	api.AttachApprovals(svc)
 	go svc.RunSweeper(context.Background())

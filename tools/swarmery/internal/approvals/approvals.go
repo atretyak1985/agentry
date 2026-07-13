@@ -22,8 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +43,11 @@ var (
 	ErrAlreadyResolved = errors.New("permission request already resolved")
 	ErrTooManyPending  = errors.New("too many pending requests for session")
 	ErrBadRequest      = errors.New("malformed hook payload")
+	// ErrExcludedProject: the hook cwd matches the exclude list and no session
+	// row exists yet. The request is still SERVED — the API answers 204 (no
+	// decision) and the shim fails open to the native dialog — but no
+	// session/project rows are persisted for the excluded path.
+	ErrExcludedProject = errors.New("project excluded from tracking")
 )
 
 // maxPendingPerSession caps runaway hook storms: beyond it Open fails fast
@@ -69,10 +72,11 @@ type Decision struct {
 
 // Options tunes a Service; zero values fall back to defaults.
 type Options struct {
-	Timeout       time.Duration     // approval_timeout (default 120s)
-	SweepInterval time.Duration     // expiry sweeper cadence (default 5s)
-	Thresholds    ingest.Thresholds // session status heuristic windows
-	Now           func() time.Time  // test seam (default time.Now)
+	Timeout       time.Duration      // approval_timeout (default 120s)
+	SweepInterval time.Duration      // expiry sweeper cadence (default 5s)
+	Thresholds    ingest.Thresholds  // session status heuristic windows
+	Exclude       ingest.ExcludeList // cwd globs that never mint session/project rows
+	Now           func() time.Time   // test seam (default time.Now)
 }
 
 // Service owns the approvals lifecycle. Bus may be nil (no live WS updates,
@@ -304,24 +308,25 @@ func (s *Service) resolveSessionLocked(in HookInput) (int64, error) {
 		return 0, err
 	}
 
+	// Exclusion (row creation only — an already-tracked session proceeds
+	// normally above): excluded cwds are still served, but persist nothing.
+	if in.CWD != "" && s.opt.Exclude.MatchPath(in.CWD) {
+		return 0, ErrExcludedProject
+	}
+
+	// The hook stdin carries the real cwd (docs/hooks-format.md E1) — attribute
+	// the stub to the real project via the SAME derivation as the JSONL ingest
+	// (path → slug '/'→'-', name = path base). '(unknown)' remains only for a
+	// genuinely absent cwd; the ingest upsert / HealStubSessions re-attribute
+	// such stubs once the transcript reveals the cwd.
 	cwd := in.CWD
 	if cwd == "" {
-		cwd = "(unknown)"
+		cwd = ingest.UnknownProjectPath
 	}
 	now := s.opt.Now().UTC().Format(tsFormat)
-	var projectID int64
-	perr := s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, cwd).Scan(&projectID)
-	switch {
-	case errors.Is(perr, sql.ErrNoRows):
-		res, err := s.db.Exec(
-			`INSERT INTO projects (path, slug, name, first_seen, last_activity) VALUES (?, ?, ?, ?, ?)`,
-			cwd, strings.ReplaceAll(cwd, "/", "-"), filepath.Base(cwd), now, now)
-		if err != nil {
-			return 0, fmt.Errorf("insert project: %w", err)
-		}
-		projectID, _ = res.LastInsertId()
-	case perr != nil:
-		return 0, perr
+	projectID, _, err := ingest.UpsertProject(s.db, cwd, now, now)
+	if err != nil {
+		return 0, err
 	}
 
 	res, err := s.db.Exec(

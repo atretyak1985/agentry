@@ -21,6 +21,7 @@ type Config struct {
 	RescanInterval time.Duration // fallback full rescan cadence (default 2s)
 	StatusInterval time.Duration // session-status ticker cadence (default 10s)
 	Thresholds     Thresholds    // active/idle windows (default 2m/30m)
+	Exclude        ExcludeList   // project path globs to skip (see exclude.go)
 }
 
 func (c Config) withDefaults() Config {
@@ -89,14 +90,36 @@ func (p *Pipeline) Metrics() Metrics {
 
 // discover lists every transcript under the projects root: main transcripts
 // first, then sidechains — so parent subagent_start events exist before their
-// sidechain files are ingested (§1/§7 layout).
+// sidechain files are ingested (§1/§7 layout). Excluded project dirs are
+// dropped here, covering both the backfill and the rescan safety net.
 func (p *Pipeline) discover() []string {
 	root := p.cfg.ProjectsRoot
 	mains, _ := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
 	sides, _ := filepath.Glob(filepath.Join(root, "*", "*", "subagents", "agent-*.jsonl"))
 	sort.Strings(mains)
 	sort.Strings(sides)
-	return append(mains, sides...)
+	all := append(mains, sides...)
+	if len(p.cfg.Exclude) == 0 {
+		return all
+	}
+	kept := all[:0]
+	for _, f := range all {
+		if !p.excluded(f) {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
+// excluded reports whether a transcript path lives under an excluded project
+// dir (first path element below the projects root, flattened-name match).
+func (p *Pipeline) excluded(path string) bool {
+	rel, err := filepath.Rel(p.cfg.ProjectsRoot, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	dir, _, _ := strings.Cut(rel, string(filepath.Separator))
+	return p.cfg.Exclude.MatchProjectDir(dir)
 }
 
 // Backfill runs one full scan of the projects root, ingesting every
@@ -111,6 +134,20 @@ func (p *Pipeline) Backfill(ctx context.Context) Metrics {
 		log.Printf("warn: ingest: heal project names: %v", err)
 	} else if healed > 0 {
 		log.Printf("ingest: healed %d project name(s) from path", healed)
+	}
+	// Heal stub sessions ('(unknown)' project / empty cwd / empty started_at):
+	// unchanged transcripts are offset no-ops, so the per-batch upsert heal
+	// would never see them again — re-attribute from the transcript files and
+	// emit session_updated so open dashboards converge.
+	if ids, err := HealStubSessions(p.db, p.cfg.ProjectsRoot, p.cfg.Exclude); err != nil {
+		log.Printf("warn: ingest: heal stub sessions: %v", err)
+	} else if len(ids) > 0 {
+		log.Printf("ingest: healed %d stub session(s) from transcripts", len(ids))
+		if p.bus != nil {
+			for _, id := range ids {
+				p.bus.Publish(Notification{Type: NoteSessionUpdated, SessionID: id})
+			}
+		}
 	}
 	files := p.discover()
 	for _, f := range files {
@@ -128,6 +165,9 @@ func (p *Pipeline) Backfill(ctx context.Context) Metrics {
 // tailOne incrementally ingests a single file and publishes bus notifications
 // for whatever it produced. Safe to call for unchanged files (cheap no-op).
 func (p *Pipeline) tailOne(path string, logPickup bool) {
+	if p.excluded(path) {
+		return // fsnotify can deliver excluded paths directly — filter here too
+	}
 	p.mu.Lock()
 	if until, ok := p.errUntil[path]; ok && time.Now().Before(until) {
 		p.mu.Unlock()

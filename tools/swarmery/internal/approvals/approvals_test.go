@@ -326,12 +326,86 @@ func TestUnknownSessionCreatesHookRow(t *testing.T) {
 	if source != "hook" || status != "waiting_approval" || cwd != "/tmp/proj" {
 		t.Errorf("session = %s/%s/%s, want hook/waiting_approval//tmp/proj", source, status, cwd)
 	}
-	var path string
-	if err := db.QueryRow(`SELECT path FROM projects LIMIT 1`).Scan(&path); err != nil {
+	var path, slug, name string
+	if err := db.QueryRow(`SELECT path, slug, name FROM projects LIMIT 1`).Scan(&path, &slug, &name); err != nil {
 		t.Fatal(err)
 	}
 	if path != "/tmp/proj" {
 		t.Errorf("project path = %q, want /tmp/proj", path)
+	}
+	// Attribution must use the SAME derivation as the JSONL ingest — a later
+	// tail must find (not duplicate) this project.
+	if slug != "-tmp-proj" || name != "proj" {
+		t.Errorf("project slug/name = %q/%q, want -tmp-proj/proj", slug, name)
+	}
+	var startedAt string
+	if err := db.QueryRow(
+		`SELECT started_at FROM sessions WHERE session_uuid = 'uuid-fresh'`).Scan(&startedAt); err != nil {
+		t.Fatal(err)
+	}
+	if startedAt == "" {
+		t.Error("hook stub started_at empty — dashboards would show 'started —'")
+	}
+}
+
+// TestExcludedCwdServedWithoutRows: a hook from an excluded cwd (throwaway
+// /tmp project) is answered — ErrExcludedProject maps to 204 fail-open — but
+// persists NO session/project/permission_request rows. An already-tracked
+// session keeps working even if its cwd would match the exclude list.
+func TestExcludedCwdServedWithoutRows(t *testing.T) {
+	db := testDB(t)
+	svc := New(db, nil, Options{Exclude: ingest.ParseExcludeList(ingest.DefaultExclude)})
+
+	_, _, _, err := svc.Open(hookInput(t, "uuid-excluded", "Bash", "ls")) // cwd /tmp/proj
+	if err != ErrExcludedProject {
+		t.Fatalf("err = %v, want ErrExcludedProject", err)
+	}
+	for _, table := range []string{"sessions", "projects", "permission_requests", "events"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s = %d rows after excluded hook, want 0", table, n)
+		}
+	}
+
+	// Exclusion gates row CREATION only: a session that already exists (e.g.
+	// ingested before the exclude list was configured) proceeds normally.
+	seedSession(t, db, "uuid-preexisting") // cwd /tmp/proj
+	if _, _, _, err := svc.Open(hookInput(t, "uuid-preexisting", "Bash", "ls")); err != nil {
+		t.Fatalf("pre-existing session must still be served with rows: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM permission_requests`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("permission_requests = %d, want 1", n)
+	}
+}
+
+// TestHookWithoutCwdFallsBackToUnknown: only a genuinely absent cwd may mint
+// the '(unknown)' placeholder (healed later by the ingest upsert).
+func TestHookWithoutCwdFallsBackToUnknown(t *testing.T) {
+	db := testDB(t)
+	svc := New(db, nil, Options{})
+	raw := `{"session_id":"uuid-nocwd","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}`
+	in, err := ParseHookStdin([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := svc.Open(in); err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	if err := db.QueryRow(
+		`SELECT p.path FROM projects p JOIN sessions s ON s.project_id = p.id
+		 WHERE s.session_uuid = 'uuid-nocwd'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != ingest.UnknownProjectPath {
+		t.Errorf("project path = %q, want the '(unknown)' placeholder", path)
 	}
 }
 

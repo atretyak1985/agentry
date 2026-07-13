@@ -132,6 +132,11 @@ func (h *Handler) hookPermissionRequest(w http.ResponseWriter, r *http.Request) 
 
 	id, ch, _, err := approvalsSvc.Open(in)
 	switch {
+	case errors.Is(err, approvals.ErrExcludedProject):
+		// Excluded cwd: still served, but nothing is persisted — no decision,
+		// the shim fails open to the native dialog (same contract as expiry).
+		w.WriteHeader(http.StatusNoContent)
+		return
 	case errors.Is(err, approvals.ErrTooManyPending):
 		http.Error(w, `{"error":"too many pending requests for session"}`, http.StatusTooManyRequests)
 		return
