@@ -453,3 +453,204 @@ func TestHookExcludedCwd204(t *testing.T) {
 		t.Errorf("sessions = %d after excluded hook, want 0", n)
 	}
 }
+
+// ── AskUserQuestion answers (hooks-protocol amendment 1, spike E12) ──────────
+
+// askHookBody is an AskUserQuestion PermissionRequest hook stdin (E12 shape):
+// one single-select, one multiSelect question.
+func askHookBody(uuid string) string {
+	return fmt.Sprintf(
+		`{"session_id":%q,"transcript_path":"/x.jsonl","cwd":"/tmp/proj","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Pick a color","header":"Color","options":[{"label":"Red","description":"warm"},{"label":"Blue","description":"cool"}],"multiSelect":false},{"question":"Pick fruits","header":"Fruits","options":[{"label":"Apple","description":""},{"label":"Banana","description":""}],"multiSelect":true}]}}`,
+		uuid)
+}
+
+// postAction POSTs a raw JSON body to /api/approvals/{id}.
+func postAction(t *testing.T, srv *httptest.Server, id float64, body string) *http.Response {
+	t.Helper()
+	resp, err := http.Post(fmt.Sprintf("%s/api/approvals/%d", srv.URL, int64(id)),
+		"application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// TestAnswerLongPollUpdatedInput: {action:"answer"} approves the row with the
+// summary reason; the long-poll 200 carries {"decision":"allow","updatedInput":
+// {questions, answers}} in the default updated-input delivery mode.
+func TestAnswerLongPollUpdatedInput(t *testing.T) {
+	srv, db, _ := approvalsTestServer(t, approvals.Options{})
+	res := postHook(srv, context.Background(), askHookBody("lp-answer"))
+
+	pending := waitPending(t, srv)
+	if pending["toolName"] != "AskUserQuestion" {
+		t.Fatalf("pending = %v", pending)
+	}
+	resp := postAction(t, srv, pending["id"].(float64),
+		`{"action":"answer","answers":{"Pick a color":"Red","Pick fruits":["Apple","Banana"]}}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("answer status = %d", resp.StatusCode)
+	}
+	var dto map[string]any
+	json.NewDecoder(resp.Body).Decode(&dto)
+	if dto["status"] != "approved" || dto["resolvedVia"] != "dashboard" {
+		t.Errorf("resolved DTO = %v", dto)
+	}
+	if dto["reason"] != "«Pick a color» → Red · «Pick fruits» → Apple, Banana" {
+		t.Errorf("reason = %v", dto["reason"])
+	}
+
+	r := <-res
+	if r.err != nil || r.status != 200 {
+		t.Fatalf("long-poll result: %d %v", r.status, r.err)
+	}
+	var d struct {
+		Decision     string                     `json:"decision"`
+		UpdatedInput map[string]json.RawMessage `json:"updatedInput"`
+	}
+	if err := json.Unmarshal(r.body, &d); err != nil {
+		t.Fatalf("long-poll body %s: %v", r.body, err)
+	}
+	if d.Decision != "allow" || d.UpdatedInput == nil {
+		t.Fatalf("long-poll body = %s, want allow + updatedInput", r.body)
+	}
+	if !strings.Contains(string(d.UpdatedInput["questions"]), `"Pick a color"`) {
+		t.Errorf("questions not echoed: %s", d.UpdatedInput["questions"])
+	}
+	var answers map[string]json.RawMessage
+	json.Unmarshal(d.UpdatedInput["answers"], &answers)
+	if string(answers["Pick fruits"]) != `["Apple","Banana"]` {
+		t.Errorf("multiSelect answer = %s, want the array form (E12c)", answers["Pick fruits"])
+	}
+
+	var status string
+	db.QueryRow(`SELECT status FROM permission_requests`).Scan(&status)
+	if status != "approved" {
+		t.Errorf("row status = %q, want approved", status)
+	}
+}
+
+// TestAnswerHTTPStatusMatrix: 400 wrong tool + failed validation (with the
+// specific reason in the body), 404 unknown id, 409 already resolved.
+func TestAnswerHTTPStatusMatrix(t *testing.T) {
+	srv, _, svc := approvalsTestServer(t, approvals.Options{})
+
+	// A Bash row can never take {action:"answer"} → 400, row stays pending.
+	resBash := postHook(srv, context.Background(), hookBody("lp-answer-400", "Bash", "ls"))
+	pendingBash := waitPending(t, srv)
+	resp := postAction(t, srv, pendingBash["id"].(float64), `{"action":"answer","answers":{"x":"y"}}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("wrong-tool answer status = %d, want 400", resp.StatusCode)
+	}
+	var e map[string]string
+	json.NewDecoder(resp.Body).Decode(&e)
+	resp.Body.Close()
+	if !strings.Contains(e["error"], "AskUserQuestion") {
+		t.Errorf("wrong-tool error = %q, want the specific reason", e["error"])
+	}
+	// Still pending → a normal approve succeeds (frees the long-poll).
+	if err := svc.Resolve(int64(pendingBash["id"].(float64)), approvals.StatusApproved, "dashboard", ""); err != nil {
+		t.Fatalf("failed answer consumed the row: %v", err)
+	}
+	<-resBash
+
+	// AskUserQuestion row: missing answer → 400; valid → 200; repeat → 409.
+	resAsk := postHook(srv, context.Background(), askHookBody("lp-answer-409"))
+	pendingAsk := waitPending(t, srv)
+	askID := pendingAsk["id"].(float64)
+
+	resp = postAction(t, srv, askID, `{"action":"answer","answers":{"Pick a color":"Red"}}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing-answer status = %d, want 400", resp.StatusCode)
+	}
+	resp = postAction(t, srv, askID, `{"action":"answer","answers":{"Pick a color":"Red","Pick fruits":["Apple"]}}`)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("valid answer status = %d, want 200", resp.StatusCode)
+	}
+	<-resAsk
+	resp = postAction(t, srv, askID, `{"action":"answer","answers":{"Pick a color":"Red","Pick fruits":["Apple"]}}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("second answer status = %d, want 409", resp.StatusCode)
+	}
+
+	resp = postAction(t, srv, 424242, `{"action":"answer","answers":{"x":"y"}}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown id status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestAnswerDeliveryDenyMessage: --answer-delivery=deny-message flips ONLY the
+// wire form — the row stays approved with the same reason; the long-poll
+// answers deny + "User answered via dashboard: …" (deny messages reach Claude
+// verbatim as the tool result, E3).
+func TestAnswerDeliveryDenyMessage(t *testing.T) {
+	srv, db, _ := approvalsTestServer(t, approvals.Options{AnswerDelivery: approvals.DeliveryDenyMessage})
+	res := postHook(srv, context.Background(), askHookBody("lp-answer-fallback"))
+	pending := waitPending(t, srv)
+
+	postAction(t, srv, pending["id"].(float64),
+		`{"action":"answer","answers":{"Pick a color":"Blue","Pick fruits":["Banana"]}}`).Body.Close()
+
+	r := <-res
+	if r.status != 200 {
+		t.Fatalf("long-poll status = %d", r.status)
+	}
+	var d struct {
+		Decision     string          `json:"decision"`
+		Message      string          `json:"message"`
+		UpdatedInput json.RawMessage `json:"updatedInput"`
+	}
+	json.Unmarshal(r.body, &d)
+	if d.Decision != "deny" ||
+		d.Message != "User answered via dashboard: «Pick a color» → Blue · «Pick fruits» → Banana" {
+		t.Fatalf("fallback body = %s", r.body)
+	}
+	if len(d.UpdatedInput) > 0 {
+		t.Errorf("fallback must not carry updatedInput: %s", r.body)
+	}
+
+	// Audit stays honest: the human genuinely answered — the row is approved.
+	var status, reason string
+	db.QueryRow(`SELECT status, reason FROM permission_requests`).Scan(&status, &reason)
+	if status != "approved" || !strings.Contains(reason, "«Pick a color» → Blue") {
+		t.Errorf("row = %s/%q, want approved with the summary reason", status, reason)
+	}
+}
+
+// TestTerminalHandoffNoDecision: {action:"terminal"} releases the long-poll
+// with NO decision — 204, shim fails open, the native selector renders
+// (E12d: a plain allow would resolve the questions unanswered; E12e: fail-open
+// renders the dialog). The row records resolved_elsewhere via dashboard.
+func TestTerminalHandoffNoDecision(t *testing.T) {
+	srv, db, _ := approvalsTestServer(t, approvals.Options{})
+	res := postHook(srv, context.Background(), askHookBody("lp-terminal"))
+	pending := waitPending(t, srv)
+
+	resp := postAction(t, srv, pending["id"].(float64), `{"action":"terminal"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("terminal action status = %d", resp.StatusCode)
+	}
+	var dto map[string]any
+	json.NewDecoder(resp.Body).Decode(&dto)
+	if dto["status"] != "resolved_elsewhere" || dto["resolvedVia"] != "dashboard" ||
+		dto["reason"] != "handed off to terminal" {
+		t.Errorf("terminal DTO = %v", dto)
+	}
+
+	r := <-res
+	if r.err != nil || r.status != 204 || len(r.body) != 0 {
+		t.Fatalf("long-poll after terminal handoff: status=%d body=%q err=%v; want bare 204",
+			r.status, r.body, r.err)
+	}
+	var status string
+	db.QueryRow(`SELECT status FROM permission_requests`).Scan(&status)
+	if status != "resolved_elsewhere" {
+		t.Errorf("row status = %q, want resolved_elsewhere", status)
+	}
+}

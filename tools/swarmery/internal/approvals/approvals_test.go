@@ -3,6 +3,7 @@ package approvals
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -475,6 +476,168 @@ func TestParseHookStdinRejectsGarbage(t *testing.T) {
 	for _, raw := range []string{``, `not json`, `{}`, `{"session_id":"x"}`} {
 		if _, err := ParseHookStdin([]byte(raw)); err == nil {
 			t.Errorf("ParseHookStdin(%q) accepted garbage", raw)
+		}
+	}
+}
+
+// ── AskUserQuestion answers (spike E12) ──────────────────────────────────────
+
+// askQuestionsJSON is the E12-shaped tool_input.questions fixture: one
+// single-select, one multiSelect.
+const askQuestionsJSON = `[{"question":"Pick a color","header":"Color","options":[{"label":"Red","description":"warm"},{"label":"Blue","description":"cool"}],"multiSelect":false},{"question":"Pick fruits","header":"Fruits","options":[{"label":"Apple","description":""},{"label":"Banana","description":""},{"label":"Cherry","description":""}],"multiSelect":true}]`
+
+func askHookInput(t *testing.T, uuid string) HookInput {
+	t.Helper()
+	raw := fmt.Sprintf(
+		`{"session_id":%q,"transcript_path":"/x.jsonl","cwd":"/tmp/proj","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":%s}}`,
+		uuid, askQuestionsJSON)
+	in, err := ParseHookStdin([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse hook stdin: %v", err)
+	}
+	return in
+}
+
+func answersOf(t *testing.T, jsonObj string) map[string]json.RawMessage {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonObj), &m); err != nil {
+		t.Fatalf("answers fixture %q: %v", jsonObj, err)
+	}
+	return m
+}
+
+// TestAnswerValidationMatrix walks the frozen validation matrix: wrong tool,
+// unparseable questions, missing/unknown answers, array on single-select,
+// empty values — every failure wraps ErrInvalidAnswer and leaves the row
+// PENDING; free text and multiSelect label arrays pass.
+func TestAnswerValidationMatrix(t *testing.T) {
+	db := testDB(t)
+	seedSession(t, db, "uuid-answer-matrix")
+	svc := New(db, nil, Options{})
+
+	// Wrong tool: a Bash request can never take {action:"answer"}.
+	bashID, _, _, err := svc.Open(hookInput(t, "uuid-answer-matrix", "Bash", "ls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Answer(bashID, answersOf(t, `{"x":"y"}`)); !errors.Is(err, ErrInvalidAnswer) {
+		t.Errorf("wrong tool: err = %v, want ErrInvalidAnswer", err)
+	}
+	if got := requestStatus(t, db, bashID); got != StatusPending {
+		t.Errorf("failed answer consumed the Bash row: status = %q, want pending", got)
+	}
+
+	// Sentinels keep their HTTP mappings.
+	if err := svc.Answer(99999, answersOf(t, `{}`)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
+	}
+
+	// AskUserQuestion with unparseable questions.
+	inBad, err := ParseHookStdin([]byte(
+		`{"session_id":"uuid-answer-matrix","cwd":"/tmp/proj","hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":"not an array"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badID, _, _, err := svc.Open(inBad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Answer(badID, answersOf(t, `{"x":"y"}`)); !errors.Is(err, ErrInvalidAnswer) {
+		t.Errorf("unparseable questions: err = %v, want ErrInvalidAnswer", err)
+	}
+
+	id, _, _, err := svc.Open(askHookInput(t, "uuid-answer-matrix"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := []struct{ name, answers string }{
+		{"missing answer", `{"Pick a color":"Red"}`},
+		{"unknown question", `{"Pick a color":"Red","Pick fruits":["Apple"],"Bogus":"x"}`},
+		{"array for single-select", `{"Pick a color":["Red"],"Pick fruits":["Apple"]}`},
+		{"empty string", `{"Pick a color":"","Pick fruits":["Apple"]}`},
+		{"whitespace string", `{"Pick a color":"   ","Pick fruits":["Apple"]}`},
+		{"empty array", `{"Pick a color":"Red","Pick fruits":[]}`},
+		{"empty array element", `{"Pick a color":"Red","Pick fruits":["Apple",""]}`},
+		{"non-string value", `{"Pick a color":42,"Pick fruits":["Apple"]}`},
+		{"no answers at all", `{}`},
+	}
+	for _, c := range invalid {
+		if err := svc.Answer(id, answersOf(t, c.answers)); !errors.Is(err, ErrInvalidAnswer) {
+			t.Errorf("%s: err = %v, want ErrInvalidAnswer", c.name, err)
+		}
+		if got := requestStatus(t, db, id); got != StatusPending {
+			t.Fatalf("%s consumed the row: status = %q, want pending", c.name, got)
+		}
+	}
+
+	// Free text is first-class (options are suggestions); multiSelect takes
+	// an array of labels (E12c). Reason = the human summary.
+	if err := svc.Answer(id, answersOf(t, `{"Pick a color":"my own shade","Pick fruits":["Apple","Banana"]}`)); err != nil {
+		t.Fatalf("valid answer rejected: %v", err)
+	}
+	var status, via, reason string
+	if err := db.QueryRow(
+		`SELECT status, resolved_via, reason FROM permission_requests WHERE id = ?`, id).
+		Scan(&status, &via, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusApproved || via != "dashboard" {
+		t.Errorf("status/via = %q/%q, want approved/dashboard", status, via)
+	}
+	if want := "«Pick a color» → my own shade · «Pick fruits» → Apple, Banana"; reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+
+	// A terminal row answers ErrAlreadyResolved, like Resolve.
+	if err := svc.Answer(id, answersOf(t, `{"Pick a color":"Red","Pick fruits":["Apple"]}`)); !errors.Is(err, ErrAlreadyResolved) {
+		t.Errorf("second answer: err = %v, want ErrAlreadyResolved", err)
+	}
+}
+
+// TestAnswerFanOutUpdatedInput: an answered decision wakes ALL dedup waiters
+// (D6) carrying the server-built updatedInput — questions echoed byte-verbatim
+// from the stored request_json, answers as validated (arrays for multiSelect).
+func TestAnswerFanOutUpdatedInput(t *testing.T) {
+	db := testDB(t)
+	seedSession(t, db, "uuid-answer-fanout")
+	svc := New(db, nil, Options{})
+	in := askHookInput(t, "uuid-answer-fanout")
+
+	id, ch1, _, err := svc.Open(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ch2, isNew, err := svc.Open(in) // dedup attach (D6)
+	if err != nil || isNew {
+		t.Fatalf("second Open: isNew=%v err=%v", isNew, err)
+	}
+
+	if err := svc.Answer(id, answersOf(t, `{"Pick a color":"Red","Pick fruits":["Apple","Banana"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	for i, ch := range []chan Decision{ch1, ch2} {
+		select {
+		case d := <-ch:
+			if d.Status != StatusApproved {
+				t.Errorf("waiter %d got %q, want approved", i, d.Status)
+			}
+			var ui map[string]json.RawMessage
+			if err := json.Unmarshal(d.UpdatedInput, &ui); err != nil {
+				t.Fatalf("waiter %d updatedInput: %v (%s)", i, err, d.UpdatedInput)
+			}
+			if string(ui["questions"]) != askQuestionsJSON {
+				t.Errorf("waiter %d questions not verbatim:\n got %s\nwant %s", i, ui["questions"], askQuestionsJSON)
+			}
+			var answers map[string]json.RawMessage
+			if err := json.Unmarshal(ui["answers"], &answers); err != nil {
+				t.Fatalf("waiter %d answers: %v", i, err)
+			}
+			if string(answers["Pick a color"]) != `"Red"` || string(answers["Pick fruits"]) != `["Apple","Banana"]` {
+				t.Errorf("waiter %d answers = %s", i, ui["answers"])
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("waiter %d never woke", i)
 		}
 	}
 }

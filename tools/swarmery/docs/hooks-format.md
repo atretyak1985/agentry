@@ -249,3 +249,48 @@ claude --permission-mode default
 This matters for the D3 `resolved_elsewhere` path: if a terminal interrupt during a
 long-poll leaves the shim's HTTP request dangling, the daemon should treat the client
 disconnect as `resolved_elsewhere` and stop waiting.
+
+## E12 — `AskUserQuestion` answer injection via `updatedInput` (2026-07-13)
+
+Follow-up spike for the dashboard answer feature (same machine, same Claude Code
+`2.1.170`, model `Fable 5`, effort `high`). Harness: the `/tmp/swarmery-spike/`
+throwaway recreated with a mode-switched `hook.sh` that answers `AskUserQuestion`
+`PermissionRequest` events with canned `updatedInput.answers` (built with `jq` from
+the incoming `tool_input.questions`: single-select → first option label; multiSelect →
+first two labels), driven over a PTY with `expect`. Prompt forced two marker questions:
+`Pick a color` (single, `SPIKE-RED-1`/`SPIKE-BLUE-2`) and `Pick fruits`
+(multiSelect, `SPIKE-APPLE-3`/`SPIKE-BANANA-4`/`SPIKE-CHERRY-5`).
+
+| # | Experiment | Observed | Status |
+|---|---|---|---|
+| E12a | `allow` + `updatedInput: {questions, answers}` → answers injected? | **Yes.** The tool result delivered to Claude: `Your questions have been answered: "Pick a color"="SPIKE-RED-1", "Pick fruits"="SPIKE-APPLE-3,SPIKE-BANANA-4". You can now continue with these answers in mind.` The transcript's `toolUseResult` carries `{questions, answers}` with the hook's values **verbatim**. Claude's final reply echoed the canned answers. | ✅ verified |
+| E12b | interactive dialog suppressed? | **Yes.** The turn ran PR-hook → tool result → final answer → `Stop` with **zero** terminal interaction (the driver never sent a keystroke after the prompt); no selector UI in the PTY capture. | ✅ verified |
+| E12c | multiSelect value form: array vs comma-joined | **Array of labels accepted.** `"Pick fruits": ["SPIKE-APPLE-3","SPIKE-BANANA-4"]` was stored verbatim in `toolUseResult.answers`; the textual tool result comma-joins it for the model. Comma-joined form not needed. **Emit arrays.** | ✅ verified |
+| E12d | plain `allow` (no `updatedInput`) → dialog still renders? | **NO — design assumption FAILED.** Plain `allow` suppresses the dialog AND resolves the tool immediately with `answers: {}`; the tool result is `The user did not answer the questions.` and the agent continues unanswered. A plain approve is therefore **not** a "answer in terminal" handoff — it is "continue with no answers". | ❌ failed (load-bearing) |
+| E12e | fail-open (exit 0, no stdout) → dialog renders? | **Yes.** With no decision the native `AskUserQuestion` selector rendered fully (`☐ Color ☐ Fruits ✔ Submit`, options + `Type something.` + `Chat about this`) and blocked awaiting the human — E5 holds for `AskUserQuestion`. | ✅ verified |
+
+### E12 hook stdout fixture (verified working)
+
+```json
+{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{
+  "behavior":"allow",
+  "updatedInput":{
+    "questions":[…tool_input.questions verbatim…],
+    "answers":{"Pick a color":"SPIKE-RED-1","Pick fruits":["SPIKE-APPLE-3","SPIKE-BANANA-4"]}
+  }
+}}}
+```
+
+`answers` is keyed by the exact `question` text. Single-select: the label (or free
+text) as a string. multiSelect: an **array of labels** (E12c).
+
+### Consequences for the dashboard answer feature
+
+- **Delivery mode default: `updated-input`** (E12a/b/c passed) — the
+  `--answer-delivery=deny-message` fallback stays implemented but non-default.
+- **"Answer in terminal" must NOT be a plain approve** (E12d): the working handoff
+  is *no decision* — resolve the row so the long-poll answers `204` and the shim
+  fails open to the native selector (E12e). A plain approve silently resolves the
+  questions as unanswered.
+- Version-fragility: all E12 behaviors join the re-run checklist for Claude Code
+  minor bumps (verified only on `2.1.170`).

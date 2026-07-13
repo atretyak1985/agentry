@@ -86,6 +86,7 @@ func usage() {
                     [--rescan <dur>] [--status-tick <dur>] [--approval-timeout <dur>]
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
                     [--exclude-projects <globs>]  (default '/tmp/*,/private/tmp/*')
+                    [--answer-delivery <updated-input|deny-message>]
   swarmery recost   [--db <path>]
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery sysscan  [--db <path>] [--claude-dir <dir>] [--overlays-dir <dir>]
@@ -321,10 +322,16 @@ func cmdServe(args []string) error {
 	noIngest := fs.Bool("no-ingest", false, "serve the API only, without the live ingest pipeline")
 	approvalTimeout := fs.Duration("approval-timeout", approvals.DefaultTimeout,
 		"how long a permission request stays pending before fail-open expiry")
+	answerDelivery := fs.String("answer-delivery", approvals.DeliveryUpdatedInput,
+		"AskUserQuestion dashboard-answer wire form: updated-input (hook updatedInput injection, spike-verified default) or deny-message (fallback: deny carrying the answers as the message)")
 	cfg := pipelineFlags(fs)
 	wsCfg := wsingestFlags(fs)
 	sysCfg := sysscanFlags(fs)
 	fs.Parse(args)
+	if *answerDelivery != approvals.DeliveryUpdatedInput && *answerDelivery != approvals.DeliveryDenyMessage {
+		return fmt.Errorf("--answer-delivery must be %q or %q, got %q",
+			approvals.DeliveryUpdatedInput, approvals.DeliveryDenyMessage, *answerDelivery)
+	}
 
 	db, err := store.Open(*dbPath)
 	if err != nil {
@@ -369,9 +376,10 @@ func cmdServe(args []string) error {
 
 	// phase 2: approvals — long-poll registry + expiry sweeper + heartbeat.
 	svc := approvals.New(db, bus, approvals.Options{
-		Timeout:    *approvalTimeout,
-		Thresholds: cfg.Thresholds,
-		Exclude:    cfg.Exclude,
+		Timeout:        *approvalTimeout,
+		Thresholds:     cfg.Thresholds,
+		Exclude:        cfg.Exclude,
+		AnswerDelivery: *answerDelivery,
 	})
 	api.AttachApprovals(svc)
 	go svc.RunSweeper(context.Background())
