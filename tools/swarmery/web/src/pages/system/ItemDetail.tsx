@@ -395,15 +395,21 @@ function DaySparkline({ days }: { days: AgentHistory['byDay'] }): JSX.Element | 
   );
 }
 
+const RECENT_RUNS_COLLAPSED = 10;
+
 function AgentHistoryPanel({ agentId }: { agentId: number }): JSX.Element {
   const [hist, setHist] = useState<AgentHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<number>(90);
+  // Collapse the recent-runs list to the first N; "show more" reveals the rest.
+  // Reset on every reload (agent or window change) so it never opens stale.
+  const [showAllRuns, setShowAllRuns] = useState(false);
 
   useEffect(() => {
     let live = true;
     setHist(null);
     setError(null);
+    setShowAllRuns(false);
     fetchAgentHistory(agentId, days)
       .then((h) => {
         if (live) setHist(h);
@@ -489,7 +495,7 @@ function AgentHistoryPanel({ agentId }: { agentId: number }): JSX.Element {
           recent runs
         </div>
         <ul className="mt-1 space-y-1">
-          {hist.recentRuns.map((run, i) => (
+          {(showAllRuns ? hist.recentRuns : hist.recentRuns.slice(0, RECENT_RUNS_COLLAPSED)).map((run, i) => (
             <li key={`${run.sessionUuid}-${String(i)}`}>
               <Link
                 to={`/sessions/${run.sessionUuid}`}
@@ -514,6 +520,18 @@ function AgentHistoryPanel({ agentId }: { agentId: number }): JSX.Element {
             </li>
           ))}
         </ul>
+        {hist.recentRuns.length > RECENT_RUNS_COLLAPSED && (
+          <button
+            type="button"
+            onClick={() => setShowAllRuns((v) => !v)}
+            aria-expanded={showAllRuns}
+            className="mt-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-ink-dim transition-colors hover:bg-surface2 hover:text-ink"
+          >
+            {showAllRuns
+              ? 'show less'
+              : `show more (${String(hist.recentRuns.length - RECENT_RUNS_COLLAPSED)})`}
+          </button>
+        )}
       </>
     );
   }

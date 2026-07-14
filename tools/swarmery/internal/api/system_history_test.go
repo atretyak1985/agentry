@@ -34,8 +34,12 @@ func historyServer(t *testing.T) *httptest.Server {
 	      (1, 1, 'aaaa-1', 'completed', '2026-07-10T10:00:00Z'),
 	      (2, 1, 'aaaa-2', 'completed', '2026-07-11T10:00:00Z'),
 	      (3, 2, 'bbbb-1', 'completed', '2026-07-12T10:00:00Z')`)
-	exec(`INSERT INTO agents (id, name, scope, project_id, file_path, model, origin)
-	      VALUES (1, 'tech-lead', 'global', NULL, '/u/.claude/agents/tech-lead.md', 'claude-opus', 'local')`)
+	// Two anchor rows for the same logical agent: the project-local bare form
+	// (id 1) and the plugin/global qualified form (id 2). Both must fold the
+	// same runs — regression guard for plugin-qualified anchor names.
+	exec(`INSERT INTO agents (id, name, scope, project_id, file_path, model, origin) VALUES
+	      (1, 'tech-lead',      'project', 1,    '/work/alpha/.claude/agents/tech-lead.md', 'claude-opus', 'local'),
+	      (2, 'core:tech-lead', 'global',  NULL, '/u/.claude/plugins/cache/core/agents/tech-lead.md', 'claude-opus', 'plugin')`)
 
 	// tech-lead runs: two notations (core:tech-lead + tech-lead), 2 projects,
 	// statuses ok/ok/error. Plus a built-in Explore and an unrelated agent that
@@ -110,6 +114,20 @@ func TestAgentHistory(t *testing.T) {
 
 	if runs := hist["recentRuns"].([]any); len(runs) != 3 {
 		t.Errorf("recentRuns = %d, want 3", len(runs))
+	}
+}
+
+// A plugin/global anchor row stores its name qualified ("core:tech-lead").
+// Opening it must fold the same runs as the bare project row, not return empty.
+func TestAgentHistoryPluginQualifiedAnchor(t *testing.T) {
+	srv := historyServer(t)
+
+	var hist map[string]any
+	getJSON(t, srv.URL+"/api/system/agents/2/history?days=365", &hist)
+
+	totals := hist["totals"].(map[string]any)
+	if totals["runs"].(float64) != 3 {
+		t.Errorf("plugin-qualified anchor: totals.runs = %v, want 3", totals["runs"])
 	}
 }
 

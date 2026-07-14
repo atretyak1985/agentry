@@ -122,6 +122,11 @@ func (h *Handler) getSystemAgentHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Fold the anchor row's own name too: plugin/global rows are stored
+	// plugin-qualified ("core:tech-lead"), so comparing a normalised event
+	// type against a raw anchor name would never match. Normalise both sides.
+	wantName := normAgentType(name)
+
 	days := historyWindowDays(r)
 	cutoff := timeWindowCutoff(days)
 
@@ -170,7 +175,7 @@ func (h *Handler) getSystemAgentHistory(w http.ResponseWriter, r *http.Request) 
 			writeErr(w, err)
 			return
 		}
-		if normAgentType(stype.String) != name {
+		if normAgentType(stype.String) != wantName {
 			continue
 		}
 
