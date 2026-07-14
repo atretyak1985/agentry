@@ -20,7 +20,17 @@ import {
 import { fmtAgo } from '../lib/format';
 import { useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
-import { FiltersRow, LINT_TONES, LintDot, OriginBadge, ScopeBadge, useSystemList } from './system/shared';
+import {
+  FiltersRow,
+  LINT_TONES,
+  LintDot,
+  OriginBadge,
+  ScopeBadge,
+  parseSort,
+  sortItems,
+  useSystemList,
+  type SystemSort,
+} from './system/shared';
 import { SystemItemPanel } from './system/ItemDetail';
 import { CreateAgentForm } from './system/CreateAgentForm';
 import { HooksTab } from './system/HooksTab';
@@ -186,10 +196,12 @@ function ItemsTab({
   project,
   projects,
   lint,
+  sort,
   selectedId,
   refreshKey,
   onScope,
   onProject,
+  onSort,
   onSelect,
   onMutated,
   onDeleted,
@@ -202,10 +214,12 @@ function ItemsTab({
   project: string | null;
   projects: Project[];
   lint: LintSeverity | null;
+  sort: SystemSort;
   selectedId: number | null;
   refreshKey: number;
   onScope: (scope: 'global' | 'project' | null) => void;
   onProject: (slug: string | null) => void;
+  onSort: (sort: SystemSort) => void;
   onSelect: (id: number | null) => void;
   /** A write landed in the panel/form — refetch list + summary + detail. */
   onMutated: () => void;
@@ -245,7 +259,7 @@ function ItemsTab({
   if (error !== null) return <ErrorBox message={error} onRetry={retry} />;
 
   const lintFiltered = rows === null ? null : lint !== null ? rows.filter((r) => r.lintMax === lint) : rows;
-  const filtered =
+  const searched =
     lintFiltered === null
       ? null
       : query === ''
@@ -255,6 +269,7 @@ function ItemsTab({
               (v) => v != null && v.toLowerCase().includes(query),
             ),
           );
+  const filtered = searched === null ? null : sortItems(searched, sort);
   const detailOpen = selectable && selectedId !== null;
 
   // name lookup map for ScopeBadge — avoids passing projects[] into every row
@@ -301,6 +316,8 @@ function ItemsTab({
           onSearch={setSearch}
           onScope={onScope}
           onProject={onProject}
+          sort={sort}
+          onSort={onSort}
         />
         {kind === 'agents' && (
           <div className="mt-3">
@@ -363,6 +380,7 @@ export function System(): JSX.Element {
   const scope = parseScope(searchParams.get('scope'));
   const project = searchParams.get('project');
   const lint = parseLint(searchParams.get('lint'));
+  const sort = parseSort(searchParams.get('sort'));
   const itemParam = searchParams.get('item');
   const selectedId = itemParam !== null && /^\d+$/.test(itemParam) ? Number(itemParam) : null;
 
@@ -435,6 +453,11 @@ export function System(): JSX.Element {
   const onLint = (severity: LintSeverity | null): void => {
     patchParams({ lint: severity, item: null });
   };
+  // Sort is a view preference — it never changes which row is selected, so it
+  // keeps ?item=. 'name' is the default and stays out of the URL.
+  const onSort = (next: SystemSort): void => {
+    patchParams({ sort: next === 'name' ? null : next });
+  };
   const onSelect = (id: number | null): void => {
     patchParams({ item: id === null ? null : String(id) });
   };
@@ -498,6 +521,8 @@ export function System(): JSX.Element {
             selectable
             projects={projects}
             selectedId={selectedId}
+            sort={sort}
+            onSort={onSort}
             onSelect={onSelect}
             onMutated={refresh}
             onDeleted={onDeleted}
@@ -511,6 +536,8 @@ export function System(): JSX.Element {
             selectable
             projects={projects}
             selectedId={selectedId}
+            sort={sort}
+            onSort={onSort}
             onSelect={onSelect}
             onMutated={refresh}
             onDeleted={onDeleted}
@@ -525,6 +552,8 @@ export function System(): JSX.Element {
             selectable={false}
             projects={projects}
             selectedId={null}
+            sort={sort}
+            onSort={onSort}
             onSelect={onSelect}
             onMutated={refresh}
             onDeleted={onDeleted}

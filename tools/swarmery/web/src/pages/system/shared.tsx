@@ -4,6 +4,7 @@
 // pill chips, mono micro-type); tooltips are native `title` attributes.
 
 import { useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import type { LintSeverity, Project } from '../../api/types';
 import type { SystemListFilters } from '../../api/system';
 import { projectColor } from '../../lib/colors';
@@ -126,7 +127,7 @@ function DropdownOption({
   onSelect,
 }: {
   selected: boolean;
-  dot: string;
+  dot?: string;
   label: string;
   onSelect: () => void;
 }): JSX.Element {
@@ -138,11 +139,48 @@ function DropdownOption({
       onClick={onSelect}
       className={`flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-surface2 ${selected ? 'text-ink' : 'text-ink-dim'}`}
     >
-      <Dot color={dot} />
+      {dot !== undefined && <Dot color={dot} />}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {selected && <span aria-hidden="true">✓</span>}
     </button>
   );
+}
+
+/** Shared headless-dropdown behaviour: close on outside pointer-down / Escape
+ * (Escape returns focus to the trigger). setOpen from useState is stable. */
+function useDropdownDismiss(
+  open: boolean,
+  setOpen: (open: boolean) => void,
+  rootRef: RefObject<HTMLDivElement>,
+  buttonRef: RefObject<HTMLButtonElement>,
+): void {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (e: MouseEvent): void => {
+      if (rootRef.current !== null && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, setOpen, rootRef, buttonRef]);
+}
+
+/** Roving focus over a listbox's [role=option] children (wraps around). */
+function focusOption(menuRef: RefObject<HTMLDivElement>, delta: 1 | -1): void {
+  const opts = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+  if (!opts?.length) return;
+  const list = Array.from(opts);
+  const idx = list.indexOf(document.activeElement as HTMLButtonElement);
+  list[(idx + delta + list.length) % list.length]?.focus();
 }
 
 export function ProjectDropdown({
@@ -159,29 +197,7 @@ export function ProjectDropdown({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointerDown = (e: MouseEvent): void => {
-      if (rootRef.current !== null && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') { setOpen(false); buttonRef.current?.focus(); }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
-
-  const focusOption = (delta: 1 | -1): void => {
-    const opts = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
-    if (!opts?.length) return;
-    const list = Array.from(opts);
-    const idx = list.indexOf(document.activeElement as HTMLButtonElement);
-    list[(idx + delta + list.length) % list.length]?.focus();
-  };
+  useDropdownDismiss(open, setOpen, rootRef, buttonRef);
 
   const select = (slug: string | null): void => {
     onChange(slug);
@@ -202,7 +218,7 @@ export function ProjectDropdown({
         aria-expanded={open}
         aria-label="filter by project"
         onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => { if (e.key === 'ArrowDown' && open) { e.preventDefault(); focusOption(1); } }}
+        onKeyDown={(e) => { if (e.key === 'ArrowDown' && open) { e.preventDefault(); focusOption(menuRef, 1); } }}
         className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-ink-dim aria-expanded:bg-surface2 aria-expanded:text-ink"
       >
         <Dot color={dot} />
@@ -215,7 +231,7 @@ export function ProjectDropdown({
           role="listbox"
           aria-label="project"
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusOption(e.key === 'ArrowDown' ? 1 : -1); }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusOption(menuRef, e.key === 'ArrowDown' ? 1 : -1); }
           }}
           className="absolute top-full left-0 z-20 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-xl shadow-black/40"
         >
@@ -235,8 +251,128 @@ export function ProjectDropdown({
   );
 }
 
+/* ----- sort ----- */
+
+/** List sort keys (URL ?sort=). 'name' is the default and stays out of the URL. */
+export type SystemSort = 'name' | 'used' | 'recent' | 'lint';
+
+export const SORT_LABELS: Record<SystemSort, string> = {
+  name: 'name (A→Z)',
+  used: 'most used',
+  recent: 'recently used',
+  lint: 'lint severity',
+};
+
+const SORT_KEYS: SystemSort[] = ['name', 'used', 'recent', 'lint'];
+
+/** ?sort= → a valid key; anything else (incl. null) falls back to 'name'. */
+export function parseSort(value: string | null): SystemSort {
+  return (SORT_KEYS as string[]).includes(value ?? '') ? (value as SystemSort) : 'name';
+}
+
+const LINT_RANK: Record<LintSeverity, number> = { error: 3, warn: 2, info: 1 };
+const lintRank = (s: LintSeverity | null): number => (s === null ? 0 : LINT_RANK[s]);
+
+/** The shape the comparators read — every list row (agents/skills/commands). */
+interface Sortable {
+  name: string;
+  tasks30d: number;
+  lastUsed: string | null;
+  lintMax: LintSeverity | null;
+}
+
+const byName = (a: Sortable, b: Sortable): number => a.name.localeCompare(b.name);
+
+/** Newest lastUsed first; never-used rows sink to the bottom. */
+function byRecent(a: Sortable, b: Sortable): number {
+  if (a.lastUsed === b.lastUsed) return 0;
+  if (a.lastUsed === null) return 1;
+  if (b.lastUsed === null) return -1;
+  return b.lastUsed.localeCompare(a.lastUsed);
+}
+
+/** Stable client-side sort (name is always the final tiebreak). */
+export function sortItems<T extends Sortable>(rows: T[], sort: SystemSort): T[] {
+  const copy = [...rows];
+  copy.sort((a, b) => {
+    switch (sort) {
+      case 'used':
+        return b.tasks30d - a.tasks30d || byRecent(a, b) || byName(a, b);
+      case 'recent':
+        return byRecent(a, b) || byName(a, b);
+      case 'lint':
+        return lintRank(b.lintMax) - lintRank(a.lintMax) || byName(a, b);
+      default:
+        return byName(a, b);
+    }
+  });
+  return copy;
+}
+
+/** Sort-key dropdown (headless select; mirrors ProjectDropdown minus the dots). */
+export function SortDropdown({
+  value,
+  onChange,
+}: {
+  value: SystemSort;
+  onChange: (sort: SystemSort) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useDropdownDismiss(open, setOpen, rootRef, buttonRef);
+
+  const select = (sort: SystemSort): void => {
+    onChange(sort);
+    setOpen(false);
+    buttonRef.current?.focus();
+  };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="sort list"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'ArrowDown' && open) { e.preventDefault(); focusOption(menuRef, 1); } }}
+        className="flex items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-ink-dim aria-expanded:bg-surface2 aria-expanded:text-ink"
+      >
+        <span aria-hidden="true" className="text-[11px] leading-none text-ink-dim/70">⇅</span>
+        <span className="truncate">{SORT_LABELS[value]}</span>
+        <span aria-hidden="true" className="text-[8px]">▾</span>
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label="sort by"
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusOption(menuRef, e.key === 'ArrowDown' ? 1 : -1); }
+          }}
+          className="absolute top-full right-0 z-20 mt-1 min-w-[160px] overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-xl shadow-black/40"
+        >
+          {SORT_KEYS.map((key) => (
+            <DropdownOption
+              key={key}
+              selected={value === key}
+              label={SORT_LABELS[key]}
+              onSelect={() => select(key)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Search input + project dropdown + scope chips — the top filter bar of every
- * System tab. Search is client-side; scope/project are pushed to the API. */
+ * System tab. Search is client-side; scope/project are pushed to the API. When
+ * onSort is provided the client-side sort dropdown is shown (agents/skills). */
 export function FiltersRow({
   scope,
   project,
@@ -245,6 +381,8 @@ export function FiltersRow({
   onSearch,
   onScope,
   onProject,
+  sort,
+  onSort,
 }: {
   scope: 'global' | 'project' | null;
   project: string | null;
@@ -253,6 +391,8 @@ export function FiltersRow({
   onSearch: (s: string) => void;
   onScope: (scope: 'global' | 'project' | null) => void;
   onProject: (slug: string | null) => void;
+  sort?: SystemSort;
+  onSort?: (sort: SystemSort) => void;
 }): JSX.Element {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2">
@@ -281,6 +421,11 @@ export function FiltersRow({
       <FilterChip selected={scope === null} onClick={() => onScope(null)}>all scopes</FilterChip>
       <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>global</FilterChip>
       <FilterChip selected={scope === 'project'} onClick={() => onScope('project')}>project</FilterChip>
+      {sort !== undefined && onSort !== undefined && (
+        <span className="ml-auto">
+          <SortDropdown value={sort} onChange={onSort} />
+        </span>
+      )}
     </div>
   );
 }
