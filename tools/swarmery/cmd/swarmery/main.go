@@ -102,7 +102,9 @@ func usage() {
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery sysscan  [--db <path>] [--claude-dir <dir>] [--overlays-dir <dir>]
                                    one-shot system-config scan (agents/skills/hooks/commands)
-  swarmery install  [--port <n>]   launchd auto-start
+  swarmery install  [--port <n>] [--onboard-roots <dirs>] [--workspace-root <dir>] [--statusline-src <dir>]
+                                   launchd auto-start; bakes SWARMERY_* into the plist's EnvironmentVariables
+                                   (--onboard-roots enables POST /api/projects/onboard + the dashboard button)
   swarmery uninstall               remove launchd service (keeps logs+db)
   swarmery status                  service health, pid, uptime, db size
   swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)

@@ -79,7 +79,7 @@ func (s *System) registered() bool {
 // service via `launchctl bootstrap`. Re-running is idempotent: the binary
 // and plist are overwritten in place and an already-registered service is
 // booted out before being bootstrapped again — never duplicated.
-func (s *System) Install(sourceBin string, port int) error {
+func (s *System) Install(sourceBin string, port int, env ...EnvVar) error {
 	for _, dir := range []string{filepath.Dir(s.BinPath()), s.LogsDir(), filepath.Dir(s.PlistPath())} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
@@ -91,12 +91,15 @@ func (s *System) Install(sourceBin string, port int) error {
 	}
 	fmt.Fprintf(s.Out, "installed binary: %s\n", s.BinPath())
 
-	if err := os.WriteFile(s.PlistPath(), []byte(Plist(s.BinPath(), s.LogsDir(), port)), 0o644); err != nil {
+	if err := os.WriteFile(s.PlistPath(), []byte(Plist(s.BinPath(), s.LogsDir(), port, env...)), 0o644); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
 	fmt.Fprintf(s.Out, "wrote plist: %s\n", s.PlistPath())
 	if port > 0 {
 		fmt.Fprintf(s.Out, "  SWARMERY_PORT=%d (EnvironmentVariables)\n", port)
+	}
+	for _, e := range env {
+		fmt.Fprintf(s.Out, "  %s=%s (EnvironmentVariables)\n", e.Key, e.Value)
 	}
 
 	// Idempotent restart: unload an existing registration before loading the

@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/version"
 )
@@ -15,15 +16,39 @@ import (
 // the single shared source in internal/version (also served by /api/health).
 const Version = version.Version
 
-// CmdInstall implements `swarmery install [--port <n>]` (env: SWARMERY_PORT).
-// A port explicitly configured at install time is baked into the plist's
-// EnvironmentVariables; otherwise the daemon uses its built-in default.
+// CmdInstall implements
+//
+//	swarmery install [--port <n>] [--onboard-roots <dirs>]
+//	                 [--workspace-root <dir>] [--statusline-src <dir>]
+//
+// launchd does not inherit the installing shell's environment, so anything the
+// daemon needs at runtime is baked into the plist's EnvironmentVariables here.
+// Each flag defaults to its matching SWARMERY_* env var; empty values are
+// omitted. --onboard-roots is what enables POST /api/projects/onboard (and the
+// dashboard "new project" button) — without it that endpoint stays disabled.
 func CmdInstall(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	port := fs.Int("port", envPort(), "daemon HTTP port baked into the plist (env: SWARMERY_PORT; 0 = daemon default)")
+	onboardRoots := fs.String("onboard-roots", os.Getenv("SWARMERY_ONBOARD_ROOTS"),
+		"comma-separated allow-list of parent dirs enabling project onboarding (env: SWARMERY_ONBOARD_ROOTS)")
+	workspaceRoot := fs.String("workspace-root", os.Getenv("SWARMERY_WORKSPACE_ROOT"),
+		"shared workspace repo root baked into the plist (env: SWARMERY_WORKSPACE_ROOT)")
+	statuslineSrc := fs.String("statusline-src", os.Getenv("SWARMERY_STATUSLINE_SRC"),
+		"plugins/core/statusline dir onboarding copies from (env: SWARMERY_STATUSLINE_SRC)")
 	fs.Parse(args)
 	if *port < 0 || *port > 65535 {
 		return fmt.Errorf("invalid port %d", *port)
+	}
+
+	var env []EnvVar
+	for _, e := range []EnvVar{
+		{Key: "SWARMERY_ONBOARD_ROOTS", Value: strings.TrimSpace(*onboardRoots)},
+		{Key: "SWARMERY_WORKSPACE_ROOT", Value: strings.TrimSpace(*workspaceRoot)},
+		{Key: "SWARMERY_STATUSLINE_SRC", Value: strings.TrimSpace(*statuslineSrc)},
+	} {
+		if e.Value != "" {
+			env = append(env, e)
+		}
 	}
 
 	sys, err := realSystem()
@@ -34,7 +59,7 @@ func CmdInstall(args []string) error {
 	if err != nil {
 		return fmt.Errorf("locate current binary: %w", err)
 	}
-	return sys.Install(sourceBin, *port)
+	return sys.Install(sourceBin, *port, env...)
 }
 
 // CmdUninstall implements `swarmery uninstall`.

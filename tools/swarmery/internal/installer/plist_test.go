@@ -14,10 +14,15 @@ func TestPlistGolden(t *testing.T) {
 	cases := []struct {
 		name   string
 		port   int
+		extra  []EnvVar
 		golden string
 	}{
-		{"default port omits EnvironmentVariables", 0, "plist_default.golden"},
-		{"explicit port writes SWARMERY_PORT", 8899, "plist_with_port.golden"},
+		{"default port omits EnvironmentVariables", 0, nil, "plist_default.golden"},
+		{"explicit port writes SWARMERY_PORT", 8899, nil, "plist_with_port.golden"},
+		{"onboard roots write EnvironmentVariables without a port", 0, []EnvVar{
+			{Key: "SWARMERY_ONBOARD_ROOTS", Value: "/Volumes/Work"},
+			{Key: "SWARMERY_WORKSPACE_ROOT", Value: "/Volumes/Work/swarmery-workspace"},
+		}, "plist_with_onboard.golden"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -25,7 +30,7 @@ func TestPlistGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden: %v", err)
 			}
-			got := Plist(binPath, logsDir, tc.port)
+			got := Plist(binPath, logsDir, tc.port, tc.extra...)
 			if got != string(want) {
 				t.Errorf("plist mismatch with %s\n--- got ---\n%s\n--- want ---\n%s", tc.golden, got, want)
 			}
