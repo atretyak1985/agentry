@@ -31,7 +31,8 @@ import {
   SystemWriteError,
   type SystemItemsKind,
 } from '../../api/system';
-import { fmtAgo, fmtDateTime, fmtDurationMs, projectLabel } from '../../lib/format';
+import { fmtAgo, fmtDateTime, fmtDurationMs } from '../../lib/format';
+import { ProjectName } from '../../components/ProjectName';
 import { Markdown } from '../../lib/markdown';
 import { ConfirmDialog, ErrorBox, Loading, SectionTitle } from '../../components/ui';
 import { LINT_TONES, LintDot, OriginBadge, ScopeBadge } from './shared';
@@ -473,7 +474,9 @@ function AgentHistoryPanel({ agentId }: { agentId: number }): JSX.Element {
             <tbody>
               {hist.byProject.map((p) => (
                 <tr key={p.slug} className="border-b border-line last:border-0">
-                  <td className="px-3 py-1.5 text-ink-2">{projectLabel(p.name, p.slug)}</td>
+                  <td className="px-3 py-1.5">
+                    <ProjectName name={p.name} slug={p.slug} />
+                  </td>
                   <td className="px-2 py-1.5 text-right font-mono text-ink-dim">{p.runs}×</td>
                   <td className="px-2 py-1.5 text-right font-mono text-ink-dim">
                     {fmtDurationMs(p.avgMs)}
