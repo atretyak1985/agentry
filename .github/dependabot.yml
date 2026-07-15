@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Keep SHA-pinned GitHub Actions current (security patches surface as PRs
+  # that bump both the pin and the trailing version comment).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  # tools/swarmery Go module.
+  - package-ecosystem: gomod
+    directory: /tools/swarmery
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+
+  # tools/swarmery web (React) dependencies.
+  - package-ecosystem: npm
+    directory: /tools/swarmery/web
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore

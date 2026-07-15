@@ -18,9 +18,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
@@ -32,7 +32,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: tools/swarmery/go.mod
           cache-dependency-path: tools/swarmery/go.sum
@@ -41,8 +41,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test (with coverage floor)
+        run: |
+          set -euo pipefail
+          go test -coverprofile=coverage.out ./...
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
+          echo "total coverage: ${total}%"
+          # Regression floor (current ~71.9%). Raise as coverage improves;
+          # never set it above the live number or CI blocks legitimate work.
+          floor=70.0
+          awk -v t="$total" -v f="$floor" 'BEGIN { exit (t+0 >= f+0) ? 0 : 1 }' \
+            || { echo "coverage ${total}% is below floor ${floor}%"; exit 1; }
 
       - name: Build binary
         run: go build -o swarmery ./cmd/swarmery

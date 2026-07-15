@@ -25,6 +25,47 @@ make build          # snapshot docs → vite bundle → go:embed → single ./sw
 # or: make install  # deploy + launchd auto-start (see repo-root README)
 ```
 
+## Backup & restore
+
+The daemon's operational database (`~/.swarmery/swarmery.db` by default — sessions,
+approvals, cost-tracking, the config-registry graph) is the one piece of local
+state with no external source of truth. Snapshot it with:
+
+```bash
+swarmery backup                       # → ~/.swarmery/backups/swarmery-<timestamp>.db
+swarmery backup --out /path/to/snap.db
+```
+
+`backup` uses SQLite `VACUUM INTO`, so it is **safe to run while the daemon is
+serving** (brief read lock, no downtime) and yields a single self-contained file
+with no `-wal`/`-shm` sidecars. Schedule it from cron/launchd for a rolling
+history.
+
+**Restore** is stop-copy-start (SQLite has no live in-place restore):
+
+```bash
+swarmery uninstall          # or: launchctl stop … / kill the `swarmery serve` process
+cp ~/.swarmery/backups/swarmery-<timestamp>.db ~/.swarmery/swarmery.db
+rm -f ~/.swarmery/swarmery.db-wal ~/.swarmery/swarmery.db-shm   # drop stale WAL sidecars
+swarmery install            # or restart `swarmery serve`
+```
+
+## Rollback
+
+Releases are cut by pushing a `swarmery-v*` tag (see
+[`.github/workflows/swarmery-release.yml`](../../.github/workflows/swarmery-release.yml)),
+which publishes versioned binaries + `SHA256SUMS` on a GitHub Release. To roll a
+local build back to a known-good version:
+
+```bash
+git checkout <last-good-tag>   # e.g. swarmery-v0.1.0  (git tag -l 'swarmery-v*')
+make build
+```
+
+Back up the database first (above) if the version you are rolling away from ran a
+newer schema migration — migrations are forward-only, so an older binary may
+refuse a database it does not recognize.
+
 ## Excluding throwaway projects
 
 Spike/e2e runs under `/tmp` would otherwise pollute the dashboards. The

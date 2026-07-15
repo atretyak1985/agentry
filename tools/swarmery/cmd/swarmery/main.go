@@ -4,6 +4,7 @@
 //	swarmery backfill              one-shot full scan of the projects root
 //	swarmery serve                 serve the API/SPA + live ingest pipeline
 //	swarmery recost                recompute cost_usd for all turns
+//	swarmery backup                write a VACUUM-INTO snapshot of the DB
 //	swarmery install               launchd auto-start (uninstall / status)
 //	swarmery hook <event>          runtime shim invoked by Claude Code hooks
 //	swarmery hooks <cmd>           manage hook entries in project settings
@@ -53,6 +54,8 @@ func main() {
 		err = cmdServe(os.Args[2:])
 	case "recost":
 		err = cmdRecost(os.Args[2:])
+	case "backup":
+		err = cmdBackup(os.Args[2:])
 	case "wscan":
 		err = cmdWscan(os.Args[2:])
 	case "sysscan":
@@ -90,6 +93,7 @@ func usage() {
                     [--exclude-projects <globs>]  (default '/tmp/*,/private/tmp/*')
                     [--answer-delivery <updated-input|deny-message>]
   swarmery recost   [--db <path>]
+  swarmery backup   [--db <path>] [--out <path>]   VACUUM-INTO snapshot (safe while serving)
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery sysscan  [--db <path>] [--claude-dir <dir>] [--overlays-dir <dir>]
                                    one-shot system-config scan (agents/skills/hooks/commands)
@@ -194,6 +198,34 @@ func cmdRecost(args []string) error {
 	}
 	fmt.Printf("recost %s\n  turns examined: %d\n  priced: %d\n  unpriced (unknown model → NULL): %d\n  no usage (user turns → NULL): %d\n",
 		*dbPath, stats.Total, stats.Priced, stats.Unpriced, stats.NoUsage)
+	return nil
+}
+
+// cmdBackup writes a consistent snapshot of the database to a standalone file
+// via SQLite VACUUM INTO. Safe to run while the daemon is serving (brief read
+// lock, no downtime). Restore is a stop-copy-start: stop the daemon, copy the
+// snapshot back over the live --db path, restart (see tools/swarmery/README.md).
+func cmdBackup(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	dbPath := dbFlag(fs)
+	out := fs.String("out", "",
+		"snapshot output path (default: <db-dir>/backups/swarmery-<timestamp>.db)")
+	fs.Parse(args)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: swarmery backup [--db <path>] [--out <path>]")
+	}
+
+	dest := *out
+	if dest == "" {
+		dest = filepath.Join(filepath.Dir(*dbPath), "backups",
+			fmt.Sprintf("swarmery-%s.db", time.Now().Format("20060102-150405")))
+	}
+
+	size, err := store.Backup(*dbPath, dest)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("backup %s -> %s (%d bytes)\n", *dbPath, dest, size)
 	return nil
 }
 

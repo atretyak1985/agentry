@@ -18,31 +18,35 @@ echo ""
 PASS=0
 FAIL=0
 
+# check <description> <command> [args...] — runs the command directly (argv
+# array, no `eval`/shell re-parse), so interpolated image/chart/namespace
+# values can never be re-interpreted as shell syntax.
 check() {
-  if eval "$2" > /dev/null 2>&1; then
-    echo "  PASS: $1"
+  local desc="$1"; shift
+  if "$@" > /dev/null 2>&1; then
+    echo "  PASS: $desc"
     ((PASS++))
   else
-    echo "  FAIL: $1"
+    echo "  FAIL: $desc"
     ((FAIL++))
   fi
 }
 
 # 1. Image exists in registry
 echo "--- Image Checks ---"
-check "Image exists in registry" "gcloud artifacts docker images describe $REGISTRY/$IMAGE:$TAG"
+check "Image exists in registry" gcloud artifacts docker images describe "$REGISTRY/$IMAGE:$TAG"
 
 # 2. Chart validation
 echo ""
 echo "--- Chart Checks ---"
-check "Chart.yaml exists" "test -f $CHART/Chart.yaml"
-check "Helm lint passes" "helm lint $CHART"
+check "Chart.yaml exists" test -f "$CHART/Chart.yaml"
+check "Helm lint passes" helm lint "$CHART"
 
 # 3. Cluster connectivity
 echo ""
 echo "--- Cluster Checks ---"
-check "kubectl connected" "kubectl cluster-info"
-check "Namespace exists" "kubectl get ns $NAMESPACE"
+check "kubectl connected" kubectl cluster-info
+check "Namespace exists" kubectl get ns "$NAMESPACE"
 
 # 4. Summary
 echo ""
