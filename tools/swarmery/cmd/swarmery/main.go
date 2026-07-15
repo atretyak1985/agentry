@@ -110,7 +110,8 @@ func usage() {
   swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]
                                    bootstrap a consumer project: .claude/settings.json +
                                    project.json skeleton + workspace namespace (idempotent)
-  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT`)
+  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT
+       SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC`)
 }
 
 // defaultProjectsRoot resolves SWARMERY_PROJECTS_ROOT, falling back to
@@ -365,6 +366,23 @@ func defaultWorkspaceRoot() string {
 	return "/Volumes/Work/swarmery-workspace"
 }
 
+// onboardRoots parses SWARMERY_ONBOARD_ROOTS (comma-separated parent dirs) into
+// the allow-list that fences POST /api/projects/onboard. Empty/unset ⇒ the
+// endpoint is disabled — writing .claude/ into an arbitrary path is opt-in.
+func onboardRoots() []string {
+	v := os.Getenv("SWARMERY_ONBOARD_ROOTS")
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // cmdOnboard bootstraps a new consumer project via the shared onboard package —
 // the CLI twin of the control-plane onboarding endpoint and the delegation
 // target of scripts/init.sh when this binary is on PATH.
@@ -525,6 +543,15 @@ func cmdServe(args []string) error {
 	// phase 4: system — GET /api/system/overlays reads overlays/*/project.json
 	// live from this dir on every request (empty disables the listing).
 	api.AttachOverlaysDir(sysCfg.OverlaysDir)
+
+	// onboarding: POST /api/projects/onboard writes .claude/ into a
+	// caller-supplied path, so it is opt-in and fenced to an explicit
+	// allow-list. Empty SWARMERY_ONBOARD_ROOTS ⇒ the endpoint stays disabled.
+	api.AttachOnboard(api.OnboardConfig{
+		Roots:         onboardRoots(),
+		WorkspaceRoot: defaultWorkspaceRoot(),
+		StatuslineSrc: os.Getenv("SWARMERY_STATUSLINE_SRC"),
+	})
 
 	// phase 4: system, Stage 2 (step-09) — the write surface for agents and
 	// skills. Every write goes through the sysedit pipeline; the editor reuses

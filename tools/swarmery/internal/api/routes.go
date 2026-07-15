@@ -9,6 +9,9 @@ import "net/http"
 func Routes(mux *http.ServeMux, h *Handler) {
 	// ── core: vertical slice (this file's owner) ──
 	mux.HandleFunc("GET /api/projects", h.listProjects)
+	// onboarding: bootstrap a new consumer project from the dashboard. Fenced
+	// by requireLocalOrigin + an explicit root allow-list (disabled when unset).
+	mux.HandleFunc("POST /api/projects/onboard", requireLocalOrigin(h.onboardProject))
 	mux.HandleFunc("GET /api/sessions", h.listSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", h.getSession)
 
