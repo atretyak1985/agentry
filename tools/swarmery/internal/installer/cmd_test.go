@@ -16,14 +16,14 @@ func TestMergeInstallEnv_PreservesWhenNotResupplied(t *testing.T) {
 	// The regression: a bare reinstall (no flags, no shell env) must carry the
 	// previously-baked onboarding vars over instead of wiping them.
 	prev := map[string]string{
-		"SWARMERY_ONBOARD_ROOTS":  "/Volumes/Work",
-		"SWARMERY_WORKSPACE_ROOT": "/Volumes/Work/swarmery-workspace",
+		"SWARMERY_ONBOARD_ROOTS":  "/home/dev/projects",
+		"SWARMERY_WORKSPACE_ROOT": "/home/dev/swarmery-workspace",
 	}
 	env, preserved := mergeInstallEnv(prev, map[string]bool{}, map[string]string{}, noEnv)
 
 	want := []EnvVar{
-		{Key: "SWARMERY_ONBOARD_ROOTS", Value: "/Volumes/Work"},
-		{Key: "SWARMERY_WORKSPACE_ROOT", Value: "/Volumes/Work/swarmery-workspace"},
+		{Key: "SWARMERY_ONBOARD_ROOTS", Value: "/home/dev/projects"},
+		{Key: "SWARMERY_WORKSPACE_ROOT", Value: "/home/dev/swarmery-workspace"},
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Errorf("env = %+v, want %+v", env, want)

@@ -21,7 +21,7 @@ session_id=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:spac
 # ── Workspace resolution — mirrors agent-work.sh (swarmery model first,
 #    legacy project-local .claude-workspace fallback) ────────────────────
 if [ -n "${AGENT_PROJECT:-}" ]; then
-  ws_root="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}"
+  ws_root="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}"
   working_dir="${ws_root}/${AGENT_PROJECT}/workspace/working"
 else
   working_dir="${CLAUDE_PROJECT_DIR:-$(pwd)}/.claude-workspace/working"

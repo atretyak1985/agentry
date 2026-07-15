@@ -106,7 +106,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }): JSX.Element {
             <input
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder="/Volumes/Work/my-project"
+              placeholder="/absolute/path/to/project"
               className="mt-1 w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-line-strong"
             />
 

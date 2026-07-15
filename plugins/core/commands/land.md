@@ -27,7 +27,7 @@ back to a legacy project-local `.claude-workspace/`.
 
 ```bash
 AW="${CLAUDE_PLUGIN_ROOT}/bin/agent-work.sh"
-WS="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT:-}/workspace"
+WS="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT:-}/workspace"
 [ -d "$WS" ] || WS="${CLAUDE_PROJECT_DIR:-.}/.claude-workspace"   # legacy layout
 ```
 

@@ -11,10 +11,10 @@ it says so explicitly (see [Open questions](#open-questions)).
 - Sessions examined in depth:
   | Character | File |
   |---|---|
-  | Subagent (Agent tool) session + sidechain files | `-Volumes-Work-swarmery/9f22596e-4bb2-44f1-93ad-e8b84f17fa22.jsonl` (+ its `subagents/`, `tool-results/` dirs) |
-  | Tool-heavy (41 Edit, 27 Bash, 13 Agent) | `-Volumes-Work-bloomblum/948a823d-95e0-4b0c-9a3a-126647195faa.jsonl` |
-  | Long multi-prompt interactive | `-Volumes-Work-Skygor/7f4fbd6b-9f33-44c6-b0c7-f91c5dac8258.jsonl` |
-  | Short simple (66 lines) | `-Volumes-Work-swarmery/2019f909-9db3-4f7b-8639-98bd5e9e38e9.jsonl` |
+  | Subagent (Agent tool) session + sidechain files | `-home-dev-swarmery/9f22596e-4bb2-44f1-93ad-e8b84f17fa22.jsonl` (+ its `subagents/`, `tool-results/` dirs) |
+  | Tool-heavy (41 Edit, 27 Bash, 13 Agent) | `-home-dev-litware/948a823d-95e0-4b0c-9a3a-126647195faa.jsonl` |
+  | Long multi-prompt interactive | `-home-dev-Fabrikam/7f4fbd6b-9f33-44c6-b0c7-f91c5dac8258.jsonl` |
+  | Short simple (66 lines) | `-home-dev-swarmery/2019f909-9db3-4f7b-8639-98bd5e9e38e9.jsonl` |
 - Corpus-wide scans (record-type / tool-name / attachment-type frequency) over all 115 files.
 
 Anonymized fixtures mirroring these sessions: [`testdata/fixtures/`](../testdata/fixtures/):
@@ -31,7 +31,7 @@ Anonymized fixtures mirroring these sessions: [`testdata/fixtures/`](../testdata
 ## 1. On-disk layout
 
 ```
-~/.claude/projects/<slug>/                  # slug = cwd with '/' → '-', e.g. -Volumes-Work-bloomblum
+~/.claude/projects/<slug>/                  # slug = cwd with '/' → '-', e.g. -home-dev-litware
   <sessionId>.jsonl                         # main transcript; sessionId is a UUID = file name
   <sessionId>/                              # OPTIONAL companion dir (same name, no extension)
     subagents/
@@ -90,7 +90,7 @@ Every `user` / `assistant` / `attachment` / `system` line carries:
   "timestamp": "2026-07-12T11:12:51.419Z",
   "userType": "external",
   "entrypoint": "cli",              // observed: "cli" (62585), "claude-desktop" (72)
-  "cwd": "/Volumes/Work/<project>",
+  "cwd": "/path/to/<project>",
   "sessionId": "<same UUID as the file name>",
   "version": "2.1.170",             // Claude Code version
   "gitBranch": "main"

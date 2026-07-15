@@ -365,7 +365,10 @@ func defaultWorkspaceRoot() string {
 	if v := os.Getenv("SWARMERY_WORKSPACE_ROOT"); v != "" {
 		return v
 	}
-	return "/Volumes/Work/swarmery-workspace"
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "swarmery-workspace")
+	}
+	return "swarmery-workspace"
 }
 
 // onboardRoots parses SWARMERY_ONBOARD_ROOTS (comma-separated parent dirs) into

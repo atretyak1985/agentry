@@ -20,8 +20,8 @@ func TestPlistGolden(t *testing.T) {
 		{"default port omits EnvironmentVariables", 0, nil, "plist_default.golden"},
 		{"explicit port writes SWARMERY_PORT", 8899, nil, "plist_with_port.golden"},
 		{"onboard roots write EnvironmentVariables without a port", 0, []EnvVar{
-			{Key: "SWARMERY_ONBOARD_ROOTS", Value: "/Volumes/Work"},
-			{Key: "SWARMERY_WORKSPACE_ROOT", Value: "/Volumes/Work/swarmery-workspace"},
+			{Key: "SWARMERY_ONBOARD_ROOTS", Value: "/home/dev/projects"},
+			{Key: "SWARMERY_WORKSPACE_ROOT", Value: "/home/dev/swarmery-workspace"},
 		}, "plist_with_onboard.golden"},
 	}
 	for _, tc := range cases {

@@ -48,7 +48,7 @@ CI also enforces that every `plugins/*/agents/*.md` has `name:` and `description
 
 ### Work artifacts (hard rule)
 
-ALL new plans, specs, and design docs — including ones for `tools/swarmery` — are written to the private workspace repo, **date-grouped** like `working/`: `<workspace>/swarmery/workspace/plans/{YYYY}/{MM}/{DD}/{slug}/` (for this self-hosted repo the workspace is `/Volumes/Work/swarmery-workspace`). Never create planning artifacts under `tools/swarmery/docs/plan/` or anywhere else in this repo; the in-repo plan tree is a frozen record of shipped phases.
+ALL new plans, specs, and design docs — including ones for `tools/swarmery` — are written to the private workspace repo, **date-grouped** like `working/`: `<workspace>/swarmery/workspace/plans/{YYYY}/{MM}/{DD}/{slug}/` (the workspace root defaults to `$HOME/swarmery-workspace`, overridable per machine via `AGENT_WORKSPACE_ROOT` / `SWARMERY_WORKSPACE_ROOT`). Never create planning artifacts under `tools/swarmery/docs/plan/` or anywhere else in this repo; the in-repo plan tree is a frozen record of shipped phases.
 - `tools/swarmery/` — Go + React session-monitoring control plane (see exception note above): `cmd/`, `internal/{store,ingest,api}`, `web/`, `testdata/fixtures/`, `docs/{jsonl-format.md,plan/}`.
 
 ## Hard rules

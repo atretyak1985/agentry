@@ -47,8 +47,8 @@ ingested (a new `sessions` row was created).
 
 ```json
 {"type":"session_started","payload":{
-  "id":1,"projectId":1,"projectSlug":"-Volumes-Work-example","sessionUuid":"9f22596e-…",
-  "model":null,"gitBranch":"main","cwd":"/Volumes/Work/example","status":"active",
+  "id":1,"projectId":1,"projectSlug":"-home-dev-example","sessionUuid":"9f22596e-…",
+  "model":null,"gitBranch":"main","cwd":"/path/to/example","status":"active",
   "startedAt":"2026-07-12T14:03:54.000Z","endedAt":"2026-07-12T14:03:54.000Z",
   "title":"live tail demo","source":"jsonl"}}
 ```

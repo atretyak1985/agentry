@@ -122,7 +122,7 @@ if [ "$bypass" = "1" ]; then
   # workspace), else $CLAUDE_PROJECT_DIR / walk-up legacy .claude-workspace.
   _mdir=""
   if [ -n "${AGENT_PROJECT:-}" ]; then
-    _mdir="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace/metrics"
+    _mdir="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace/metrics"
   else
     metrics_base="${CLAUDE_PROJECT_DIR:-}"
     if [ -z "$metrics_base" ]; then

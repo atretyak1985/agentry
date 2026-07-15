@@ -14,7 +14,7 @@ echo "{\"ts\":\"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\",\"tool\":\"_compact_start\",\
 # ── Snapshot newest task checkpoint so post-compaction context can recover it ─
 # swarmery model first (AGENT_PROJECT → sibling swarmery-workspace); legacy fallback.
 if [ -n "${AGENT_PROJECT:-}" ]; then
-  WORKING_DIR="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace/working"
+  WORKING_DIR="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace/working"
 else
   WORKING_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}/.claude-workspace/working"
 fi

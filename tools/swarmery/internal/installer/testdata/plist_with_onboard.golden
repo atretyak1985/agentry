@@ -20,9 +20,9 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>SWARMERY_ONBOARD_ROOTS</key>
-		<string>/Volumes/Work</string>
+		<string>/home/dev/projects</string>
 		<key>SWARMERY_WORKSPACE_ROOT</key>
-		<string>/Volumes/Work/swarmery-workspace</string>
+		<string>/home/dev/swarmery-workspace</string>
 	</dict>
 </dict>
 </plist>

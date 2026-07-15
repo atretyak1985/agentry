@@ -119,7 +119,7 @@ if [[ ("$file_path" == *"agents/docs/generated/"* || "$file_path" == *".claude/d
   echo "This tree is regeneration-only (see agents/docs/generated/README.md)." >&2
   echo "Fix the source code or the generator prompt, then re-run the wiki generator." >&2
   if [ -n "${AGENT_PROJECT:-}" ]; then
-    metrics_dir="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace/metrics"
+    metrics_dir="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace/metrics"
   else
     metrics_dir="${CLAUDE_PROJECT_DIR:-.}/.claude-workspace/metrics"
   fi

@@ -38,10 +38,25 @@ open http://localhost:7777
 
 ```bash
 cd /path/to/your/project
-swarmery onboard <project-slug> [pack ...]          # packs: web-pack | iot-pack | uav-pack | infra-pack | lsp-pack
+# the built binary lives at <swarmery>/tools/swarmery/swarmery — add it to PATH,
+# run `swarmery install` (launchd, macOS), or call it by path:
+/path/to/swarmery/tools/swarmery/swarmery onboard <project-slug> [pack ...]
+#   packs: web-pack | iot-pack | uav-pack | infra-pack | lsp-pack
 ```
 
 `swarmery onboard` is the binary twin of `scripts/init.sh` (the script delegates to it when the binary is on `PATH`, and falls back to pure bash otherwise). Open a fresh Claude Code session in the project, accept the `swarmery` marketplace trust prompt, and the project shows up in the dashboard as soon as its first session runs.
+
+The workspace namespace lands under `$HOME/swarmery-workspace` by default; point it anywhere with `SWARMERY_WORKSPACE_ROOT` (control plane) / `AGENT_WORKSPACE_ROOT` (plugins).
+
+**Enable the in-dashboard "＋ new project" button (optional).** Writing `.claude/` into an arbitrary path is opt-in, so the dashboard onboarding endpoint is **disabled until you allow-list the parent directories** it may write under. Serve or install with `SWARMERY_ONBOARD_ROOTS`:
+
+```bash
+SWARMERY_ONBOARD_ROOTS="$HOME/projects" ./tools/swarmery/swarmery serve
+# persist it into the launchd service (macOS):
+./tools/swarmery/swarmery install --onboard-roots "$HOME/projects"
+```
+
+Without it the button (and `POST /api/projects/onboard`) return `403 onboarding is disabled` — the CLI `swarmery onboard` still works regardless.
 
 ---
 
@@ -131,7 +146,7 @@ SWARMERY_SYSTEM_READONLY=1 ./swarmery serve
 Exclude throwaway projects:
 
 ```bash
-SWARMERY_EXCLUDE="-Volumes-Work-scratch,-Volumes-Work-tmp" ./swarmery serve
+SWARMERY_EXCLUDE="-home-dev-scratch,-home-dev-tmp" ./swarmery serve
 # or: --exclude-projects flag
 ```
 

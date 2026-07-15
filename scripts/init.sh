@@ -1,7 +1,7 @@
 #!/bin/bash
 # swarmery init — bootstrap a new consumer project in one command.
 #
-#   bash /Volumes/Work/swarmery/scripts/init.sh <project-slug> [pack ...]
+#   bash <swarmery-repo>/scripts/init.sh <project-slug> [pack ...]
 #
 #   # or fetch-and-run from anywhere, once the repo is on GitHub. PREFER the
 #   # download-then-inspect form so you read what you execute (piping a remote
@@ -23,7 +23,7 @@ shift || true
 PACKS=("$@")   # e.g. web-pack iot-pack uav-pack (core is always on)
 
 MARKETPLACE_REPO="atretyak1985/swarmery"
-WS_ROOT="${SWARMERY_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}"
+WS_ROOT="${SWARMERY_WORKSPACE_ROOT:-$HOME/swarmery-workspace}"
 
 if [ -z "$SLUG" ]; then
   echo "usage: init.sh <project-slug> [pack ...]        packs: uav-pack | iot-pack | web-pack | infra-pack | lsp-pack"

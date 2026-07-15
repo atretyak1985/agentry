@@ -15,7 +15,7 @@ func TestExcludeListMatchPath(t *testing.T) {
 		{"/tmp/proj", true},
 		{"/tmp/swarmery-spike/proj", true}, // ancestor /tmp/swarmery-spike matches /tmp/*
 		{"/private/tmp/p2-live/proj", true},
-		{"/Volumes/Work/swarmery", false},
+		{"/home/dev/swarmery", false},
 		{"/tmpx/proj", false}, // no partial-segment match
 		{"", false},
 	}
@@ -38,7 +38,7 @@ func TestExcludeListMatchProjectDir(t *testing.T) {
 		{"-private-tmp-swarmery-spike-proj", true},
 		{"-private-tmp-p2-live-proj", true},
 		{"-tmp-proj", true},
-		{"-Volumes-Work-swarmery", false},
+		{"-home-dev-swarmery", false},
 	}
 	for _, c := range cases {
 		if got := e.MatchProjectDir(c.dir); got != c.want {
@@ -52,7 +52,7 @@ func TestExcludeListMatchProjectDir(t *testing.T) {
 func TestDiscoverSkipsExcludedProjects(t *testing.T) {
 	db := testDB(t)
 	root := t.TempDir()
-	for _, dir := range []string{"-private-tmp-p2-live-proj", "-Volumes-Work-app"} {
+	for _, dir := range []string{"-private-tmp-p2-live-proj", "-home-dev-app"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -67,8 +67,8 @@ func TestDiscoverSkipsExcludedProjects(t *testing.T) {
 		Exclude:      ParseExcludeList(DefaultExclude),
 	}, nil)
 	files := p.discover()
-	if len(files) != 1 || filepath.Base(filepath.Dir(files[0])) != "-Volumes-Work-app" {
-		t.Errorf("discover = %v, want only the -Volumes-Work-app transcript", files)
+	if len(files) != 1 || filepath.Base(filepath.Dir(files[0])) != "-home-dev-app" {
+		t.Errorf("discover = %v, want only the -home-dev-app transcript", files)
 	}
 
 	// tailOne must also refuse directly-delivered excluded paths (fsnotify).

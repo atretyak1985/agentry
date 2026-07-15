@@ -1128,7 +1128,7 @@ func (in *ingester) dedupKey(r *record, path, scope string) string {
 // ── project registry (shared with the approvals hook path) ──────────────────
 
 // projectNameFor derives the default display name of a project from its cwd
-// path: the last path element ("/Volumes/Work/swarmery" → "swarmery").
+// path: the last path element ("/home/dev/swarmery" → "swarmery").
 func projectNameFor(path string) string {
 	return filepath.Base(path)
 }
