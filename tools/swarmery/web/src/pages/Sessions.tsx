@@ -150,7 +150,9 @@ function ProjectDropdown({
         className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line-strong px-[11px] py-[5px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-[#4a4e58] aria-expanded:bg-surface2 aria-expanded:text-ink"
       >
         <Dot color={dot} />
-        <span className="truncate">{label}</span>
+        <span className="truncate" style={value !== null ? { color: dot } : undefined}>
+          {label}
+        </span>
         <span aria-hidden="true" className="text-[9px] text-ink-faint">
           ▾
         </span>
@@ -180,6 +182,7 @@ function ProjectDropdown({
               selected={value === p.slug}
               dot={projectColor(p.slug)}
               label={projectLabel(p.name, p.slug)}
+              labelColor={projectColor(p.slug)}
               onSelect={() => select(p.slug)}
             />
           ))}
@@ -193,11 +196,14 @@ function DropdownOption({
   selected,
   dot,
   label,
+  labelColor,
   onSelect,
 }: {
   selected: boolean;
   dot: string;
   label: string;
+  /** Color the option label (project rows); omit for "all projects". */
+  labelColor?: string;
   onSelect: () => void;
 }): JSX.Element {
   return (
@@ -211,7 +217,12 @@ function DropdownOption({
       }`}
     >
       <Dot color={dot} />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span
+        className="min-w-0 flex-1 truncate"
+        style={labelColor !== undefined ? { color: labelColor } : undefined}
+      >
+        {label}
+      </span>
       {selected && <span aria-hidden="true">✓</span>}
     </button>
   );

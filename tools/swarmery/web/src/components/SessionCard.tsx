@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import type { Session } from '../api/types';
 import { projectColor } from '../lib/colors';
-import { fmtSpan, fmtTime, projectLabel } from '../lib/format';
+import { fmtSpan, fmtTime } from '../lib/format';
 import { KillButton } from './KillButton';
+import { ProjectName } from './ProjectName';
 import { ProcBadge } from './ProcBadge';
 import { TaskChip } from './TaskChip';
 import { LiveDot, StatusChip } from './ui';
@@ -117,11 +118,11 @@ export function SessionCard({
     <>
       <div className="flex items-center gap-2">
         <LiveDot status={session.status} />
-        <span
-          className={`min-w-0 flex-1 truncate font-mono text-[11px] ${flat ? 'text-ink-3' : 'text-ink'}`}
-        >
-          {projectLabel(session.projectName, session.projectSlug)}
-        </span>
+        <ProjectName
+          name={session.projectName}
+          slug={session.projectSlug}
+          className="min-w-0 flex-1 truncate font-mono text-[11px]"
+        />
         <ProcBadge session={session} />
         <StatusChip status={session.status} suffix={chipSuffix(session)} />
       </div>
@@ -189,9 +190,11 @@ export function SessionCard({
         </span>
         <span className="flex min-w-0 items-center gap-[7px]">
           <ProjectDot slug={session.projectSlug} />
-          <span className="truncate font-mono text-[11px] text-ink-3">
-            {projectLabel(session.projectName, session.projectSlug)}
-          </span>
+          <ProjectName
+            name={session.projectName}
+            slug={session.projectSlug}
+            className="truncate font-mono text-[11px]"
+          />
         </span>
         <span className="min-w-0">
           <span

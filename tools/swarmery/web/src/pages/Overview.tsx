@@ -26,11 +26,11 @@ import {
   fmtTime,
   fmtTokens,
   isoDay,
-  projectLabel,
 } from '../lib/format';
 import { argSummary } from '../lib/payload';
 import { applyPermissionMessage, applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
+import { ProjectName } from '../components/ProjectName';
 
 const LIVE_STATUSES = new Set<Session['status']>(['active', 'waiting_approval', 'idle']);
 const MAX_SPINE_ROWS = 8;
@@ -311,9 +311,11 @@ function SpineRow({
                 style={{ background: projectColor(session.projectSlug) }}
                 aria-hidden="true"
               />
-              <span className="font-mono text-[10.5px] text-ink-dim">
-                {projectLabel(session.projectName, session.projectSlug)}
-              </span>
+              <ProjectName
+                name={session.projectName}
+                slug={session.projectSlug}
+                className="font-mono text-[10.5px]"
+              />
             </span>
             <span
               className={`rounded-full border px-[9px] py-px font-mono text-[10px] whitespace-nowrap ${chipTone}`}
@@ -520,7 +522,7 @@ function TriageRail({ stats }: { stats: StatsOverview }): JSX.Element {
           rows.map((row) => (
             <div key={row.slug} className="mt-[11px]">
               <div className="flex justify-between font-mono text-[11px]">
-                <span className="truncate text-ink-3">{projectLabel(row.name, row.slug)}</span>
+                <ProjectName name={row.name} slug={row.slug} className="truncate" />
                 <span className="text-red">{row.errors}</span>
               </div>
               <TriageBar pct={total > 0 ? row.errors / total : 0} />

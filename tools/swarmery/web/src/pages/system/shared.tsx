@@ -22,12 +22,21 @@ export function ScopeBadge({
 }): JSX.Element {
   if (scope === 'project') {
     const label = projectName ?? projectSlug;
+    const color = projectSlug !== null ? projectColor(projectSlug) : undefined;
     return (
       <span
         className="rounded-full border border-blue/40 px-2 py-px font-mono text-[10px] whitespace-nowrap text-blue"
         title={projectSlug ?? undefined}
       >
-        project{label !== null ? ` · ${label}` : ''}
+        project
+        {label !== null ? (
+          <>
+            {' · '}
+            <span style={color !== undefined ? { color } : undefined}>{label}</span>
+          </>
+        ) : (
+          ''
+        )}
       </span>
     );
   }
@@ -124,11 +133,14 @@ function DropdownOption({
   selected,
   dot,
   label,
+  labelColor,
   onSelect,
 }: {
   selected: boolean;
   dot?: string;
   label: string;
+  /** Color the option label (project rows); omit for scope/sort options. */
+  labelColor?: string;
   onSelect: () => void;
 }): JSX.Element {
   return (
@@ -140,7 +152,12 @@ function DropdownOption({
       className={`flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-surface2 ${selected ? 'text-ink' : 'text-ink-dim'}`}
     >
       {dot !== undefined && <Dot color={dot} />}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span
+        className="min-w-0 flex-1 truncate"
+        style={labelColor !== undefined ? { color: labelColor } : undefined}
+      >
+        {label}
+      </span>
       {selected && <span aria-hidden="true">✓</span>}
     </button>
   );
@@ -222,7 +239,7 @@ export function ProjectDropdown({
         className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-ink-dim aria-expanded:bg-surface2 aria-expanded:text-ink"
       >
         <Dot color={dot} />
-        <span className="truncate">{label}</span>
+        <span className="truncate" style={value !== null ? { color: dot } : undefined}>{label}</span>
         <span aria-hidden="true" className="text-[8px]">▾</span>
       </button>
       {open && (
@@ -242,6 +259,7 @@ export function ProjectDropdown({
               selected={value === p.slug}
               dot={projectColor(p.slug)}
               label={p.name ?? p.slug}
+              labelColor={projectColor(p.slug)}
               onSelect={() => select(p.slug)}
             />
           ))}
