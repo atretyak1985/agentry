@@ -185,3 +185,35 @@ func TestCheckAll_NonClaudeCommandTreatedAsDead(t *testing.T) {
 		t.Errorf("non-claude command should become dead, got %q", state)
 	}
 }
+
+// TestCheckAll_SteadyDeadReconcilesLiveStatus: a session left as active/idle
+// while its process is already dead (ingest reactivated it via a post-death
+// JSONL flush) is a "green dot next to a dead badge" inconsistency. procwatch
+// must re-assert status='completed' even when proc_state does not transition —
+// otherwise nothing self-heals the stuck row until it ages out 30 min later.
+func TestCheckAll_SteadyDeadReconcilesLiveStatus(t *testing.T) {
+	db := openTestDB(t)
+	insertProject(t, db)
+	id := insertSession(t, db, 8888, "dead", "/tmp/proj") // already dead, status='active'
+
+	ticker := &procwatch.Ticker{
+		DB:       db,
+		Provider: &procwatch.FakeProvider{}, // pid 8888 gone → stays dead
+	}
+	changed, err := ticker.CheckAll(time.Now())
+	if err != nil {
+		t.Fatalf("CheckAll: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != id {
+		t.Fatalf("expected [%d] reconciled, got %v", id, changed)
+	}
+
+	var status, state string
+	db.QueryRow(`SELECT status, proc_state FROM sessions WHERE id = ?`, id).Scan(&status, &state)
+	if status != "completed" {
+		t.Errorf("expected status=completed for a dead process, got %q", status)
+	}
+	if state != "dead" {
+		t.Errorf("expected proc_state=dead, got %q", state)
+	}
+}

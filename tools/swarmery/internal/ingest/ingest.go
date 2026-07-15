@@ -332,6 +332,10 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 		//   - status='waiting_approval' is owned exclusively by the approvals
 		//     layer (entry AND exit) — the heuristic never overwrites it here;
 		//     the approvals resolution/sweeper restores the heuristic status.
+		//   - status='killed' is terminal (operator killed the session via
+		//     prockill.go, which documents "procwatch/ingest never revert a
+		//     'killed' row"). A killed process flushes final JSONL lines after
+		//     death; tailing them must NOT resurrect it to a live status.
 		// started_at / git_branch only backfill stub rows (empty / NULL) —
 		// a mid-file tail batch's first timestamp is NOT the session start, so
 		// good values are never overwritten.
@@ -340,7 +344,7 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 			                     git_branch = COALESCE(git_branch, ?),
 			                     started_at = CASE WHEN (started_at IS NULL OR started_at = '') AND ? != ''
 			                                       THEN ? ELSE started_at END,
-			                     status = CASE WHEN status = 'waiting_approval'
+			                     status = CASE WHEN status IN ('waiting_approval','killed')
 			                                   THEN status ELSE ? END,
 			                     source = CASE WHEN source = 'hook' THEN 'both' ELSE source END,
 			                     ended_at = CASE WHEN ? = '' THEN ended_at

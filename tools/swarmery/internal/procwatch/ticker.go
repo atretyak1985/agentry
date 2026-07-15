@@ -59,6 +59,22 @@ func (t *Ticker) CheckAll(now time.Time) ([]int64, error) {
 	for _, s := range sessions {
 		newState := t.checkOne(s.pid, s.procStartedAt.String, s.procState.String)
 		if newState == s.procState.String {
+			// No liveness transition — but this pass only scans active/idle
+			// sessions, so a steady-state 'dead' proc means the row was
+			// reactivated (a post-death JSONL flush) after we'd already flipped
+			// it dead. Re-assert 'completed' so "Active now" stops lying;
+			// otherwise nothing corrects it until it ages out. ('killed' rows
+			// never reach here — CheckAll scans only active/idle.)
+			if newState == StateDead {
+				if _, err := t.DB.Exec(
+					`UPDATE sessions SET proc_checked_at = ?, status = 'completed' WHERE id = ?`,
+					nowStr, s.id); err != nil {
+					log.Printf("procwatch: reconcile dead session %d: %v", s.id, err)
+					continue
+				}
+				changed = append(changed, s.id)
+				continue
+			}
 			t.DB.Exec(`UPDATE sessions SET proc_checked_at = ? WHERE id = ?`, nowStr, s.id) //nolint:errcheck
 			continue
 		}
