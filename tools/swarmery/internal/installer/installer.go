@@ -8,6 +8,7 @@
 package installer
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -63,6 +64,29 @@ func (s *System) PlistPath() string {
 // DBPath returns ~/.swarmery/swarmery.db.
 func (s *System) DBPath() string {
 	return filepath.Join(s.Home, ".swarmery", "swarmery.db")
+}
+
+// ExistingPlistEnv reads the EnvironmentVariables dict out of the currently
+// installed plist so a reinstall can PRESERVE values the operator did not
+// re-supply — a bare `swarmery install` must never silently drop the onboarding
+// allow-list (or any other baked var). Best-effort: an absent plist, a plutil
+// failure, or a plist without the block all yield nil, and the caller simply
+// preserves nothing.
+func (s *System) ExistingPlistEnv() map[string]string {
+	if _, err := os.Stat(s.PlistPath()); err != nil {
+		return nil
+	}
+	out, err := s.Run.Run("plutil", "-convert", "json", "-o", "-", s.PlistPath())
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Env map[string]string `json:"EnvironmentVariables"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		return nil
+	}
+	return doc.Env
 }
 
 func (s *System) domain() string        { return "gui/" + s.UID }
