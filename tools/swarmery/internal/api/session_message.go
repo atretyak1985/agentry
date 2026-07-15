@@ -38,32 +38,41 @@ const (
 	maxSessionMessageLen  = 16000
 )
 
+// resumeRun tracks one in-flight dashboard resume: its cancel (aborts the
+// child claude) and start time (drives the live "Working… (Ns)" indicator).
+type resumeRun struct {
+	cancel    context.CancelFunc
+	startedAt time.Time
+}
+
 // Single-flight per session_uuid: a second resume while one is still running
-// would interleave writes into the same transcript file. The stored cancel
-// aborts the in-flight run (kills the claude child) so the dashboard can Stop
-// its own resume — see CancelSessionMessage.
+// would interleave writes into the same transcript file.
 var (
 	msgInFlightMu sync.Mutex
-	msgInFlight   = map[string]context.CancelFunc{}
+	msgInFlight   = map[string]resumeRun{}
 )
 
-// resumeInFlight reports whether a dashboard-initiated resume is currently
-// running for this session uuid (drives the composer's Stop button).
-func resumeInFlight(uuid string) bool {
+// setResumeState fills the in-memory resume fields on a session DTO (both the
+// getSession detail and the WS session_updated payload go through here).
+func setResumeState(s *sessionDTO) {
 	msgInFlightMu.Lock()
-	defer msgInFlightMu.Unlock()
-	_, ok := msgInFlight[uuid]
-	return ok
+	run, ok := msgInFlight[s.SessionUUID]
+	msgInFlightMu.Unlock()
+	s.ResumeInFlight = ok
+	if ok {
+		started := run.startedAt.UTC().Format(time.RFC3339)
+		s.ResumeStartedAt = &started
+	}
 }
 
 // cancelResume aborts an in-flight resume for uuid, returning whether one was
 // active. The run's own defer removes the map entry and republishes state.
 func cancelResume(uuid string) bool {
 	msgInFlightMu.Lock()
-	cancel, ok := msgInFlight[uuid]
+	run, ok := msgInFlight[uuid]
 	msgInFlightMu.Unlock()
 	if ok {
-		cancel()
+		run.cancel()
 	}
 	return ok
 }
@@ -173,7 +182,7 @@ func (h *Handler) PostSessionMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"a message is already being processed for this session"}`, http.StatusConflict)
 		return
 	}
-	msgInFlight[sessionUUID] = cancel
+	msgInFlight[sessionUUID] = resumeRun{cancel: cancel, startedAt: time.Now()}
 	msgInFlightMu.Unlock()
 
 	log.Printf("session_message: resume session id=%d uuid=%s cwd=%q (%d chars)", id, sessionUUID, cwd.String, len(text))

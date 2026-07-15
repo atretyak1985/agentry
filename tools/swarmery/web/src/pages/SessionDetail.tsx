@@ -306,7 +306,6 @@ export function SessionDetailPage(): JSX.Element {
               sessionId={detail.id}
               procState={detail.procState}
               resumeInFlight={detail.resumeInFlight ?? false}
-              turnCount={detail.turns.length}
               onSent={onSent}
             />
           )}

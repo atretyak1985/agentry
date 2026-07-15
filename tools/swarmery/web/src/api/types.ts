@@ -106,6 +106,8 @@ export interface Session {
    * of Send. In-memory server state, recomputed on each read/WS push.
    */
   resumeInFlight?: boolean;
+  /** RFC3339 start time of that resume run — drives a live "Working (Ns)" timer. */
+  resumeStartedAt?: string | null;
 }
 
 /** Go: turnDTO */

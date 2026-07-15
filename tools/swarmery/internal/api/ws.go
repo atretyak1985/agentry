@@ -156,7 +156,7 @@ func (h *Handler) sessionByID(id int64) (*sessionDTO, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.ResumeInFlight = resumeInFlight(s.SessionUUID)
+	setResumeState(&s)
 	return &s, nil
 }
 

@@ -11,6 +11,7 @@ import { fmtAgo, fmtTime } from '../../lib/format';
 import { Markdown } from '../../lib/markdown';
 import { pickString } from '../../lib/payload';
 import { Empty } from '../../components/ui';
+import { LiveActivity } from './LiveActivity';
 
 /* ----- tool activity one-liner ----- */
 
@@ -236,6 +237,7 @@ export function Chat({
       {pending.map((text, i) => (
         <PendingTurn key={`pending-${String(i)}`} text={text} />
       ))}
+      <LiveActivity detail={detail} />
       {detail.status === 'waiting_approval' && (
         <AwaitingApprovalPill since={lastEvent !== undefined ? fmtAgo(lastEvent.ts) : null} />
       )}

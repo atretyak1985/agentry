@@ -12,7 +12,7 @@
 // Gating on the live PROCESS (not the time-based status) means a session that
 // merely reads "active" because we just appended to it stays writable.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ProcState } from '../../api/types';
 import { cancelSessionMessage, killSession, sendSessionMessage } from '../../api';
 
@@ -24,33 +24,21 @@ export function CommandInput({
   sessionId,
   procState,
   resumeInFlight = false,
-  turnCount,
   onSent,
 }: {
   sessionId: number;
   procState: ProcState | null | undefined;
   resumeInFlight?: boolean;
-  turnCount: number;
   /** Called with the sent text so the parent can echo it optimistically. */
   onSent?: (text: string) => void;
 }): JSX.Element {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sentAtCount = useRef<number | null>(null);
 
   const live = hasLiveProcess(procState);
   const busy = live || resumeInFlight;
-
-  // Clear the "waiting for agent…" hint once ingest surfaces new turns.
-  useEffect(() => {
-    if (sentAtCount.current !== null && turnCount > sentAtCount.current) {
-      setWaiting(false);
-      sentAtCount.current = null;
-    }
-  }, [turnCount]);
 
   // Once the session is no longer busy (kill/cancel reflected via WS), reset.
   useEffect(() => {
@@ -65,8 +53,6 @@ export function CommandInput({
     sendSessionMessage(sessionId, trimmed)
       .then(() => {
         setText('');
-        setWaiting(true);
-        sentAtCount.current = turnCount;
         onSent?.(trimmed);
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
@@ -138,12 +124,6 @@ export function CommandInput({
           </button>
         )}
       </div>
-      {waiting && (
-        <p className="mt-1.5 flex items-center gap-1.5 font-mono text-[10.5px] text-ink-faint">
-          <span className="h-[6px] w-[6px] animate-blink-dot rounded-full bg-brand" aria-hidden="true" />
-          sent — waiting for the agent to reply…
-        </p>
-      )}
     </div>
   );
 }

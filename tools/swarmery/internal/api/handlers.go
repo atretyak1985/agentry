@@ -68,6 +68,9 @@ type sessionDTO struct {
 	// (`claude -r -p`) is running for this session — the composer shows Stop.
 	// In-memory only (not a DB column); recomputed on each read.
 	ResumeInFlight bool `json:"resumeInFlight"`
+	// ResumeStartedAt is the RFC3339 start time of that resume run, so the UI
+	// can tick a live "Working… (Ns)" timer. Absent when nothing is in flight.
+	ResumeStartedAt *string `json:"resumeStartedAt,omitempty"`
 }
 
 type turnDTO struct {
@@ -239,7 +242,7 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	d.ResumeInFlight = resumeInFlight(d.SessionUUID)
+	setResumeState(&d.sessionDTO)
 
 	d.Turns = []turnDTO{}
 	// Chat/transcript is the ORCHESTRATOR conversation only: subagent turns
