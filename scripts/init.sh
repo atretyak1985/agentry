@@ -2,8 +2,14 @@
 # swarmery init — bootstrap a new consumer project in one command.
 #
 #   bash /Volumes/Work/swarmery/scripts/init.sh <project-slug> [pack ...]
-#   # or from anywhere, once the repo is on GitHub:
-#   bash <(curl -sL https://raw.githubusercontent.com/atretyak1985/swarmery/main/scripts/init.sh) my-project web-pack
+#
+#   # or fetch-and-run from anywhere, once the repo is on GitHub. PREFER the
+#   # download-then-inspect form so you read what you execute (piping a remote
+#   # script straight into a shell runs whatever the server returns, unseen):
+#   url=https://raw.githubusercontent.com/atretyak1985/swarmery/main/scripts/init.sh
+#   curl -fsSL "$url" -o init.sh && less init.sh && bash init.sh my-project web-pack
+#   # The one-liner equivalent (only if you already trust the source):
+#   #   bash <(curl -sL "$url") my-project web-pack
 #
 # Run it FROM THE PROJECT ROOT. Creates:
 #   .claude/settings.json   — marketplace + enabled plugins + env (skipped if it exists)

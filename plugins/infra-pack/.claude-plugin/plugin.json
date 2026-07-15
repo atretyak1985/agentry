@@ -1,7 +1,7 @@
 {
   "name": "infra-pack",
   "description": "Infrastructure & delivery domain pack: Kubernetes/Helm deployment, GitOps promotion, IaC, GitLab CI, GitHub Actions CI/CD, GCP & AWS CI auth, Keycloak IdP ops. Opt-in; requires core.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": {
     "name": "atretyak",
     "email": "atretiak.work@gmail.com"

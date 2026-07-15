@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Validate JSON manifests
         run: |
@@ -30,6 +30,19 @@ jobs:
             bash -n "$f" || { echo "SYNTAX ERROR: $f"; exit 1; }
             echo "ok $f"
           done
+
+      - name: ShellCheck (error severity)
+        run: |
+          set -e
+          # Error-severity floor: catch genuine bugs (bad redirects, unset
+          # command substitutions) without failing on style. The pre-commit
+          # gate runs shellcheck at default severity locally for the stricter
+          # developer signal; this is the hard CI floor.
+          find plugins scripts -name '*.sh' -print0 \
+            | xargs -0 shellcheck -S error
+
+      - name: Hook behavioral tests
+        run: bash scripts/tests/protect-sensitive-files.test.sh
 
       - name: Agent frontmatter (name + description)
         run: |
@@ -59,3 +72,18 @@ jobs:
           out=$(bash scripts/scan-flavor.sh)
           echo "$out"
           echo "$out" | grep -q '✓ clean' || { echo "FLAVOR TOKENS FOUND — core must stay vendor-neutral"; exit 1; }
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0 # full history so --log-opts=--all can scan every commit
+
+      - name: gitleaks (full history)
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            detect --source=/repo --config=/repo/.gitleaks.toml \
+            --log-opts="--all" --redact --no-banner --verbose

@@ -1,0 +1,58 @@
+name: swarmery-release
+
+# Cut a versioned swarmery build by pushing a tag:
+#   git tag swarmery-v0.1.0 && git push origin swarmery-v0.1.0
+# The job builds the daemon for the common host targets and publishes them on a
+# GitHub Release, giving `tools/swarmery` a fixed rollback point (see the
+# "Rollback" section of tools/swarmery/README.md).
+
+on:
+  push:
+    tags: ['swarmery-v*']
+
+defaults:
+  run:
+    working-directory: tools/swarmery
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release + upload binaries
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: tools/swarmery/go.mod
+          cache-dependency-path: tools/swarmery/go.sum
+
+      - name: Build web
+        working-directory: tools/swarmery/web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Cross-compile binaries
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#swarmery-}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            out="dist/swarmery-${version}-${os}-${arch}"
+            echo "building $out"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w" -o "$out" ./cmd/swarmery
+          done
+          ( cd dist && sha256sum swarmery-* > SHA256SUMS )
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/swarmery-* dist/SHA256SUMS
