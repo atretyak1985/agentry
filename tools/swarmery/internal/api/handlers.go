@@ -64,6 +64,10 @@ type sessionDTO struct {
 	// why: a one-line intent summary derived from the first user turn's prose
 	// (additive optional — absent until the session has a user turn with text).
 	Why *string `json:"why,omitempty"`
+	// ResumeInFlight is true while a dashboard-initiated headless resume
+	// (`claude -r -p`) is running for this session — the composer shows Stop.
+	// In-memory only (not a DB column); recomputed on each read.
+	ResumeInFlight bool `json:"resumeInFlight"`
 }
 
 type turnDTO struct {
@@ -235,6 +239,7 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	d.ResumeInFlight = resumeInFlight(d.SessionUUID)
 
 	d.Turns = []turnDTO{}
 	// Chat/transcript is the ORCHESTRATOR conversation only: subagent turns
