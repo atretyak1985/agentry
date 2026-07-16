@@ -2,8 +2,10 @@ package api
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -32,7 +34,12 @@ type projectDTO struct {
 	FirstSeen    string  `json:"firstSeen"`
 	LastActivity *string `json:"lastActivity"`
 	Archived     bool    `json:"archived"`
-	Sessions     int64   `json:"sessions"`
+	// Dashboard meta (migration 0015): pinned floats the project to the top of
+	// the list and the global scope switcher; tags is the decoded JSON array —
+	// [] when untagged, never null.
+	Pinned   bool     `json:"pinned"`
+	Tags     []string `json:"tags"`
+	Sessions int64    `json:"sessions"`
 	// Lifetime token/cost totals across all the project's sessions (deduped
 	// turns). Null while the project has no priced turns.
 	Tokens  *int64   `json:"tokens"`
@@ -101,6 +108,8 @@ type sessionDTO struct {
 	// process liveness (migration 0009): proc_state and pid, null when untracked.
 	ProcState *string `json:"procState"`
 	ProcPID   *int64  `json:"procPid"`
+	// Manual verdict (migration 0014): success | fail | abandoned; null = not judged.
+	Outcome *string `json:"outcome"`
 	// why: a one-line intent summary derived from the first user turn's prose
 	// (additive optional — absent until the session has a user turn with text).
 	Why *string `json:"why,omitempty"`
@@ -170,6 +179,7 @@ type sessionDetailDTO struct {
 // additional predicate (e.g. a single-id lookup for the detail endpoint).
 const projectSelect = `
 	SELECT p.id, p.path, p.slug, p.name, p.first_seen, p.last_activity, p.archived,
+	       p.pinned, p.tags,
 	       COUNT(DISTINCT s.id) AS sessions,
 	       SUM(CASE WHEN t.id IS NOT NULL
 	                THEN COALESCE(t.tokens_in, 0) + COALESCE(t.tokens_out, 0) END) AS tokens,
@@ -184,14 +194,22 @@ const projectSelect = `
 // live from the project's .claude/settings.json (advisory, never fatal).
 func scanProject(rows *sql.Rows, roots []string) (projectDTO, error) {
 	var p projectDTO
-	var archived int
+	var archived, pinned int
+	var tagsRaw string
 	var tokens sql.NullInt64
 	var cost sql.NullFloat64
 	if err := rows.Scan(&p.ID, &p.Path, &p.Slug, &p.Name, &p.FirstSeen,
-		&p.LastActivity, &archived, &p.Sessions, &tokens, &cost); err != nil {
+		&p.LastActivity, &archived, &pinned, &tagsRaw, &p.Sessions, &tokens, &cost); err != nil {
 		return p, err
 	}
 	p.Archived = archived != 0
+	p.Pinned = pinned != 0
+	// tags is trusted JSON (only PATCH writes it) but a corrupt row must not
+	// break the list — degrade to [].
+	p.Tags = []string{}
+	if err := json.Unmarshal([]byte(tagsRaw), &p.Tags); err != nil || p.Tags == nil {
+		p.Tags = []string{}
+	}
 	if tokens.Valid {
 		p.Tokens = &tokens.Int64
 	}
@@ -214,7 +232,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		where = ""
 	}
 	query := strings.Replace(projectSelect, "{{WHERE}}", where, 1) +
-		" ORDER BY p.last_activity DESC"
+		" ORDER BY p.pinned DESC, p.last_activity DESC"
 
 	rows, err := h.DB.Query(query)
 	if err != nil {
@@ -340,7 +358,7 @@ const sessionSelect = `
 	       s.status, s.started_at, s.ended_at, s.title, s.source,
 	       agg.tokens, agg.cost_usd,
 	       tl.task_id, tl.external_id, tl.link_source, tl.confidence,
-	       s.proc_state, s.pid,
+	       s.proc_state, s.pid, s.outcome,
 	       why.text
 	FROM sessions s
 	JOIN projects p ON p.id = s.project_id
@@ -373,8 +391,63 @@ const sessionSelect = `
 		WHERE role = 'user' AND text IS NOT NULL AND TRIM(text) != ''
 	) why ON why.session_id = s.id AND why.rn = 1`
 
-// GET /api/sessions?project=<slug|id>&status=<status>
+// sessionsPageDTO is the GET /api/sessions envelope (ops-hygiene wave):
+// keyset pagination over (started_at DESC, id DESC). nextCursor is null on
+// the last page.
+type sessionsPageDTO struct {
+	Sessions   []sessionDTO `json:"sessions"`
+	NextCursor *string      `json:"nextCursor"`
+}
+
+const (
+	defaultSessionsLimit = 100
+	maxSessionsLimit     = 500
+)
+
+// encodeSessionCursor packs the keyset position (started_at, id) of the last
+// returned row into an opaque URL-safe token.
+func encodeSessionCursor(startedAt string, id int64) string {
+	return base64.URLEncoding.EncodeToString([]byte(startedAt + "|" + strconv.FormatInt(id, 10)))
+}
+
+// decodeSessionCursor is the inverse of encodeSessionCursor. Any malformed
+// token is a client error (400), never a 500.
+func decodeSessionCursor(cursor string) (startedAt string, id int64, err error) {
+	raw, err := base64.URLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid cursor")
+	}
+	startedAt, idStr, ok := strings.Cut(string(raw), "|")
+	if !ok || startedAt == "" {
+		return "", 0, fmt.Errorf("invalid cursor")
+	}
+	id, err = strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid cursor")
+	}
+	return startedAt, id, nil
+}
+
+// GET /api/sessions?project=<slug|id>&status=<status>&limit=<n>&cursor=<opaque>
+//
+// Keyset pagination: rows are ordered by (started_at DESC, id DESC); the
+// cursor is the opaque position of the last row of the previous page. The
+// response is ALWAYS the {sessions, nextCursor} envelope (default limit 100,
+// max 500); nextCursor is null on the last page.
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
+	limit := defaultSessionsLimit
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			http.Error(w, `{"error":"invalid limit"}`, http.StatusBadRequest)
+			return
+		}
+		if n > maxSessionsLimit {
+			n = maxSessionsLimit
+		}
+		limit = n
+	}
+
 	// Soft-hidden sessions (DELETE /api/sessions/{id}) never appear in the list;
 	// they remain reachable by direct id (getSession) so the hide is reversible.
 	// Sessions of ARCHIVED projects are excluded too — archiving a project hides
@@ -383,14 +456,25 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	query := sessionSelect + ` WHERE s.hidden = 0 AND p.archived = 0`
 	args := []any{}
 	if project := r.URL.Query().Get("project"); project != "" {
-		query += ` AND (p.slug = ? OR CAST(p.id AS TEXT) = ?)`
+		query += projectScopePredicate
 		args = append(args, project, project)
 	}
 	if status := r.URL.Query().Get("status"); status != "" {
 		query += ` AND s.status = ?`
 		args = append(args, status)
 	}
-	query += ` ORDER BY s.started_at DESC`
+	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+		startedAt, id, err := decodeSessionCursor(cursor)
+		if err != nil {
+			http.Error(w, `{"error":"invalid cursor"}`, http.StatusBadRequest)
+			return
+		}
+		query += ` AND (s.started_at < ? OR (s.started_at = ? AND s.id < ?))`
+		args = append(args, startedAt, startedAt, id)
+	}
+	// limit+1 probes for a next page without a COUNT query.
+	query += ` ORDER BY s.started_at DESC, s.id DESC LIMIT ?`
+	args = append(args, limit+1)
 
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
@@ -408,7 +492,19 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		sessions = append(sessions, s)
 	}
-	writeJSON(w, sessions, rows.Err())
+	if err := rows.Err(); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	page := sessionsPageDTO{Sessions: sessions}
+	if len(sessions) > limit {
+		page.Sessions = sessions[:limit]
+		last := page.Sessions[limit-1]
+		c := encodeSessionCursor(last.StartedAt, last.ID)
+		page.NextCursor = &c
+	}
+	writeJSON(w, page, nil)
 }
 
 // GET /api/sessions/{id} — id is the numeric row id or the session UUID.
@@ -538,7 +634,7 @@ func scanSession(scan func(...any) error, s *sessionDTO) error {
 		&s.GitBranch, &s.CWD, &s.Status, &s.StartedAt, &s.EndedAt, &s.Title, &s.Source,
 		&s.Tokens, &s.CostUSD,
 		&s.TaskID, &s.TaskExternalID, &s.TaskLinkSource, &s.TaskConfidence,
-		&s.ProcState, &s.ProcPID,
+		&s.ProcState, &s.ProcPID, &s.Outcome,
 		&whyRaw); err != nil {
 		return err
 	}
@@ -581,6 +677,17 @@ func writeJSON(w http.ResponseWriter, v any, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("warn: encode response: %v", err)
+	}
+}
+
+// writeClientErr replies {"error": msg} with the given 4xx status. Unlike the
+// hand-written `{"error":"…"}` literals it JSON-encodes msg, so messages built
+// from user input cannot break the JSON framing.
+func writeClientErr(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
 		log.Printf("warn: encode response: %v", err)
 	}
 }

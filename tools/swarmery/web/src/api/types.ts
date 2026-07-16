@@ -77,6 +77,10 @@ export interface Project {
   /** Lifetime token/cost totals across the project's sessions; null when unpriced. */
   tokens: number | null;
   costUsd: number | null;
+  /** Dashboard meta (migration 0015): pinned floats the project in lists. */
+  pinned: boolean;
+  /** Decoded projects.tags JSON array — [] when untagged, never null. */
+  tags: string[];
   /** Null for telemetry-only projects (no readable .claude/settings.json). */
   plugin: PluginState | null;
 }
@@ -151,6 +155,9 @@ export interface AttachResponse {
   backup?: string;
 }
 
+/** sessions.outcome (migration 0014) — manual verdict; null = not judged. */
+export type SessionOutcome = 'success' | 'fail' | 'abandoned';
+
 /** Go: sessionDTO */
 export interface Session {
   id: number;
@@ -182,6 +189,8 @@ export interface Session {
   procState?: ProcState | null;
   /** OS PID of the claude process; null when not tracked or remote session. */
   procPid?: number | null;
+  /** Manual verdict set from the dashboard (additive optional). */
+  outcome?: SessionOutcome | null;
   /**
    * One-line intent summarised from the first user turn's prose (additive
    * optional): absent until the session has a user turn with text.
@@ -262,8 +271,17 @@ export interface SessionDetail extends Session {
 /** GET /api/projects */
 export type ProjectsResponse = Project[];
 
-/** GET /api/sessions?project=<slug|id>&status=<status> */
-export type SessionsResponse = Session[];
+/**
+ * GET /api/sessions?project=&status=&limit=&cursor= — keyset-paginated
+ * envelope (ops-hygiene wave; additive contract change resolved at
+ * integration: the bare array became this envelope, all consumers updated).
+ */
+export interface SessionsPage {
+  sessions: Session[];
+  /** Opaque keyset cursor for the next page; null on the last page. */
+  nextCursor: string | null;
+}
+export type SessionsResponse = SessionsPage;
 
 /** GET /api/sessions/{id} — id is the numeric row id or the session UUID. */
 export type SessionDetailResponse = SessionDetail;
@@ -349,8 +367,21 @@ export interface StatsOverview {
 // --- Analytics (GET /api/stats/{timeseries,breakdown,matrix}) ----------------
 
 /** $/tokens come from turns (project|model); runs come from events (agent|skill). */
-export type AnalyticsMetric = 'cost' | 'tokens' | 'runs';
+export type AnalyticsMetric = 'cost' | 'tokens' | 'runs' | 'cache';
 export type AnalyticsDimension = 'project' | 'model' | 'agent' | 'skill';
+
+/** Range-total cache economics for metric=cache (analytics uplift). */
+export interface CacheSummary {
+  /** SUM(cache_read) / (SUM(cache_read) + SUM(tokens_in)) over the range, 0..1. */
+  hit_rate: number;
+  cache_read_tokens: number;
+  input_tokens: number;
+  /**
+   * Estimated $ saved from REAL per-model cache_read pricing
+   * (config/pricing.json); null when no cached model is in the pricing table.
+   */
+  saved_usd: number | null;
+}
 
 /** One toggleable series of the main chart; `values` aligns to `buckets`. */
 export interface TimeseriesSeries {
@@ -371,6 +402,8 @@ export interface TimeseriesResp {
   series: TimeseriesSeries[];
   /** Always false in Phase 1 (no per-agent $); reserved for the Phase 2 badge. */
   approx: boolean;
+  /** Present only for metric=cache. Series values are 0..1 fractions — do not stack. */
+  cache?: CacheSummary;
 }
 
 /**
@@ -384,9 +417,14 @@ export interface BreakdownRow {
   cost_usd: number | null;
   tokens_in: number | null;
   tokens_out: number | null;
+  /** Cache columns (analytics uplift): set on project|model rows, null on agent|skill. */
+  tokens_cache_read: number | null;
+  cache_hit_rate: number | null;
   runs: number | null;
   sessions: number;
   last_used: string | null;
+  /** Agent pivot only: success/(success+fail) over judged sessions; else null. */
+  success_rate?: number | null;
 }
 export type BreakdownResp = BreakdownRow[];
 
@@ -401,6 +439,69 @@ export interface MatrixResp {
   rows: { key: string; name: string }[];
   cols: { key: string; name: string }[];
   cells: { row: string; col: string; runs: number; cost?: number | null }[];
+}
+
+// --- Analytics uplift (GET /api/stats/{tools,durations,errors}) --------------
+
+/** Per-agent share of one tool's calls; agent keys are normAgentType-folded, "main" = orchestrator. */
+export interface ToolAgentSplit {
+  agent: string;
+  calls: number;
+  errors: number;
+}
+
+/** One row of GET /api/stats/tools. avg/p95 are null when no call carried a duration. */
+export interface ToolStatRow {
+  tool: string;
+  calls: number;
+  errors: number;
+  denied: number;
+  avg_ms: number | null;
+  p95_ms: number | null;
+  agents: ToolAgentSplit[];
+}
+
+export interface ToolsResp {
+  from: string;
+  to: string;
+  tools: ToolStatRow[];
+  /** True when the range overlaps pruned (rolled-up) days — counts undercount there. */
+  approx: boolean;
+}
+
+/** GET /api/stats/durations — session-length + approval-wait aggregates. */
+export interface DurationsResp {
+  from: string;
+  to: string;
+  session_count: number;
+  avg_session_sec: number | null;
+  median_session_sec: number | null;
+  approvals_resolved: number;
+  avg_resolve_sec: number | null;
+  wait_total_min: number;
+}
+
+/** One sample session inside an error group (title mirrors sessions.title, nullable). */
+export interface ErrorSample {
+  session_id: number;
+  title: string | null;
+}
+
+/** GET /api/stats/errors — one normalized-message error group. */
+export interface ErrorGroup {
+  key: string;
+  example: string;
+  count: number;
+  last_ts: string;
+  samples: ErrorSample[];
+}
+
+export interface ErrorsResp {
+  from: string;
+  to: string;
+  groups: ErrorGroup[];
+  /** True when the range overlaps pruned (rolled-up) days — groups undercount there. */
+  approx: boolean;
 }
 
 // --- Phase 2 — approvals + hooks (frozen at gate 2.2) ------------------------
@@ -432,6 +533,28 @@ export interface PermissionRequest {
   /** Human-entered deny/approve reason; delivered to Claude verbatim on deny. */
   reason: string | null;
   expiresAt: string;
+}
+
+/**
+ * One auto-approve rule (control-plane v2 — approval_rules row). A matching
+ * enabled rule resolves incoming permission requests as approved with
+ * resolvedVia 'rule'; the request row stays in History as the audit trail.
+ */
+export interface ApprovalRule {
+  id: number;
+  /** null = applies to every project. */
+  projectId: number | null;
+  projectSlug: string | null;
+  /**
+   * `Tool` (exact tool, any input) or `Tool(argGlob)` — `*` matches any run
+   * of characters in the tool's argument (Bash → command PREFIX, Read/Write/
+   * Edit → file_path, WebFetch → url, Glob/Grep → pattern).
+   */
+  toolPattern: string;
+  action: 'approve';
+  enabled: boolean;
+  note: string | null;
+  createdAt: string;
 }
 
 /** WS event names — frozen; MVP trio implemented by Agent A, permission_* added at gate 2.2 (phase 2). */
@@ -537,6 +660,8 @@ export interface SystemSummary {
   overlays: number;
   /** Active findings (resolved_at IS NULL) split by severity. */
   lint: { error: number; warn: number; info: number };
+  /** Go: systemInsightCountsDTO — promotion/drift badge counters. */
+  insights: { promotions: number; staleOverrides: number };
 }
 
 /** Go: systemItemDTO — one row of GET /api/system/{agents|skills}?scope=&project=. */
@@ -592,6 +717,74 @@ export interface SystemDiff {
   from: number;
   to: number;
   diff: string;
+}
+
+// --- Phase 4+: insights — promotion & drift detector (GET /api/system/insights).
+// --- Go DTOs live in internal/api/system_insights.go. Diffs are computed over
+// --- redacted contents server-side; everything here is display-only.
+
+/** Go: insightCopyDTO — one concrete copy of a component inside an insight. */
+export interface SystemInsightCopy {
+  itemId: number;
+  projectSlug: string | null;
+  scope: 'global' | 'project';
+  path: string;
+  /** null when no version is stored yet. */
+  contentHash: string | null;
+}
+
+/** Go: insightDiffStatDTO — line churn between two copies. */
+export interface SystemInsightDiffStat {
+  added: number;
+  removed: number;
+}
+
+/** Go: promotionCandidateDTO — one name, scope=project origin=local, ≥2 projects. */
+export interface SystemPromotionCandidate {
+  kind: 'agent' | 'skill' | 'command';
+  name: string;
+  copies: SystemInsightCopy[];
+  similarity: 'identical' | 'diverged';
+  /** Diverged only; null when contents are unavailable (unreadable command file). */
+  diffStat: SystemInsightDiffStat | null;
+  /** Redacted unified diff of the two most-diverged copies ("" when identical). */
+  diff: string;
+  /** Copyable next-step recipe (docs/EXTENDING.md graduation rule). */
+  hint: string;
+}
+
+/** Go: staleOverrideDTO — a local name colliding with a plugin-shipped item. */
+export interface SystemStaleOverride {
+  kind: 'agent' | 'skill' | 'command';
+  /** Base name — the plugin row is stored as "plugin:name". */
+  name: string;
+  pluginName: string;
+  local: SystemInsightCopy;
+  plugin: SystemInsightCopy;
+  /** true → pointless override, safe to delete the local copy. */
+  identical: boolean;
+  diffStat: SystemInsightDiffStat | null;
+  diff: string;
+  hint: string;
+}
+
+/** Go: deadComponentDTO — an active agent_dead lint finding, insight framing. */
+export interface SystemDeadComponent {
+  /** Always 'agent' today — agent_dead is the only telemetry-dead rule. */
+  kind: 'agent';
+  id: number;
+  name: string;
+  scope: 'global' | 'project';
+  projectSlug: string | null;
+  message: string;
+  hint: string;
+}
+
+/** Go: systemInsightsDTO — GET /api/system/insights. */
+export interface SystemInsights {
+  promotionCandidates: SystemPromotionCandidate[];
+  staleOverrides: SystemStaleOverride[];
+  dead: SystemDeadComponent[];
 }
 
 /**
@@ -812,4 +1005,105 @@ export interface OnboardConfig {
   workspaceRoot: string;
   /** Allowed parent directories a project may be onboarded under. */
   roots: string[];
+}
+
+// --- global search (GET /api/search) + reverse file lookup ------------------
+
+/** Go: searchSessionDTO — a session matched by title or git branch. */
+export interface SearchSession {
+  id: number;
+  title: string | null;
+  gitBranch: string | null;
+  status: SessionStatus;
+  startedAt: string;
+  projectSlug: string;
+  projectName: string | null;
+}
+
+/** Go: searchTurnDTO — snippet carries ⟦…⟧ highlight markers (never HTML). */
+export interface SearchTurn {
+  turnId: number;
+  sessionId: number;
+  sessionTitle: string | null;
+  projectSlug: string;
+  startedAt: string;
+  role: TurnRole;
+  /** Subagent that produced the turn; null = orchestrator. */
+  agentName: string | null;
+  snippet: string;
+}
+
+/** Go: searchFileDTO — a file path matched by substring, with session reach. */
+export interface SearchFile {
+  path: string;
+  sessions: number;
+  lastTouched: string;
+}
+
+/** Go: searchProjectDTO */
+export interface SearchProject {
+  id: number;
+  slug: string;
+  name: string | null;
+}
+
+/** Go: searchResponseDTO — GET /api/search grouped results. */
+export interface SearchResponse {
+  query: string;
+  sessions: SearchSession[];
+  turns: SearchTurn[];
+  files: SearchFile[];
+  projects: SearchProject[];
+}
+
+/** Go: fileSessionDTO — one session that touched a matching file. */
+export interface FileSession {
+  sessionId: number;
+  title: string | null;
+  projectSlug: string;
+  status: SessionStatus;
+  startedAt: string;
+  changes: number;
+  lastTouched: string;
+}
+
+/** Go: fileSessionsResponseDTO — GET /api/files/sessions. */
+export interface FileSessionsResponse {
+  path: string;
+  sessions: FileSession[];
+}
+
+// --- Multi-project UX: global scope + health + pin/tags ----------------------
+
+/** Go: projectHealthDTO — one row of GET /api/projects/health (camelCase). */
+export interface ProjectHealth {
+  id: number;
+  slug: string;
+  name: string | null;
+  pinned: boolean;
+  tags: string[];
+  /** Σ turn cost over the rolling last 7 days; null when no priced turn. */
+  costWeekUsd: number | null;
+  /** Σ turn cost over days 8–14 back; null when no priced turn. */
+  costPrevWeekUsd: number | null;
+  /** error tool_calls / total tool_calls over 7d; null with no tool calls. */
+  errorRate: number | null;
+  /** Mean duration (ms) of sessions started in the last 7d that ended; null with none. */
+  avgSessionMs: number | null;
+  lastActivity: string | null;
+}
+
+/** GET /api/projects/health */
+export type ProjectsHealthResponse = ProjectHealth[];
+
+/** PATCH /api/projects/{id} body — both optional, at least one required. */
+export interface ProjectMetaPatch {
+  pinned?: boolean;
+  tags?: string[];
+}
+
+/** Go: projectMetaDTO — PATCH /api/projects/{id} 200 body (the stored state). */
+export interface ProjectMeta {
+  pinned: boolean;
+  tags: string[];
 }

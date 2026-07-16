@@ -8,8 +8,11 @@ import type {
   AnalyticsMetric,
   BreakdownResp,
   BreakdownRow,
+  DurationsResp,
+  ErrorsResp,
   MatrixResp,
   TimeseriesResp,
+  ToolsResp,
 } from '../api/types';
 import { addDays, isoDay } from '../lib/format';
 import { mockProjects } from './data';
@@ -69,6 +72,7 @@ function magnitude(metric: AnalyticsMetric, key: string, day: string): number {
   const active = rand(`${key}|${day}|on`);
   if (active < 0.35) return 0; // quiet day
   const base = rand(`${key}|${day}|v`);
+  if (metric === 'cache') return Number((0.55 + base * 0.42).toFixed(3));
   if (metric === 'cost') return Number((base * 3.2).toFixed(2));
   if (metric === 'tokens') return Math.round(base * 380_000);
   return Math.round(base * 6); // runs
@@ -83,8 +87,16 @@ export function mockTimeseries(
   const series = membersOf(group)
     .map(({ key, name }) => {
       const values = buckets.map((day) => magnitude(metric, key, day));
-      const total = values.reduce((a, v) => a + v, 0);
-      return { key, name, total: Number(total.toFixed(2)), values };
+      const total =
+        metric === 'cache'
+          ? Number(
+              (
+                values.reduce((a, v) => a + v, 0) /
+                Math.max(1, values.filter((v) => v > 0).length)
+              ).toFixed(3),
+            )
+          : Number(values.reduce((a, v) => a + v, 0).toFixed(2));
+      return { key, name, total, values };
     })
     .filter((s) => s.total > 0)
     .sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
@@ -97,6 +109,16 @@ export function mockTimeseries(
     buckets,
     series,
     approx: false,
+    ...(metric === 'cache'
+      ? {
+          cache: {
+            hit_rate: 0.872,
+            cache_read_tokens: 41_200_000,
+            input_tokens: 6_050_000,
+            saved_usd: 312.4,
+          },
+        }
+      : {}),
   };
 }
 
@@ -120,6 +142,8 @@ export function mockBreakdown(by: AnalyticsDimension, range: Range): BreakdownRe
       cost_usd: hasCost && cost > 0 ? cost : null,
       tokens_in: hasCost ? tokensIn : null,
       tokens_out: hasCost ? tokens - tokensIn : null,
+      tokens_cache_read: hasCost ? Math.round(tokens * 6.4) : null,
+      cache_hit_rate: hasCost ? Number((0.6 + rand(`${key}|hr`) * 0.35).toFixed(3)) : null,
       runs: hasRuns ? runs : null,
       sessions: hasRuns ? Math.max(1, Math.round(runs * 0.5)) : Math.round(rand(`${key}|sess`) * 12) + 1,
       last_used: hasRuns && runs > 0 ? `${days[days.length - 1] ?? isoDay()}T14:20:00.000Z` : null,
@@ -168,5 +192,78 @@ export function mockMatrix(
     rows: rowMembers.filter((m) => (rowTotals.get(m.key) ?? 0) > 0).sort(rank(rowTotals)),
     cols: colMembers.filter((m) => (colTotals.get(m.key) ?? 0) > 0).sort(rank(colTotals)),
     cells,
+  };
+}
+
+const TOOLS = ['Bash', 'Read', 'Edit', 'Grep', 'Write', 'Agent', 'Skill', 'WebFetch'];
+
+export function mockToolStats(range: Range): ToolsResp {
+  const days = resolveDays(range);
+  const tools = TOOLS.map((tool) => {
+    const calls = days.reduce((a, d) => a + Math.round(rand(`${tool}|${d}|c`) * 40), 0);
+    const errors = Math.round(calls * rand(`${tool}|err`) * 0.06);
+    const denied = tool === 'Bash' ? Math.round(calls * 0.01) : 0;
+    const avg = 120 + rand(`${tool}|avg`) * 3000;
+    const agents = ['main', ...AGENTS.slice(0, 3)].map((agent, i) => ({
+      agent,
+      calls: Math.max(1, Math.round(calls * (i === 0 ? 0.6 : 0.13))),
+      errors: i === 1 ? errors : 0,
+    }));
+    return {
+      tool,
+      calls,
+      errors,
+      denied,
+      avg_ms: Math.round(avg),
+      p95_ms: Math.round(avg * 3.2),
+      agents,
+    };
+  })
+    .filter((t) => t.calls > 0)
+    .sort((a, b) => b.calls - a.calls);
+  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools, approx: false };
+}
+
+export function mockErrorGroups(range: Range): ErrorsResp {
+  const days = resolveDays(range);
+  const to = days[days.length - 1] ?? isoDay();
+  return {
+    from: days[0] ?? isoDay(),
+    to,
+    approx: false,
+    groups: [
+      {
+        key: 'api error # overloaded (request id #)',
+        example: 'API Error 529 overloaded (request id req_011abc)',
+        count: 7,
+        last_ts: `${to}T16:42:00.000Z`,
+        samples: [
+          { session_id: 1, title: 'Fix flaky auth e2e' },
+          { session_id: 3, title: null },
+        ],
+      },
+      {
+        key: "error: enoent: no such file or directory, open '/tmp/build-#/out.log'",
+        example: "Error: ENOENT: no such file or directory, open '/tmp/build-4821/out.log'",
+        count: 2,
+        last_ts: `${to}T11:03:00.000Z`,
+        samples: [{ session_id: 2, title: 'Projects dashboard polish' }],
+      },
+    ],
+  };
+}
+
+export function mockDurations(range: Range): DurationsResp {
+  const days = resolveDays(range);
+  const resolved = days.length * 2;
+  return {
+    from: days[0] ?? isoDay(),
+    to: days[days.length - 1] ?? isoDay(),
+    session_count: days.length * 3,
+    avg_session_sec: 1860,
+    median_session_sec: 1240,
+    approvals_resolved: resolved,
+    avg_resolve_sec: 47,
+    wait_total_min: Number(((resolved * 47) / 60).toFixed(1)),
   };
 }

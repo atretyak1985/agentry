@@ -17,6 +17,9 @@ package api
 //
 // Response shapes are FROZEN by web/src/api/types.ts (snake_case, like the
 // other stats endpoints).
+//
+// Retention (ops-hygiene): pruned days are served from daily_rollups for the
+// project grain; other groupings set approx=true over such ranges.
 
 import (
 	"database/sql"
@@ -24,6 +27,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
 )
 
 // maxRangeDays caps the requested span so a hostile ?from is not a fan-out.
@@ -141,6 +146,8 @@ type timeseriesDTO struct {
 	// approx is always false in Phase 1 (no per-agent $); it exists so the UI
 	// can render an "~approx" badge unchanged once Phase 2 lands.
 	Approx bool `json:"approx"`
+	// Cache is set only for metric=cache: range-total cache economics.
+	Cache *cacheSummaryDTO `json:"cache,omitempty"`
 }
 
 // validTimeseries gates metric×group: $/tokens come from turns — by
@@ -152,6 +159,10 @@ func validTimeseries(metric, group string) bool {
 		return group == "project" || group == "model" || group == "agent"
 	case "runs":
 		return group == "agent" || group == "skill"
+	case "cache":
+		// hit rate lives on turns; agent pivot is deliberately excluded — the
+		// orchestrator's cache dwarfs subagents and the ratio mix misleads.
+		return group == "project" || group == "model"
 	}
 	return false
 }
@@ -167,6 +178,12 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 	dr, err := parseRange(r)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+	pf, pargs := scopeFilter(r)
+
+	if metric == "cache" {
+		h.timeseriesCache(w, r, group, dr, pf, pargs)
 		return
 	}
 
@@ -194,7 +211,8 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			   JOIN sessions s ON s.id = e.session_id
 			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+			append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -233,7 +251,8 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+			 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+			append([]any{dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -285,6 +304,56 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Retention union (ops-hygiene): days pruned by `swarmery prune` have no
+	// raw turns — fold their daily_rollups (local-day, per-project, agent_id
+	// NULL) into the same accumulator. Only the project grouping can be
+	// served exactly: rollups carry no model/agent/skill dimension.
+	rolledUp := false
+	if metric != "runs" && group == "project" {
+		rrows, err := h.DB.Query(`
+			SELECT r.day, p.slug, p.name,
+			       SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.cost_usd)
+			  FROM daily_rollups r
+			  JOIN projects p ON p.id = r.project_id
+			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf+`
+			 GROUP BY r.day, p.slug`,
+			append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer rrows.Close()
+		for rrows.Next() {
+			var day, slug string
+			var name sql.NullString
+			var tin, tout int64
+			var cost float64
+			if err := rrows.Scan(&day, &slug, &name, &tin, &tout, &cost); err != nil {
+				writeErr(w, err)
+				return
+			}
+			idx, ok := dr.index[day]
+			if !ok {
+				continue
+			}
+			v := cost
+			if metric == "tokens" {
+				v = float64(tin + tout)
+			}
+			if v <= 0 {
+				continue // honesty rule: an unpriced/empty rollup adds no $ point
+			}
+			a := get(slug, projLabel(name, slug))
+			a.values[idx] += v
+			a.total += v
+		}
+		if err := rrows.Err(); err != nil {
+			writeErr(w, err)
+			return
+		}
+		rolledUp = true
+	}
+
 	out := timeseriesDTO{
 		From: dr.days[0], To: dr.days[len(dr.days)-1],
 		Metric: metric, Group: group, Buckets: dr.days,
@@ -293,6 +362,18 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 	for key, a := range series {
 		out.Series = append(out.Series, seriesDTO{Key: key, Name: a.name, Total: a.total, Values: a.values})
 	}
+	// Groupings the rollups cannot reconstruct are flagged approximate when
+	// the range overlaps rolled-up days — the reserved `approx` badge in the
+	// frozen contract is finally honest instead of the series silently
+	// under-reporting pruned history.
+	if !rolledUp {
+		rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		out.Approx = rolled
+	}
 	// Deterministic order: total desc, then key asc (stable legend).
 	sort.Slice(out.Series, func(i, j int) bool {
 		if out.Series[i].Total != out.Series[j].Total {
@@ -300,6 +381,181 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		}
 		return out.Series[i].Key < out.Series[j].Key
 	})
+	if r.URL.Query().Get("format") == "csv" {
+		writeTimeseriesCSV(w, out)
+		return
+	}
+	writeJSON(w, out, nil)
+}
+
+// hasRolledUpDays reports whether any project-level daily rollup overlaps
+// [firstDay, lastDay] under the current scope filter — the honesty signal
+// behind the `approx` badge (rollups cannot reconstruct every grouping and
+// carry no cache columns).
+func (h *Handler) hasRolledUpDays(firstDay, lastDay, pf string, pargs []any) (bool, error) {
+	var n int
+	err := h.DB.QueryRow(
+		`SELECT COUNT(*) FROM daily_rollups r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
+		append([]any{firstDay, lastDay}, pargs...)...).Scan(&n)
+	return n > 0, err
+}
+
+// cacheSummaryDTO is the range-total cache economics attached to a
+// metric=cache timeseries. saved_usd follows the honesty rule: it sums only
+// models present in the pricing table (REAL per-model cache_read and
+// cache_write rates from config/pricing.json via internal/cost); nil when no
+// cached token was priceable — never a fabricated 10%-of-input guess.
+type cacheSummaryDTO struct {
+	HitRate         float64  `json:"hit_rate"`
+	CacheReadTokens int64    `json:"cache_read_tokens"`
+	InputTokens     int64    `json:"input_tokens"`
+	SavedUSD        *float64 `json:"saved_usd"`
+}
+
+// timeseriesCache serves metric=cache: the per-day cache hit rate
+// SUM(tokens_cache_read) / (SUM(tokens_cache_read)+SUM(tokens_in)) per group
+// member. Values are 0..1 fractions — NOT additive, so the UI must not stack
+// them. Savings are NET: each cache-read token would have cost the input rate
+// uncached, minus the premium paid to write the cache in the first place →
+// saved = Σ_model [cache_read × (input − cache_read)
+//                  − cache_write × (cache_write_rate − input)] / 1e6.
+//
+// Retention: daily_rollups carry NO cache-token columns, so pruned days
+// cannot contribute — when the range overlaps rolled-up days the response is
+// flagged approx=true (same honesty rule as the non-project groupings).
+func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group string, dr dateRange, pf string, pargs []any) {
+	rows, err := h.DB.Query(`
+		SELECT t.started_at, p.slug, p.name,
+		       COALESCE(t.model, s.model, 'unknown') AS model,
+		       COALESCE(t.tokens_cache_read, 0), COALESCE(t.tokens_in, 0),
+		       COALESCE(t.tokens_cache_write, 0)
+		  FROM turns t
+		  JOIN sessions s ON s.id = t.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer rows.Close()
+
+	type acc struct {
+		name       string
+		num, den   []float64
+		tNum, tDen float64
+	}
+	series := map[string]*acc{}
+	var totCache, totIn int64
+	type modelTokens struct{ read, write int64 }
+	modelCache := map[string]*modelTokens{}
+	for rows.Next() {
+		var startedAt, slug, model string
+		var name sql.NullString
+		var cr, tin, cw int64
+		if err := rows.Scan(&startedAt, &slug, &name, &model, &cr, &tin, &cw); err != nil {
+			writeErr(w, err)
+			return
+		}
+		day, ok := localDay(startedAt)
+		if !ok {
+			continue
+		}
+		idx, ok := dr.index[day]
+		if !ok {
+			continue
+		}
+		key, label := slug, projLabel(name, slug)
+		if group == "model" {
+			key, label = model, model
+		}
+		a := series[key]
+		if a == nil {
+			a = &acc{name: label, num: make([]float64, len(dr.days)), den: make([]float64, len(dr.days))}
+			series[key] = a
+		}
+		a.num[idx] += float64(cr)
+		a.den[idx] += float64(cr + tin)
+		a.tNum += float64(cr)
+		a.tDen += float64(cr + tin)
+		totCache += cr
+		totIn += tin
+		mt := modelCache[model]
+		if mt == nil {
+			mt = &modelTokens{}
+			modelCache[model] = mt
+		}
+		mt.read += cr
+		mt.write += cw
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := timeseriesDTO{
+		From: dr.days[0], To: dr.days[len(dr.days)-1],
+		Metric: "cache", Group: group, Buckets: dr.days,
+		Series: make([]seriesDTO, 0, len(series)),
+	}
+	for key, a := range series {
+		if a.tDen == 0 {
+			continue // no token traffic at all — no rate to report
+		}
+		s := seriesDTO{Key: key, Name: a.name, Total: a.tNum / a.tDen, Values: make([]float64, len(dr.days))}
+		for i := range a.num {
+			if a.den[i] > 0 {
+				s.Values[i] = a.num[i] / a.den[i]
+			}
+		}
+		out.Series = append(out.Series, s)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		if out.Series[i].Total != out.Series[j].Total {
+			return out.Series[i].Total > out.Series[j].Total
+		}
+		return out.Series[i].Key < out.Series[j].Key
+	})
+
+	// Honesty over pruned history: rollups have no cache columns, so any
+	// rolled-up day in range makes the hit rate approximate.
+	rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approx = rolled
+
+	summary := &cacheSummaryDTO{CacheReadTokens: totCache, InputTokens: totIn}
+	if d := totCache + totIn; d > 0 {
+		summary.HitRate = float64(totCache) / float64(d)
+	}
+	table := cost.Default()
+	saved, priced := 0.0, false
+	for model, mt := range modelCache {
+		if mt.read == 0 && mt.write == 0 {
+			continue
+		}
+		if p, ok := table.PriceFor(model); ok {
+			// Gross saving on reads, net of the premium paid on writes
+			// (cache_write rate > input rate) — unpriced models contribute
+			// neither side (honesty rule).
+			saved += float64(mt.read) / 1e6 * (p.Input - p.CacheRead)
+			saved -= float64(mt.write) / 1e6 * (p.CacheWrite - p.Input)
+			priced = true
+		}
+	}
+	if priced {
+		summary.SavedUSD = &saved
+	}
+	out.Cache = summary
+	if r.URL.Query().Get("format") == "csv" {
+		// Series values are 0..1 fractions; fmtCSVFloat renders them exactly.
+		writeTimeseriesCSV(w, out)
+		return
+	}
 	writeJSON(w, out, nil)
 }
 
@@ -311,9 +567,17 @@ type breakdownRow struct {
 	CostUSD   *float64 `json:"cost_usd"`
 	TokensIn  *int64   `json:"tokens_in"`
 	TokensOut *int64   `json:"tokens_out"`
-	Runs      *int64   `json:"runs"`
+	// Cache columns (analytics uplift): populated for project|model rows,
+	// null on agent|skill rows — same nullable contract as cost_usd.
+	TokensCacheRead *int64   `json:"tokens_cache_read"`
+	CacheHitRate    *float64 `json:"cache_hit_rate"`
+	Runs            *int64   `json:"runs"`
 	Sessions  int64    `json:"sessions"`
 	LastUsed  *string  `json:"last_used"`
+	// success/(success+fail) over outcome-carrying sessions that contain this
+	// agent's turns in range (agent pivot only; 'abandoned' excluded). Null
+	// for the other pivots and for agents with no judged sessions.
+	SuccessRate *float64 `json:"success_rate"`
 }
 
 // GET /api/stats/breakdown?from&to&by=project|model|agent|skill
@@ -325,14 +589,15 @@ func (h *Handler) statsBreakdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pf, pargs := scopeFilter(r)
 	var out []breakdownRow
 	switch by {
 	case "project", "model":
-		out, err = h.breakdownTurns(by, dr)
+		out, err = h.breakdownTurns(by, dr, pf, pargs)
 	case "agent":
-		out, err = h.breakdownAgent(dr)
+		out, err = h.breakdownAgent(dr, pf, pargs)
 	case "skill":
-		out, err = h.breakdownRuns("skill", dr)
+		out, err = h.breakdownRuns("skill", dr, pf, pargs)
 	default:
 		http.Error(w, `{"error":"invalid by, want project|model|agent|skill"}`, http.StatusBadRequest)
 		return
@@ -341,12 +606,16 @@ func (h *Handler) statsBreakdown(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeBreakdownCSV(w, by, out)
+		return
+	}
 	writeJSON(w, out, nil)
 }
 
 // breakdownTurns ranks project|model by cost (turns-based). tokens & sessions
 // travel along; runs/last_used are null (Phase 1).
-func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error) {
+func (h *Handler) breakdownTurns(by string, dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
 	keyExpr, labelIsName := "p.slug", true
 	if by == "model" {
 		keyExpr, labelIsName = "COALESCE(t.model, s.model, 'unknown')", false
@@ -357,13 +626,14 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		       COUNT(t.cost_usd)              AS priced,
 		       COALESCE(SUM(t.tokens_in), 0)  AS tin,
 		       COALESCE(SUM(t.tokens_out), 0) AS tout,
+		       COALESCE(SUM(t.tokens_cache_read), 0) AS tcr,
 		       COUNT(DISTINCT t.session_id)   AS sess
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
-		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf+`
 		 GROUP BY k
-		 ORDER BY cost DESC, k`, dr.start, dr.end)
+		 ORDER BY cost DESC, k`, append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -374,8 +644,8 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		var key string
 		var name sql.NullString
 		var cost float64
-		var priced, tin, tout, sess int64
-		if err := rows.Scan(&key, &name, &cost, &priced, &tin, &tout, &sess); err != nil {
+		var priced, tin, tout, tcr, sess int64
+		if err := rows.Scan(&key, &name, &cost, &priced, &tin, &tout, &tcr, &sess); err != nil {
 			return nil, err
 		}
 		row := breakdownRow{Key: key, Sessions: sess, TokensIn: &tin, TokensOut: &tout}
@@ -389,14 +659,97 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 			c := cost
 			row.CostUSD = &c
 		}
+		tcrV := tcr
+		row.TokensCacheRead = &tcrV
+		if den := tcr + tin; den > 0 {
+			hr := float64(tcr) / float64(den)
+			row.CacheHitRate = &hr
+		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if by == "project" {
+		if err := h.mergeProjectRollups(dr, pf, pargs, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// mergeProjectRollups folds daily_rollups (days pruned by `swarmery prune`)
+// into the by=project breakdown: cost/tokens/sessions accumulate, then the
+// ranking is recomputed (cost desc, key asc — same order as the SQL).
+func (h *Handler) mergeProjectRollups(dr dateRange, pf string, pargs []any, out *[]breakdownRow) error {
+	rows, err := h.DB.Query(`
+		SELECT p.slug, p.name,
+		       SUM(r.cost_usd), SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.sessions)
+		  FROM daily_rollups r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf+`
+		 GROUP BY p.slug`, append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	idx := map[string]int{}
+	for i := range *out {
+		idx[(*out)[i].Key] = i
+	}
+	for rows.Next() {
+		var slug string
+		var name sql.NullString
+		var cost float64
+		var tin, tout, sess int64
+		if err := rows.Scan(&slug, &name, &cost, &tin, &tout, &sess); err != nil {
+			return err
+		}
+		i, ok := idx[slug]
+		if !ok {
+			zin, zout := int64(0), int64(0)
+			*out = append(*out, breakdownRow{Key: slug, Name: projLabel(name, slug),
+				TokensIn: &zin, TokensOut: &zout})
+			i = len(*out) - 1
+			idx[slug] = i
+		}
+		r := &(*out)[i]
+		*r.TokensIn += tin
+		*r.TokensOut += tout
+		r.Sessions += sess
+		// Honesty rule carried over: rollups store 0 for unpriced days, so
+		// only a positive rollup cost counts as "priced".
+		if cost > 0 {
+			c := cost
+			if r.CostUSD != nil {
+				c += *r.CostUSD
+			}
+			r.CostUSD = &c
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	sort.Slice(*out, func(i, j int) bool {
+		ci, cj := 0.0, 0.0
+		if (*out)[i].CostUSD != nil {
+			ci = *(*out)[i].CostUSD
+		}
+		if (*out)[j].CostUSD != nil {
+			cj = *(*out)[j].CostUSD
+		}
+		if ci != cj {
+			return ci > cj
+		}
+		return (*out)[i].Key < (*out)[j].Key
+	})
+	return nil
 }
 
 // breakdownRuns ranks agent|skill by run count (events-based, name-folded).
 // cost/tokens are null in Phase 1.
-func (h *Handler) breakdownRuns(by string, dr dateRange) ([]breakdownRow, error) {
+func (h *Handler) breakdownRuns(by string, dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
 	rk := runKind[by]
 	rows, err := h.DB.Query(
 		`SELECT `+rk.nameExpr+` AS n, e.ts, e.session_id
@@ -404,7 +757,8 @@ func (h *Handler) breakdownRuns(by string, dr dateRange) ([]breakdownRow, error)
 		   JOIN sessions s ON s.id = e.session_id
 		   JOIN projects p ON p.id = s.project_id
 		  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+		append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,13 +826,14 @@ type agentTot struct {
 
 // agentTurnTotals sums subagent (and "main") turn cost/tokens over the range,
 // folded by agentKey — the source of exact per-agent $ (phase 2).
-func (h *Handler) agentTurnTotals(dr dateRange) (map[string]*agentTot, error) {
+func (h *Handler) agentTurnTotals(dr dateRange, pf string, pargs []any) (map[string]*agentTot, error) {
 	rows, err := h.DB.Query(`
 		SELECT t.agent_name, t.tokens_in, t.tokens_out, t.cost_usd
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
-		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -507,11 +862,63 @@ func (h *Handler) agentTurnTotals(dr dateRange) (map[string]*agentTot, error) {
 	return acc, rows.Err()
 }
 
+// agentOutcomeRates computes per-agent success/(success+fail) over sessions
+// that carry a manual outcome AND contain turns of that agent within the
+// range. Attribution uses turns.agent_name folded by agentKey — the same
+// grain as agentTurnTotals, so the rate column lines up with the $ column.
+// 'abandoned' is excluded from the denominator by the WHERE clause.
+func (h *Handler) agentOutcomeRates(dr dateRange, pf string, pargs []any) (map[string]float64, error) {
+	rows, err := h.DB.Query(`
+		SELECT DISTINCT t.agent_name, t.session_id, s.outcome
+		  FROM turns t
+		  JOIN sessions s ON s.id = t.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE s.outcome IN ('success','fail')
+		   AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type sf struct{ success, fail map[int64]struct{} }
+	acc := map[string]*sf{}
+	for rows.Next() {
+		var an, outcome sql.NullString
+		var sess int64
+		if err := rows.Scan(&an, &sess, &outcome); err != nil {
+			return nil, err
+		}
+		key := agentKey(an)
+		a := acc[key]
+		if a == nil {
+			a = &sf{success: map[int64]struct{}{}, fail: map[int64]struct{}{}}
+			acc[key] = a
+		}
+		if outcome.String == "success" {
+			a.success[sess] = struct{}{}
+		} else {
+			a.fail[sess] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := map[string]float64{}
+	for key, a := range acc {
+		if n := len(a.success) + len(a.fail); n > 0 {
+			out[key] = float64(len(a.success)) / float64(n)
+		}
+	}
+	return out, nil
+}
+
 // breakdownAgent ranks agents with EXACT $ (phase 2): run counts from events
 // (subagents that ran) merged with cost/tokens from their turns, plus the
 // orchestrator ("main") which has turns but no subagent_start event.
-func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
-	rows, err := h.breakdownRuns("agent", dr)
+func (h *Handler) breakdownAgent(dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
+	rows, err := h.breakdownRuns("agent", dr, pf, pargs)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +926,7 @@ func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
 	for i := range rows {
 		byKey[rows[i].Key] = i
 	}
-	totals, err := h.agentTurnTotals(dr)
+	totals, err := h.agentTurnTotals(dr, pf, pargs)
 	if err != nil {
 		return nil, err
 	}
@@ -536,6 +943,16 @@ func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
 			// "main" orchestrator (no subagent_start) or an agent with turns
 			// but no counted run — surface it with $ and no runs.
 			rows = append(rows, breakdownRow{Key: key, Name: key, CostUSD: cost, TokensIn: &tin, TokensOut: &tout})
+		}
+	}
+	rates, err := h.agentOutcomeRates(dr, pf, pargs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if rate, ok := rates[rows[i].Key]; ok {
+			r := rate
+			rows[i].SuccessRate = &r
 		}
 	}
 	costOf := func(r breakdownRow) float64 {
@@ -613,6 +1030,7 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	pf, pargs := scopeFilter(r)
 
 	cells := map[[2]string]float64{}
 	rowTotals := map[string]float64{}
@@ -635,7 +1053,8 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			   JOIN sessions s ON s.id = e.session_id
 			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+			append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -659,7 +1078,8 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+			append([]any{dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return

@@ -11,11 +11,17 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import type { WSMessage } from './api/types';
-import { fetchApprovals, fetchDocs, fetchStatsOverview, MOCK } from './api';
+import type { Project, WSMessage } from './api/types';
+import { fetchApprovals, fetchDocs, fetchProjects, fetchStatsOverview, MOCK } from './api';
+import { fetchSystemSummary } from './api/system';
+import { CommandPalette } from './components/CommandPalette';
 import { NewProjectButton } from './components/NewProjectButton';
+import { NotifySettings } from './components/NotifySettings';
+import { ProjectDropdown } from './components/ProjectDropdown';
 import { isoDay } from './lib/format';
 import { useHealth, shortVersion } from './lib/health';
+import { loadPrefs, useBrowserNotifications, type NotifyPrefs } from './lib/notifications';
+import { ScopeProvider, useScope } from './lib/scope';
 import { useLiveUpdates } from './lib/ws';
 
 interface NavItem {
@@ -43,12 +49,45 @@ function crumbFor(pathname: string): string {
   return '';
 }
 
+/** Global project scope switcher (header) — GitHub-org-switcher pattern. */
+function ScopeSwitcher(): JSX.Element {
+  const { scope, setScope } = useScope();
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    fetchProjects()
+      .then(setProjects)
+      .catch(() => setProjects([])); // degrades to "All projects"
+  }, []);
+  return (
+    <ProjectDropdown
+      projects={projects}
+      value={scope}
+      onChange={setScope}
+      allLabel="All projects"
+      groupByTag
+    />
+  );
+}
+
 export function App(): JSX.Element {
+  return (
+    <ScopeProvider>
+      <AppShell />
+    </ScopeProvider>
+  );
+}
+
+function AppShell(): JSX.Element {
   const [hasDocs, setHasDocs] = useState(false);
   const [sessionsToday, setSessionsToday] = useState<number | null>(null);
   // Pending approvals as a SET of ids: WS +/- stays idempotent when the same
   // permission_resolved arrives twice (own action + fan-out) or after resync.
   const [pendingIds, setPendingIds] = useState<ReadonlySet<number>>(new Set());
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Browser notifications (control-plane v2): prefs from localStorage, the
+  // hook rides the same shared WS connection as the badge below.
+  const [notifyPrefs, setNotifyPrefs] = useState<NotifyPrefs>(loadPrefs);
+  useBrowserNotifications(notifyPrefs);
   const { health, unreachable } = useHealth();
   const crumb = crumbFor(useLocation().pathname);
 
@@ -56,6 +95,20 @@ export function App(): JSX.Element {
     fetchDocs()
       .then((docs) => setHasDocs(docs.length > 0))
       .catch(() => setHasDocs(false)); // empty/unreachable → hide the Docs item
+  }, []);
+
+  // Global Cmd+K / Ctrl+K → command palette. Window-level so it works from
+  // any focused element; preventDefault stops the browser's own search-bar
+  // focus shortcut.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -66,6 +119,17 @@ export function App(): JSX.Element {
       .catch(() => setSessionsToday(null));
   }, []);
 
+  // System nav badge: promotion + stale-override insight count, fetched on
+  // mount and refetched on WS system_item_updated (hidden when the summary is
+  // unavailable) — pattern: sessions badge + approvals resync.
+  const [insightCount, setInsightCount] = useState<number | null>(null);
+  const syncInsights = useCallback((): void => {
+    fetchSystemSummary()
+      .then((s) => setInsightCount(s.insights.promotions + s.insights.staleOverrides))
+      .catch(() => setInsightCount(null));
+  }, []);
+  useEffect(syncInsights, [syncInsights]);
+
   // Approvals badge: REST is the source of truth (mount + reconnect resync);
   // the WS stream is the low-latency hint in between (docs/ws-protocol.md).
   const syncPending = useCallback((): void => {
@@ -75,20 +139,34 @@ export function App(): JSX.Element {
   }, []);
   useEffect(syncPending, [syncPending]);
 
-  const onMessage = useCallback((msg: WSMessage): void => {
-    if (msg.type === 'permission_requested') {
-      setPendingIds((prev) => new Set(prev).add(msg.payload.id));
-    } else if (msg.type === 'permission_resolved') {
-      setPendingIds((prev) => {
-        if (!prev.has(msg.payload.id)) return prev;
-        const next = new Set(prev);
-        next.delete(msg.payload.id);
-        return next;
-      });
-    }
-    // Other message types are the pages' concern — ignore here.
-  }, []);
-  useLiveUpdates(onMessage, syncPending);
+  const onMessage = useCallback(
+    (msg: WSMessage): void => {
+      if (msg.type === 'permission_requested') {
+        setPendingIds((prev) => new Set(prev).add(msg.payload.id));
+      } else if (msg.type === 'permission_resolved') {
+        setPendingIds((prev) => {
+          if (!prev.has(msg.payload.id)) return prev;
+          const next = new Set(prev);
+          next.delete(msg.payload.id);
+          return next;
+        });
+      } else if (msg.type === 'system_item_updated') {
+        // Registry change → System nav badge resync. The message is rare
+        // (scanner/edit events), so no debounce is needed.
+        syncInsights();
+      }
+      // Other message types are the pages' concern — ignore here.
+    },
+    [syncInsights],
+  );
+  // Reconnect / 60s reconcile: resync BOTH WS-driven badges — pending
+  // approvals and the System insights count — since either may have drifted
+  // while the socket was down.
+  const resyncBadges = useCallback((): void => {
+    syncPending();
+    syncInsights();
+  }, [syncPending, syncInsights]);
+  useLiveUpdates(onMessage, resyncBadges);
 
   const pendingCount = pendingIds.size;
   const items: NavItem[] = [
@@ -102,7 +180,7 @@ export function App(): JSX.Element {
       label: 'Approvals',
       ...(pendingCount > 0 ? { badge: String(pendingCount), alert: true } : {}),
     },
-    { to: '/system', glyph: '⚙', label: 'System' },
+    { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
     ...(hasDocs ? [DOCS_NAV] : []),
   ];
 
@@ -120,13 +198,22 @@ export function App(): JSX.Element {
             {crumb}
           </span>
         )}
+        <ScopeSwitcher />
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="ml-auto hidden items-center gap-2 rounded-lg border border-line bg-field px-2.5 py-1 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim sm:flex"
+        >
+          search <span className="rounded-[4px] border border-line-strong px-1">⌘K</span>
+        </button>
         {!MOCK && (
-          <span className="ml-auto">
+          <span className="ml-3 flex items-center gap-2">
+            <NotifySettings prefs={notifyPrefs} onChange={setNotifyPrefs} />
             <NewProjectButton />
           </span>
         )}
         <span
-          className={`flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim ${MOCK ? 'ml-auto' : 'ml-3'}`}
+          className="ml-3 flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim"
         >
           {MOCK ? (
             <>
@@ -211,6 +298,8 @@ export function App(): JSX.Element {
           </NavLink>
         ))}
       </nav>
+
+      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
     </div>
   );
 }

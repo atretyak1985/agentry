@@ -23,14 +23,31 @@ import type {
   AnalyticsDimension,
   AnalyticsMetric,
   BreakdownRow,
+  DurationsResp,
   MatrixResp,
   TimeseriesResp,
+  ToolsResp,
 } from '../api/types';
-import { fetchBreakdown, fetchMatrix, fetchTimeseries } from '../api';
+import {
+  fetchBreakdown,
+  fetchDurations,
+  fetchMatrix,
+  fetchTimeseries,
+  fetchToolStats,
+} from '../api';
 import { useProjectColor } from '../lib/projectColors';
 import type { ColorForSlug } from '../lib/projectColors';
-import { addDays, fmtAgo, fmtCost, fmtDayShort, fmtTokens, isoDay } from '../lib/format';
-import { Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
+import {
+  addDays,
+  fmtAgo,
+  fmtCost,
+  fmtDayShort,
+  fmtDurationMs,
+  fmtTokens,
+  isoDay,
+} from '../lib/format';
+import { useScope } from '../lib/scope';
+import { ApproxHint, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
 
 /* ----- metric / pivot vocabulary ----- */
 
@@ -38,14 +55,18 @@ const METRICS: { v: AnalyticsMetric; label: string }[] = [
   { v: 'cost', label: '$ Cost' },
   { v: 'tokens', label: 'Tokens' },
   { v: 'runs', label: 'Runs' },
+  { v: 'cache', label: 'Cache %' },
 ];
 
 /**
  * $/tokens pivot on turns dimensions — project/model, and agent now that
  * subagent turns are recorded (phase 2); runs pivots on event dimensions.
+ * cache pivots on project/model only (agent ratios would mislead).
  */
 function pivotsFor(metric: AnalyticsMetric): AnalyticsDimension[] {
-  return metric === 'runs' ? ['agent', 'skill'] : ['project', 'model', 'agent'];
+  if (metric === 'runs') return ['agent', 'skill'];
+  if (metric === 'cache') return ['project', 'model'];
+  return ['project', 'model', 'agent'];
 }
 
 const PRESETS = [7, 14, 30, 90] as const;
@@ -76,6 +97,7 @@ function seriesColor(colorFor: ColorForSlug, group: AnalyticsDimension, key: str
 function fmtValue(metric: AnalyticsMetric, n: number): string {
   if (metric === 'cost') return `$${n.toFixed(2)}`;
   if (metric === 'tokens') return fmtTokens(n);
+  if (metric === 'cache') return `${(n * 100).toFixed(1)}%`;
   return String(Math.round(n));
 }
 
@@ -196,6 +218,56 @@ function HeroInsight({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ----- cache hero card (analytics uplift) ----- */
+
+function CacheHero({ series }: { series: TimeseriesResp }): JSX.Element | null {
+  const c = series.cache;
+  if (c === undefined) return null;
+  const pct = (c.hit_rate * 100).toFixed(1);
+  return (
+    <div className="mt-[18px] flex flex-wrap items-center gap-x-7 gap-y-4 rounded-[14px] border border-line bg-surface px-5 py-4">
+      <div className="min-w-0 flex-[1_1_300px]">
+        <div className="font-display text-[20px] font-medium leading-[1.3] tracking-[-0.01em] text-ink text-balance">
+          Cache served {pct}% of prompt tokens this range
+          {c.saved_usd !== null ? ` — saving ~${fmtCost(c.saved_usd)} net of cache-write premium.` : '.'}
+        </div>
+        <div className="mt-[7px] font-mono text-[10.5px] text-ink-dim">
+          {fmtTokens(c.cache_read_tokens)} cache reads · {fmtTokens(c.input_tokens)} uncached input
+          {c.saved_usd === null && ' — no cached model has a pricing entry, so no $ estimate'}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-[22px]">
+        <div>
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-faint">Hit rate</div>
+          <div className="mt-1 font-display text-[18px] font-semibold text-ink">{pct}%</div>
+        </div>
+        <div>
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-faint">Est. saved</div>
+          <div className="mt-1 font-display text-[18px] font-semibold text-green">
+            {c.saved_usd !== null ? fmtCost(c.saved_usd) : '—'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----- duration stat cards ----- */
+
+function fmtSec(s: number | null): string {
+  return s === null ? '—' : fmtDurationMs(Math.round(s * 1000));
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }): JSX.Element {
+  return (
+    <div className="rounded-[14px] border border-line bg-surface px-5 py-4">
+      <div className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-faint">{label}</div>
+      <div className="mt-1 font-display text-[18px] font-semibold text-ink">{value}</div>
+      {sub !== undefined && <div className="mt-0.5 font-mono text-[10.5px] text-ink-dim">{sub}</div>}
     </div>
   );
 }
@@ -334,10 +406,14 @@ function ChartTooltip({
           <span className="text-ink">{fmtValue(metric, p.value ?? 0)}</span>
         </div>
       ))}
-      <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-1.5 font-mono text-[11px]">
-        <span className="flex-1 text-ink-dim">total</span>
-        <span className="font-semibold text-ink">{fmtValue(metric, total)}</span>
-      </div>
+      {/* Cache values are per-series hit-rate fractions — summing them is
+          meaningless (e.g. "175.3%"), so the total row is cost/tokens only. */}
+      {metric !== 'cache' && (
+        <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-1.5 font-mono text-[11px]">
+          <span className="flex-1 text-ink-dim">total</span>
+          <span className="font-semibold text-ink">{fmtValue(metric, total)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -366,7 +442,8 @@ function MainChart({
   }
 
   return (
-    <div className="h-[240px] w-full">
+    <div className="w-full">
+      <div className="h-[240px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
@@ -391,12 +468,12 @@ function MainChart({
               <Area
                 key={s.key}
                 type="monotone"
-                stackId="1"
+                stackId={metric === 'cache' ? s.key : '1'}
                 dataKey={s.key}
                 name={s.name}
                 stroke={color}
                 fill={color}
-                fillOpacity={0.22}
+                fillOpacity={metric === 'cache' ? 0.08 : 0.22}
                 strokeWidth={1.5}
                 isAnimationActive={idx < 8}
               />
@@ -404,6 +481,8 @@ function MainChart({
           })}
         </AreaChart>
       </ResponsiveContainer>
+      </div>
+      {data.approx && <ApproxHint />}
     </div>
   );
 }
@@ -460,16 +539,21 @@ function Bar({ pct, color }: { pct: number; color: string }): JSX.Element {
 function BreakdownPanel({
   rows,
   pivot,
+  metric,
 }: {
   rows: BreakdownRow[];
   pivot: AnalyticsDimension;
+  metric: AnalyticsMetric;
 }): JSX.Element {
+  const cacheView = metric === 'cache';
   const colorFor = useProjectColor();
   // Any $ in this pivot? project/model/agent carry cost; skill never does.
   const hasCost = rows.some((r) => r.cost_usd !== null);
   const hasRuns = rows.some((r) => r.runs !== null);
-  // Rank/bar by the dominant measure: cost when present, else runs.
-  const primary = (r: BreakdownRow): number => (hasCost ? (r.cost_usd ?? 0) : (r.runs ?? 0));
+  const hasRate = rows.some((r) => r.success_rate != null);
+  // Rank/bar by the dominant measure: hit rate in cache view, else cost, else runs.
+  const primary = (r: BreakdownRow): number =>
+    cacheView ? (r.cache_hit_rate ?? 0) : hasCost ? (r.cost_usd ?? 0) : (r.runs ?? 0);
   const max = rows.reduce((m, r) => Math.max(m, primary(r)), 0);
 
   if (rows.length === 0) return <Empty>no {pivot} activity in this range</Empty>;
@@ -483,17 +567,37 @@ function BreakdownPanel({
             <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
               <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: color }} />
               <span className="min-w-0 flex-1 truncate text-ink-3">{r.name}</span>
-              {hasCost && <span className="text-ink">{fmtCost(r.cost_usd)}</span>}
-              {hasRuns && (
-                <span className="w-14 text-right text-ink-dim">{r.runs ?? 0} runs</span>
+              {cacheView ? (
+                <>
+                  <span className="text-ink">
+                    {r.cache_hit_rate !== null ? `${(r.cache_hit_rate * 100).toFixed(1)}%` : '—'}
+                  </span>
+                  <span className="w-16 text-right text-ink-faint">
+                    {fmtTokens(r.tokens_cache_read ?? 0)}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {hasCost && <span className="text-ink">{fmtCost(r.cost_usd)}</span>}
+                  {hasRuns && (
+                    <span className="w-14 text-right text-ink-dim">{r.runs ?? 0} runs</span>
+                  )}
+                  {hasRate && (
+                    <span className="w-10 text-right text-ink-dim">
+                      {r.success_rate != null
+                        ? `${String(Math.round(r.success_rate * 100))}%`
+                        : '—'}
+                    </span>
+                  )}
+                  <span className="w-16 text-right text-ink-faint">
+                    {hasCost
+                      ? fmtTokens((r.tokens_in ?? 0) + (r.tokens_out ?? 0))
+                      : r.last_used !== null
+                        ? fmtAgo(r.last_used)
+                        : '—'}
+                  </span>
+                </>
               )}
-              <span className="w-16 text-right text-ink-faint">
-                {hasCost
-                  ? fmtTokens((r.tokens_in ?? 0) + (r.tokens_out ?? 0))
-                  : r.last_used !== null
-                    ? fmtAgo(r.last_used)
-                    : '—'}
-              </span>
             </div>
             <Bar pct={max > 0 ? primary(r) / max : 0} color={color} />
           </div>
@@ -589,6 +693,81 @@ function MatrixPanel({
   );
 }
 
+/* ----- tools panel ----- */
+
+function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
+  const [open, setOpen] = useState<string | null>(null);
+  const max = data.tools.reduce((m, t) => Math.max(m, t.calls), 0);
+
+  if (data.tools.length === 0) {
+    return (
+      <>
+        <Empty>no tool calls in this range</Empty>
+        {data.approx && <ApproxHint />}
+      </>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="flex items-baseline gap-2 pr-0 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-faint">
+        <span className="min-w-0 flex-1">tool</span>
+        <span className="w-16 text-right">calls</span>
+        <span className="w-14 text-right">errors</span>
+        <span className="w-14 text-right">denied</span>
+        <span className="w-16 text-right">avg</span>
+        <span className="w-16 text-right">p95</span>
+      </div>
+      {data.tools.map((t) => (
+        <div key={t.tool}>
+          <button
+            type="button"
+            onClick={() => setOpen((o) => (o === t.tool ? null : t.tool))}
+            className="block w-full text-left"
+            aria-expanded={open === t.tool}
+          >
+            <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
+              <span className="min-w-0 flex-1 truncate text-ink-3">
+                {open === t.tool ? '▾ ' : '▸ '}
+                {t.tool}
+              </span>
+              <span className="w-16 text-right text-ink">{t.calls}</span>
+              <span className={`w-14 text-right ${t.errors > 0 ? 'text-red' : 'text-ink-faint'}`}>
+                {t.errors}
+              </span>
+              <span className={`w-14 text-right ${t.denied > 0 ? 'text-brand' : 'text-ink-faint'}`}>
+                {t.denied}
+              </span>
+              <span className="w-16 text-right text-ink-dim">
+                {fmtDurationMs(t.avg_ms !== null ? Math.round(t.avg_ms) : null)}
+              </span>
+              <span className="w-16 text-right text-ink-dim">{fmtDurationMs(t.p95_ms)}</span>
+            </div>
+            <Bar pct={max > 0 ? t.calls / max : 0} color="#6fb4f0" />
+          </button>
+          {open === t.tool && (
+            <div className="mt-1.5 mb-1 ml-4 flex flex-col gap-1 border-l border-line pl-3">
+              {t.agents.map((a) => (
+                <div
+                  key={a.agent}
+                  className="flex items-baseline gap-2 font-mono text-[10.5px] text-ink-dim"
+                >
+                  <span className="min-w-0 flex-1 truncate">{a.agent}</span>
+                  <span className="w-16 text-right">{a.calls} calls</span>
+                  <span className={`w-14 text-right ${a.errors > 0 ? 'text-red' : ''}`}>
+                    {a.errors} err
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      {data.approx && <ApproxHint />}
+    </div>
+  );
+}
+
 /* ----- screen ----- */
 
 export function Analytics(): JSX.Element {
@@ -598,6 +777,7 @@ export function Analytics(): JSX.Element {
   const [preset, setPreset] = useState<number | null>(14);
   const [from, setFrom] = useState<string>(addDays(today, -13));
   const [to, setTo] = useState<string>(today);
+  const { scope } = useScope();
 
   const [series, setSeries] = useState<TimeseriesResp | null>(null);
   const [breakdown, setBreakdown] = useState<BreakdownRow[] | null>(null);
@@ -608,6 +788,8 @@ export function Analytics(): JSX.Element {
   const [matrixMetric, setMatrixMetric] = useState<'runs' | 'cost'>('runs');
   const [transposed, setTransposed] = useState(false);
   const [matrix, setMatrix] = useState<MatrixResp | null>(null);
+  const [tools, setTools] = useState<ToolsResp | null>(null);
+  const [durations, setDurations] = useState<DurationsResp | null>(null);
   // cost is agent-only (skills own no turns); force runs when viewing skills.
   const effMatrixMetric: 'runs' | 'cost' = matrixRows === 'skill' ? 'runs' : matrixMetric;
 
@@ -628,7 +810,7 @@ export function Analytics(): JSX.Element {
   );
 
   const load = useCallback((): void => {
-    const range = { from, to };
+    const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
     setError(null);
     fetchTimeseries(metric, pivot, range)
       .then((r) => {
@@ -639,15 +821,30 @@ export function Analytics(): JSX.Element {
     fetchBreakdown(pivot, range)
       .then(setBreakdown)
       .catch(() => setBreakdown(null));
-  }, [metric, pivot, from, to]);
+  }, [metric, pivot, from, to, scope]);
 
   useEffect(load, [load]);
 
   useEffect(() => {
-    fetchMatrix(matrixRows, effMatrixMetric, { from, to })
+    const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
+    fetchMatrix(matrixRows, effMatrixMetric, range)
       .then(setMatrix)
       .catch(() => setMatrix(null));
-  }, [matrixRows, effMatrixMetric, from, to]);
+  }, [matrixRows, effMatrixMetric, from, to, scope]);
+
+  useEffect(() => {
+    const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
+    fetchToolStats(range)
+      .then(setTools)
+      .catch(() => setTools(null));
+  }, [from, to, scope]);
+
+  useEffect(() => {
+    const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
+    fetchDurations(range)
+      .then(setDurations)
+      .catch(() => setDurations(null));
+  }, [from, to, scope]);
 
   const toggleSeries = useCallback((key: string): void => {
     setHidden((prev) => {
@@ -659,6 +856,17 @@ export function Analytics(): JSX.Element {
   }, []);
 
   const rangeLabel = `${fmtDayShort(from)} → ${fmtDayShort(to)}`;
+
+  // Export links mirror the exact query the page is showing — including the
+  // global project scope, so a scoped page exports scoped CSVs.
+  const csvQuery = (extra: Record<string, string>): string =>
+    new URLSearchParams({
+      from,
+      to,
+      format: 'csv',
+      ...(scope !== null ? { project: scope } : {}),
+      ...extra,
+    }).toString();
 
   return (
     <div className="px-4 pt-6 pb-10 desk:px-10 desk:pt-[34px] desk:pb-[60px]">
@@ -693,10 +901,48 @@ export function Analytics(): JSX.Element {
         />
       </div>
 
+      {/* Export CSV (ops-hygiene): same range + pivot as the panels above. */}
+      <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-ink-dim">
+        <span className="text-[10px] tracking-[0.14em] text-ink-faint uppercase">Export CSV</span>
+        <a
+          href={`/api/stats/breakdown?${csvQuery({ by: pivot })}`}
+          download
+          className="rounded-[7px] border border-line-strong px-[9px] py-[5px] transition-colors hover:text-ink"
+        >
+          breakdown · {pivot}
+        </a>
+        <a
+          href={`/api/stats/timeseries?${csvQuery({ metric, group: pivot })}`}
+          download
+          className="rounded-[7px] border border-line-strong px-[9px] py-[5px] transition-colors hover:text-ink"
+        >
+          series · {metric}
+        </a>
+      </div>
+
       {error !== null && <ErrorBox message={error} onRetry={load} />}
 
-      {series !== null && series.series.length > 0 && (
-        <HeroInsight series={series} metric={metric} />
+      {series !== null && series.series.length > 0 &&
+        (metric === 'cache' ? (
+          <CacheHero series={series} />
+        ) : (
+          <HeroInsight series={series} metric={metric} />
+        ))}
+
+      {durations !== null && (
+        <div className="mt-3.5 grid gap-3.5 sm:grid-cols-3">
+          <StatCard
+            label="Avg session"
+            value={fmtSec(durations.avg_session_sec)}
+            sub={`${String(durations.session_count)} completed sessions`}
+          />
+          <StatCard label="Median session" value={fmtSec(durations.median_session_sec)} />
+          <StatCard
+            label="Approval wait"
+            value={fmtSec(durations.avg_resolve_sec)}
+            sub={`${durations.wait_total_min.toFixed(1)} min total · ${String(durations.approvals_resolved)} resolved`}
+          />
+        </div>
       )}
 
       <div className="mt-3.5 rounded-[14px] border border-line bg-surface px-5 py-[18px]">
@@ -719,7 +965,7 @@ export function Analytics(): JSX.Element {
             {breakdown === null ? (
               <Loading label="breakdown…" />
             ) : (
-              <BreakdownPanel rows={breakdown} pivot={pivot} />
+              <BreakdownPanel rows={breakdown} pivot={pivot} metric={metric} />
             )}
           </div>
         </section>
@@ -768,6 +1014,13 @@ export function Analytics(): JSX.Element {
           </div>
         </section>
       </div>
+
+      <section className="mt-5">
+        <SectionTitle>Tools</SectionTitle>
+        <div className="rounded-[14px] border border-line px-3.5 py-3.5">
+          {tools === null ? <Loading label="tools…" /> : <ToolsPanel data={tools} />}
+        </div>
+      </section>
     </div>
   );
 }

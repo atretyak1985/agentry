@@ -22,6 +22,13 @@ type Config struct {
 	StatusInterval time.Duration // session-status ticker cadence (default 10s)
 	Thresholds     Thresholds    // active/idle windows (default 2m/30m)
 	Exclude        ExcludeList   // project path globs to skip (see exclude.go)
+
+	// OnSessionTerminal fires once per status-ticker transition to
+	// 'completed', with the COUNT of the session's status='error' events —
+	// the notify wiring point (main.go emits session_completed /
+	// session_error through it). Deliberately NOT called for procwatch- or
+	// approvals-driven transitions (v1 scope). May be nil.
+	OnSessionTerminal func(sessionID int64, errorCount int)
 }
 
 func (c Config) withDefaults() Config {
@@ -246,16 +253,27 @@ func (p *Pipeline) rescan() {
 	}
 }
 
-// recomputeStatuses ages sessions (active→idle→completed) and emits
-// session_updated for every transition.
+// recomputeStatuses ages sessions (active→idle→completed), emits
+// session_updated for every transition, and fires OnSessionTerminal for
+// completions (with the session's error-event count).
 func (p *Pipeline) recomputeStatuses() {
 	changed, err := RecomputeStatuses(p.db, p.cfg.Thresholds, time.Now())
 	if err != nil {
 		log.Printf("warn: ingest: status ticker: %v", err)
 	}
-	for _, id := range changed {
+	for _, c := range changed {
 		if p.bus != nil {
-			p.bus.Publish(Notification{Type: NoteSessionUpdated, SessionID: id})
+			p.bus.Publish(Notification{Type: NoteSessionUpdated, SessionID: c.ID})
+		}
+		if c.Status == "completed" && p.cfg.OnSessionTerminal != nil {
+			var errs int
+			if err := p.db.QueryRow(
+				`SELECT COUNT(*) FROM events WHERE session_id = ? AND status = 'error'`,
+				c.ID).Scan(&errs); err != nil {
+				log.Printf("warn: ingest: status ticker: error count for session %d: %v", c.ID, err)
+				continue
+			}
+			p.cfg.OnSessionTerminal(c.ID, errs)
 		}
 	}
 	if len(changed) > 0 {

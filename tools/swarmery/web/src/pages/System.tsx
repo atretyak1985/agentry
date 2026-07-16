@@ -18,6 +18,7 @@ import {
   type SystemListFilters,
 } from '../api/system';
 import { fmtAgo } from '../lib/format';
+import { useScope } from '../lib/scope';
 import { useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
 import {
@@ -35,16 +36,18 @@ import { SystemItemPanel } from './system/ItemDetail';
 import { CreateAgentForm } from './system/CreateAgentForm';
 import { HooksTab } from './system/HooksTab';
 import { TemplatesTab } from './system/TemplatesTab';
+import { InsightsTab } from './system/InsightsTab';
 
-type SystemTab = 'agents' | 'skills' | 'hooks' | 'commands' | 'templates';
+type SystemTab = 'agents' | 'skills' | 'hooks' | 'commands' | 'templates' | 'insights';
 
-const TABS: SystemTab[] = ['agents', 'skills', 'hooks', 'commands', 'templates'];
+const TABS: SystemTab[] = ['agents', 'skills', 'hooks', 'commands', 'templates', 'insights'];
 const TAB_LABELS: Record<SystemTab, string> = {
   agents: 'Agents',
   skills: 'Skills',
   hooks: 'Hooks',
   commands: 'Commands',
   templates: 'Templates',
+  insights: 'Insights',
 };
 
 /** ?tab= deep-links (shareable); anything else falls back to Agents. */
@@ -383,8 +386,12 @@ function ItemsTab({
 export function System(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseTab(searchParams.get('tab'));
-  const scope = parseScope(searchParams.get('scope'));
-  const project = searchParams.get('project');
+  const scope = parseScope(searchParams.get('level'));
+  const { scope: globalScope } = useScope();
+  // Explicit ?project= (local filter) wins; otherwise the global scope seeds
+  // it. Clearing the local filter falls back to the global scope — clear the
+  // header switcher to see everything.
+  const project = searchParams.get('project') ?? globalScope;
   const lint = parseLint(searchParams.get('lint'));
   const sort = parseSort(searchParams.get('sort'));
   const itemParam = searchParams.get('item');
@@ -451,7 +458,7 @@ export function System(): JSX.Element {
     patchParams({ tab: next === 'agents' ? null : next, item: null });
   };
   const onScope = (next: 'global' | 'project' | null): void => {
-    patchParams({ scope: next, item: null });
+    patchParams({ level: next, item: null });
   };
   const onProject = (slug: string | null): void => {
     patchParams({ project: slug, item: null });
@@ -481,6 +488,11 @@ export function System(): JSX.Element {
     onScope,
     onProject,
   };
+
+  // Insights tab-label badge: promotion + stale-override counters from the
+  // summary (advisory — neutral tone, not the amber lint style).
+  const insightCount =
+    summary === null ? 0 : summary.insights.promotions + summary.insights.staleOverrides;
 
   return (
     <div className="flex h-full flex-col px-4 pt-6 pb-6 desk:px-10 desk:pt-[34px] desk:pb-[34px]">
@@ -514,6 +526,11 @@ export function System(): JSX.Element {
               }`}
             >
               {TAB_LABELS[t]}
+              {t === 'insights' && insightCount > 0 && (
+                <span className="ml-1.5 inline-flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-line-strong px-1 align-middle font-mono text-[9.5px] font-bold text-ink-dim">
+                  {String(insightCount)}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -570,6 +587,11 @@ export function System(): JSX.Element {
         {tab === 'templates' && (
           <div className="h-full overflow-y-auto pb-4 pt-3 [-webkit-overflow-scrolling:touch]">
             <TemplatesTab refreshKey={refreshKey} />
+          </div>
+        )}
+        {tab === 'insights' && (
+          <div className="h-full overflow-y-auto pb-4 pt-3 [-webkit-overflow-scrolling:touch]">
+            <InsightsTab refreshKey={refreshKey} />
           </div>
         )}
       </div>

@@ -9,10 +9,15 @@ import "net/http"
 func Routes(mux *http.ServeMux, h *Handler) {
 	// ── core: vertical slice (this file's owner) ──
 	mux.HandleFunc("GET /api/projects", h.listProjects)
+	// week-over-week health rows (cost/error-rate/duration) — literal segment,
+	// so it wins over the {id} wildcard below.
+	mux.HandleFunc("GET /api/projects/health", h.projectsHealth)
 	mux.HandleFunc("GET /api/projects/{id}", h.getProject)
 	// soft-archive a project from the list (reversible; row + sessions kept).
 	mux.HandleFunc("DELETE /api/projects/{id}", requireLocalOrigin(h.hideProject))
 	mux.HandleFunc("POST /api/projects/{id}/restore", requireLocalOrigin(h.restoreProject))
+	// dashboard meta (migration 0015): pin/unpin + tags — {pinned?, tags?}.
+	mux.HandleFunc("PATCH /api/projects/{id}", requireLocalOrigin(h.patchProject))
 	// detach the swarmery plugin from a project (.claude/settings.json). Fenced
 	// like onboarding: requireLocalOrigin + the SWARMERY_ONBOARD_ROOTS allow-list
 	// (disabled when unset). Supports ?dryRun to preview the plan.
@@ -45,6 +50,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/stats/breakdown", h.statsBreakdown)
 	mux.HandleFunc("GET /api/stats/matrix", h.statsMatrix)
 
+	// analytics uplift: tools / durations / errors (tools.go, durations.go, errors.go).
+	mux.HandleFunc("GET /api/stats/tools", h.statsTools)
+	mux.HandleFunc("GET /api/stats/durations", h.statsDurations)
+	mux.HandleFunc("GET /api/stats/errors", h.statsErrors)
+
 	// phase 3.5: workspaces
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", h.getTask)
@@ -62,6 +72,8 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("POST /api/sessions/{id}/kill", requireLocalOrigin(h.KillSession))
 	// soft-hide a session from the list (reversible; row + transcript kept).
 	mux.HandleFunc("DELETE /api/sessions/{id}", requireLocalOrigin(h.hideSession))
+	// partial update (ops-hygiene): today only {outcome} — see session_patch.go.
+	mux.HandleFunc("PATCH /api/sessions/{id}", requireLocalOrigin(h.patchSession))
 
 	// session message: resume an idle/completed conversation headlessly
 	// (`claude -r <uuid> -p`) — see internal/api/session_message.go. Same D4
@@ -84,6 +96,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/system/hooks", h.listSystemHooks)
 	mux.HandleFunc("GET /api/system/commands", h.listSystemCommands)
 	mux.HandleFunc("GET /api/system/overlays", h.listSystemOverlays)
+	// promotion & drift detector — read-only analysis over the registry
+	// (system_insights.go). Display-only: promotion stays a manual flow.
+	mux.HandleFunc("GET /api/system/insights", h.systemInsights)
 
 	// phase 4: system, Stage 2 write surface (step-09) — agents/skills PUT +
 	// rollback through internal/sysedit. Same D4 origin hardening as the
@@ -100,4 +115,17 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("POST /api/system/agents", requireLocalOrigin(h.createSystemAgent))
 	mux.HandleFunc("DELETE /api/system/agents/{id}", requireLocalOrigin(h.deleteSystemAgent))
 	mux.HandleFunc("POST /api/system/agents/{id}/restore", requireLocalOrigin(h.restoreSystemAgent))
+
+	// global search: FTS5 over turns.text (migration 0012) + LIKE groups for
+	// sessions/files/projects — powers the Cmd+K command palette.
+	mux.HandleFunc("GET /api/search", h.search)
+	mux.HandleFunc("GET /api/files/sessions", h.fileSessions)
+
+	// control-plane v2: notifications & auto-approve rules. Writes carry the
+	// same D4 origin hardening as every other mutating endpoint; evaluation
+	// happens inside approvals.Service.Open, never here.
+	mux.HandleFunc("GET /api/approval-rules", h.listApprovalRules)
+	mux.HandleFunc("POST /api/approval-rules", requireLocalOrigin(h.createApprovalRule))
+	mux.HandleFunc("PATCH /api/approval-rules/{id}", requireLocalOrigin(h.patchApprovalRule))
+	mux.HandleFunc("DELETE /api/approval-rules/{id}", requireLocalOrigin(h.deleteApprovalRule))
 }

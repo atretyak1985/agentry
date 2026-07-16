@@ -1,6 +1,7 @@
 package api
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -47,11 +48,11 @@ func analyticsServer(t *testing.T) *httptest.Server {
 		(3, 2, 'u3', 'mystery-model',  'completed', ?),
 		(4, 2, 'u4', 'claude-fable-5', 'completed', ?)`, today, today, day3, day20)
 
-	mustExec(`INSERT INTO turns (session_id, seq, role, model, started_at, tokens_in, tokens_out, cost_usd) VALUES
-		(1, 0, 'assistant', 'claude-fable-5', ?, 100, 50, 0.5),
-		(2, 0, 'assistant', 'cheap-model',    ?, 10,  5,  0.25),
-		(3, 0, 'assistant', 'mystery-model',  ?, 30,  20, NULL),
-		(4, 0, 'assistant', 'claude-fable-5', ?, 7,   7,  1.0)`,
+	mustExec(`INSERT INTO turns (session_id, seq, role, model, started_at, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, cost_usd) VALUES
+		(1, 0, 'assistant', 'claude-fable-5', ?, 100, 50, 900,  200,  0.5),
+		(2, 0, 'assistant', 'cheap-model',    ?, 10,  5,  40,   50,   0.25),
+		(3, 0, 'assistant', 'mystery-model',  ?, 30,  20, NULL, NULL, NULL),
+		(4, 0, 'assistant', 'claude-fable-5', ?, 7,   7,  100,  999,  1.0)`,
 		today, today, day3, day20)
 
 	// subagent_start: two notations of tech-lead on alpha today (fold → 2),
@@ -367,4 +368,107 @@ func TestStatsAgentCost(t *testing.T) {
 			t.Errorf("status = %d, want 400", res.StatusCode)
 		}
 	})
+}
+
+func almostEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+// Cache metric (analytics uplift): hit rate = cache_read / (cache_read + tokens_in)
+// per day per pivot member, plus a range summary priced from config/pricing.json.
+func TestStatsTimeseriesCache(t *testing.T) {
+	srv := analyticsServer(t)
+
+	t.Run("hit rate by project", func(t *testing.T) {
+		var ts timeseriesDTO
+		getJSON(t, srv.URL+"/api/stats/timeseries?metric=cache&group=project", &ts)
+		byKey := map[string]seriesDTO{}
+		for _, s := range ts.Series {
+			byKey[s.Key] = s
+		}
+		alpha, ok := byKey["-work-alpha"]
+		if !ok {
+			t.Fatalf("no alpha series: %+v", ts.Series)
+		}
+		// alpha today: cache 900+40=940 vs input 100+10=110 → 940/1050
+		want := 940.0 / 1050.0
+		if got := alpha.Values[len(alpha.Values)-1]; !almostEq(got, want) {
+			t.Errorf("alpha today hit rate = %v, want %v", got, want)
+		}
+		if !almostEq(alpha.Total, want) { // alpha's only in-range traffic is today
+			t.Errorf("alpha range hit rate = %v, want %v", alpha.Total, want)
+		}
+		// beta day3: NULL cache over 30 input tokens → series present at rate 0
+		beta, ok := byKey["-work-beta"]
+		if !ok {
+			t.Fatalf("no beta series: %+v", ts.Series)
+		}
+		if beta.Total != 0 {
+			t.Errorf("beta hit rate = %v, want 0", beta.Total)
+		}
+	})
+
+	t.Run("range summary with real cache pricing", func(t *testing.T) {
+		var ts timeseriesDTO
+		getJSON(t, srv.URL+"/api/stats/timeseries?metric=cache&group=model", &ts)
+		if ts.Cache == nil {
+			t.Fatal("cache summary missing")
+		}
+		if ts.Cache.CacheReadTokens != 940 || ts.Cache.InputTokens != 140 {
+			t.Errorf("tokens = %d/%d, want 940/140", ts.Cache.CacheReadTokens, ts.Cache.InputTokens)
+		}
+		if !almostEq(ts.Cache.HitRate, 940.0/1080.0) {
+			t.Errorf("hit rate = %v, want %v", ts.Cache.HitRate, 940.0/1080.0)
+		}
+		// Only claude-fable-5 is in pricing.json (input 10, cache_read 1,
+		// cache_write 12.5). NET saving = read gain − write premium:
+		// 900 × (10−1)/1e6 − 200 × (12.5−10)/1e6 = 0.0081 − 0.0005 = 0.0076.
+		// cheap-model's 40 cached reads / 50 writes are unpriceable → excluded
+		// (honesty rule); the day20 write of 999 is outside the range.
+		if ts.Cache.SavedUSD == nil || !almostEq(*ts.Cache.SavedUSD, 0.0076) {
+			t.Errorf("saved = %v, want 0.0076", ts.Cache.SavedUSD)
+		}
+	})
+
+	t.Run("scoped by project", func(t *testing.T) {
+		var ts timeseriesDTO
+		getJSON(t, srv.URL+"/api/stats/timeseries?metric=cache&group=model&project=-work-alpha", &ts)
+		if ts.Cache == nil {
+			t.Fatal("cache summary missing")
+		}
+		if ts.Cache.CacheReadTokens != 940 || ts.Cache.InputTokens != 110 {
+			t.Errorf("scoped tokens = %d/%d, want 940/110", ts.Cache.CacheReadTokens, ts.Cache.InputTokens)
+		}
+	})
+
+	t.Run("cache rejects agent pivot", func(t *testing.T) {
+		res, err := http.Get(srv.URL + "/api/stats/timeseries?metric=cache&group=agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", res.StatusCode)
+		}
+	})
+}
+
+func TestStatsBreakdownCache(t *testing.T) {
+	srv := analyticsServer(t)
+	var rows []breakdownRow
+	getJSON(t, srv.URL+"/api/stats/breakdown?by=project", &rows)
+	byKey := map[string]breakdownRow{}
+	for _, r := range rows {
+		byKey[r.Key] = r
+	}
+	alpha := byKey["-work-alpha"]
+	if alpha.TokensCacheRead == nil || *alpha.TokensCacheRead != 940 {
+		t.Errorf("alpha cache read = %v, want 940", alpha.TokensCacheRead)
+	}
+	if alpha.CacheHitRate == nil || !almostEq(*alpha.CacheHitRate, 940.0/1050.0) {
+		t.Errorf("alpha hit rate = %v, want %v", alpha.CacheHitRate, 940.0/1050.0)
+	}
+	// beta: 0 cached over 30 input tokens → an honest 0.0, not null
+	beta := byKey["-work-beta"]
+	if beta.CacheHitRate == nil || *beta.CacheHitRate != 0 {
+		t.Errorf("beta hit rate = %v, want 0", beta.CacheHitRate)
+	}
 }

@@ -5,6 +5,7 @@
 //	swarmery serve                 serve the API/SPA + live ingest pipeline
 //	swarmery recost                recompute cost_usd for all turns
 //	swarmery backup                write a VACUUM-INTO snapshot of the DB
+//	swarmery prune                 retention: roll up + delete old sessions' raw rows
 //	swarmery install               launchd auto-start (uninstall / status)
 //	swarmery hook <event>          runtime shim invoked by Claude Code hooks
 //	swarmery hooks <cmd>           manage hook entries in project settings
@@ -31,8 +32,10 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookshim"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/prune"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/sysedit"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/sysscan"
@@ -59,6 +62,8 @@ func main() {
 		err = cmdRecost(os.Args[2:])
 	case "backup":
 		err = cmdBackup(os.Args[2:])
+	case "prune":
+		err = cmdPrune(os.Args[2:])
 	case "wscan":
 		err = cmdWscan(os.Args[2:])
 	case "sysscan":
@@ -101,8 +106,14 @@ func usage() {
                     [--active-window <dur>] [--idle-window <dur>] [--no-ingest]
                     [--exclude-projects <globs>]  (default '/tmp/*,/private/tmp/*')
                     [--answer-delivery <updated-input|deny-message>]
+                    [--notify-url <url>] [--notify-events <list>] [--notify-template <generic|ntfy|telegram>]
+                    [--notify-telegram-chat <id>]
   swarmery recost   [--db <path>]
   swarmery backup   [--db <path>] [--out <path>]   VACUUM-INTO snapshot (safe while serving)
+  swarmery prune    [--db <path>] --older-than <Nd> [--dry-run]
+                                   retention: write daily_rollups for sessions ended > Nd ago,
+                                   delete their events/file_changes/turns (headers kept, pruned=1),
+                                   VACUUM at the end; --dry-run prints per-table counts only
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery sysscan  [--db <path>] [--claude-dir <dir>] [--overlays-dir <dir>]
                                    one-shot system-config scan (agents/skills/hooks/commands)
@@ -124,7 +135,8 @@ func usage() {
                                    into settings.json, restore project.json from .bak, reinstall
                                    hooks (idempotent; the inverse of offboard)
   env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT
-       SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC`)
+       SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC
+       SWARMERY_NOTIFY_URL, SWARMERY_NOTIFY_EVENTS, SWARMERY_NOTIFY_TEMPLATE, SWARMERY_NOTIFY_TELEGRAM_CHAT`)
 }
 
 // defaultProjectsRoot resolves SWARMERY_PROJECTS_ROOT, falling back to
@@ -249,6 +261,67 @@ func cmdBackup(args []string) error {
 	}
 	fmt.Printf("backup %s -> %s (%d bytes)\n", *dbPath, dest, size)
 	return nil
+}
+
+// cmdPrune implements retention — see internal/prune. --older-than is
+// REQUIRED (a destructive default would be a foot-gun); --dry-run prints the
+// per-table candidate counts and writes nothing.
+func cmdPrune(args []string) error {
+	fs := flag.NewFlagSet("prune", flag.ExitOnError)
+	dbPath := dbFlag(fs)
+	olderThan := fs.String("older-than", "",
+		"retention window, e.g. 90d — prune sessions that ENDED more than this long ago (required)")
+	dryRun := fs.Bool("dry-run", false, "count what would be pruned per table; write nothing")
+	fs.Parse(args)
+	if fs.NArg() != 0 || *olderThan == "" {
+		return fmt.Errorf("usage: swarmery prune [--db <path>] --older-than <Nd> [--dry-run]")
+	}
+	days, err := parseRetentionDays(*olderThan)
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02T15:04:05.000Z")
+
+	if port := envPort(); daemonRunning(port) {
+		log.Printf("warn: a swarmery daemon appears to be running on port %d — prune deletes rows and VACUUMs the same WAL; prefer stopping the daemon first", port)
+	}
+
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	st, err := prune.Run(db, cutoff, *dryRun)
+	if err != nil {
+		return err
+	}
+	mode := "pruned"
+	if st.DryRun {
+		mode = "would prune (dry-run)"
+	}
+	fmt.Printf("prune %s (cutoff %s)\n  %s:\n  sessions marked: %d\n  turns: %d\n  events: %d\n  file_changes: %d\n  daily_rollups rows written: %d\n",
+		*dbPath, st.Cutoff, mode, st.Sessions, st.Turns, st.Events, st.FileChanges, st.RollupRows)
+	// A post-commit VACUUM failure (e.g. SQLITE_BUSY from a live daemon) is
+	// only about disk space — the prune itself committed. Warn, exit 0.
+	if st.VacuumErr != nil {
+		log.Printf("warn: vacuum failed (space not reclaimed, data pruned OK): %v", st.VacuumErr)
+	}
+	return nil
+}
+
+// parseRetentionDays parses "90d" → 90. Days are the only supported unit:
+// retention is a calendar policy, not duration arithmetic.
+func parseRetentionDays(s string) (int, error) {
+	v, ok := strings.CutSuffix(s, "d")
+	if !ok {
+		return 0, fmt.Errorf("--older-than wants <N>d (e.g. 90d), got %q", s)
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("--older-than wants a positive day count, got %q", s)
+	}
+	return n, nil
 }
 
 // daemonRunning probes the local API port to detect a live daemon.
@@ -580,6 +653,14 @@ func cmdServe(args []string) error {
 		"how long a permission request stays answerable from the dashboard before fail-open to the terminal prompt (env: SWARMERY_APPROVAL_TIMEOUT)")
 	answerDelivery := fs.String("answer-delivery", approvals.DeliveryUpdatedInput,
 		"AskUserQuestion dashboard-answer wire form: updated-input (hook updatedInput injection, spike-verified default) or deny-message (fallback: deny carrying the answers as the message)")
+	notifyURL := fs.String("notify-url", os.Getenv("SWARMERY_NOTIFY_URL"),
+		"webhook URL to POST notifications to (env: SWARMERY_NOTIFY_URL; empty disables). NOTE: bodies include project names and tool arguments — point this only at receivers you trust")
+	notifyEvents := fs.String("notify-events", envOr("SWARMERY_NOTIFY_EVENTS", notify.EventApprovalRequested),
+		"comma-separated events to send: approval_requested, approval_expired, session_completed, session_error (env: SWARMERY_NOTIFY_EVENTS)")
+	notifyTemplate := fs.String("notify-template", envOr("SWARMERY_NOTIFY_TEMPLATE", notify.TemplateGeneric),
+		"webhook body template: generic (raw JSON) | ntfy (text body + Title/Priority/Tags headers) | telegram (Bot API sendMessage JSON) (env: SWARMERY_NOTIFY_TEMPLATE)")
+	notifyTelegramChat := fs.String("notify-telegram-chat", os.Getenv("SWARMERY_NOTIFY_TELEGRAM_CHAT"),
+		"Telegram chat_id, required with --notify-template=telegram (env: SWARMERY_NOTIFY_TELEGRAM_CHAT)")
 	cfg := pipelineFlags(fs)
 	wsCfg := wsingestFlags(fs)
 	sysCfg := sysscanFlags(fs)
@@ -594,6 +675,32 @@ func cmdServe(args []string) error {
 		return err
 	}
 	defer db.Close()
+
+	// control-plane v2: outbound webhook notifier (nil = disabled; Emit is
+	// nil-receiver-safe everywhere it is wired). Built before the pipeline so
+	// cfg.OnSessionTerminal is set when NewPipeline copies the config.
+	var notifier *notify.Notifier
+	if *notifyURL != "" {
+		notifier, err = notify.New(notify.Config{
+			URL:          *notifyURL,
+			Events:       strings.Split(*notifyEvents, ","),
+			Template:     *notifyTemplate,
+			TelegramChat: *notifyTelegramChat,
+		})
+		if err != nil {
+			return fmt.Errorf("notify config: %w", err)
+		}
+		log.Printf("swarmery notifier posting [%s] to %s (template %s)",
+			*notifyEvents, *notifyURL, *notifyTemplate)
+		cfg.OnSessionTerminal = func(sessionID int64, errorCount int) {
+			evt, err := notify.SessionEvent(db, sessionID, errorCount)
+			if err != nil {
+				log.Printf("warn: notify: session event %d: %v", sessionID, err)
+				return
+			}
+			notifier.Emit(evt)
+		}
+	}
 
 	var bus *ingest.Bus
 	var sys *sysscan.Scanner
@@ -659,6 +766,7 @@ func cmdServe(args []string) error {
 		Thresholds:     cfg.Thresholds,
 		Exclude:        cfg.Exclude,
 		AnswerDelivery: *answerDelivery,
+		Notifier:       notifier,
 	})
 	api.AttachApprovals(svc)
 	go svc.RunSweeper(context.Background())
@@ -729,6 +837,14 @@ func envApprovalTimeout() time.Duration {
 		log.Printf("warn: ignoring invalid SWARMERY_APPROVAL_TIMEOUT=%q", v)
 	}
 	return approvals.DefaultTimeout
+}
+
+// envOr returns the env value when set and non-empty, else def.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 func envPort() int {

@@ -5,11 +5,15 @@
 import type {
   AnalyticsDimension,
   AnalyticsMetric,
+  ApprovalRule,
   AttachResponse,
   BreakdownResp,
   DetachResponse,
   DocDetail,
   DocMeta,
+  DurationsResp,
+  ErrorsResp,
+  FileSessionsResponse,
   HealthResponse,
   MatrixResp,
   OnboardConfig,
@@ -18,14 +22,20 @@ import type {
   PermissionRequest,
   PermissionRequestStatus,
   ProjectDetail,
+  ProjectMeta,
+  ProjectMetaPatch,
+  ProjectsHealthResponse,
   ProjectsResponse,
+  SearchResponse,
   SessionDetailResponse,
+  SessionOutcome,
   SessionsResponse,
   StatsOverview,
   StatsToday,
   TaskDetail,
   TasksResponse,
   TimeseriesResp,
+  ToolsResp,
 } from './api/types';
 import { mockApi } from './mock/data';
 
@@ -75,6 +85,27 @@ export async function restoreProject(id: number): Promise<void> {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `restore failed: ${String(res.status)}`);
   }
+}
+
+/** GET /api/projects/health — per-project week-over-week health rows. */
+export function fetchProjectsHealth(): Promise<ProjectsHealthResponse> {
+  if (MOCK) return mockApi.projectsHealth();
+  return get('/api/projects/health');
+}
+
+/** PATCH /api/projects/{id} — update pinned / tags (dashboard-only meta). */
+export async function patchProject(id: number, patch: ProjectMetaPatch): Promise<ProjectMeta> {
+  if (MOCK) return { pinned: patch.pinned ?? false, tags: patch.tags ?? [] };
+  const res = await fetch(`/api/projects/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `update failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as ProjectMeta;
 }
 
 /**
@@ -171,11 +202,23 @@ export async function onboardProject(
   return (await res.json()) as OnboardResponse;
 }
 
-export function fetchSessions(filters: SessionFilters = {}): Promise<SessionsResponse> {
+export interface SessionPageOpts {
+  /** Server default 100, max 500. */
+  limit?: number;
+  /** nextCursor of the previous page. */
+  cursor?: string;
+}
+
+export function fetchSessions(
+  filters: SessionFilters = {},
+  page: SessionPageOpts = {},
+): Promise<SessionsResponse> {
   if (MOCK) return mockApi.sessions(filters);
   const qs = new URLSearchParams();
   if (filters.project !== undefined) qs.set('project', filters.project);
   if (filters.status !== undefined) qs.set('status', filters.status);
+  if (page.limit !== undefined) qs.set('limit', String(page.limit));
+  if (page.cursor !== undefined) qs.set('cursor', page.cursor);
   const query = qs.toString();
   return get(`/api/sessions${query === '' ? '' : `?${query}`}`);
 }
@@ -191,9 +234,11 @@ export function fetchStatsToday(): Promise<StatsToday> {
 }
 
 /** Day-scoped overview stats + trailing series (parity contract). */
-export function fetchStatsOverview(day: string): Promise<StatsOverview> {
+export function fetchStatsOverview(day: string, project?: string): Promise<StatsOverview> {
   if (MOCK) return mockApi.statsOverview(day);
-  return get(`/api/stats/overview?day=${encodeURIComponent(day)}`);
+  const qs = new URLSearchParams({ day });
+  if (project !== undefined) qs.set('project', project);
+  return get(`/api/stats/overview?${qs.toString()}`);
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
@@ -207,12 +252,15 @@ export function fetchHealth(): Promise<HealthResponse> {
 export interface AnalyticsRange {
   from?: string;
   to?: string;
+  /** Global project scope — slug or id (server matches either). */
+  project?: string;
 }
 
 function rangeQuery(range: AnalyticsRange, extra: Record<string, string>): string {
   const qs = new URLSearchParams(extra);
   if (range.from !== undefined) qs.set('from', range.from);
   if (range.to !== undefined) qs.set('to', range.to);
+  if (range.project !== undefined) qs.set('project', range.project);
   return qs.toString();
 }
 
@@ -243,6 +291,24 @@ export function fetchMatrix(
 ): Promise<MatrixResp> {
   if (MOCK) return mockApi.matrix(rows, metric, range);
   return get(`/api/stats/matrix?${rangeQuery(range, { rows, cols: 'project', metric })}`);
+}
+
+/** Per-tool call/error/denied counts + duration stats (analytics uplift). */
+export function fetchToolStats(range: AnalyticsRange = {}): Promise<ToolsResp> {
+  if (MOCK) return mockApi.toolStats(range);
+  return get(`/api/stats/tools?${rangeQuery(range, {})}`);
+}
+
+/** Session-duration + approval-wait aggregates (analytics uplift). */
+export function fetchDurations(range: AnalyticsRange = {}): Promise<DurationsResp> {
+  if (MOCK) return mockApi.durations(range);
+  return get(`/api/stats/durations?${rangeQuery(range, {})}`);
+}
+
+/** Error events grouped by normalized message key (analytics uplift). */
+export function fetchErrorGroups(range: AnalyticsRange = {}): Promise<ErrorsResp> {
+  if (MOCK) return mockApi.errorGroups(range);
+  return get(`/api/stats/errors?${rangeQuery(range, {})}`);
 }
 
 export function fetchDocs(): Promise<DocMeta[]> {
@@ -321,6 +387,47 @@ export async function resolveApproval(
   return (await res.json()) as PermissionRequest;
 }
 
+// --- control-plane v2 — auto-approve rules ------------------------------------
+
+export interface ApprovalRuleInput {
+  projectId: number | null;
+  toolPattern: string;
+  note?: string;
+}
+
+export function fetchApprovalRules(): Promise<ApprovalRule[]> {
+  if (MOCK) return Promise.resolve([]);
+  return get('/api/approval-rules');
+}
+
+export async function createApprovalRule(input: ApprovalRuleInput): Promise<ApprovalRule> {
+  const res = await fetch('/api/approval-rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `create rule failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as ApprovalRule;
+}
+
+export async function toggleApprovalRule(id: number, enabled: boolean): Promise<ApprovalRule> {
+  const res = await fetch(`/api/approval-rules/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`toggle rule failed: ${String(res.status)}`);
+  return (await res.json()) as ApprovalRule;
+}
+
+export async function deleteApprovalRule(id: number): Promise<void> {
+  const res = await fetch(`/api/approval-rules/${String(id)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`delete rule failed: ${String(res.status)}`);
+}
+
 /** POST /api/sessions/{id}/kill — send SIGTERM (force=false) or SIGKILL (force=true). */
 export async function killSession(id: number, force = false): Promise<void> {
   if (MOCK) return; // no-op in mock mode
@@ -367,4 +474,47 @@ export async function cancelSessionMessage(id: number): Promise<void> {
     const data = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(data.error ?? `cancel failed: ${String(res.status)}`);
   }
+}
+
+/**
+ * PATCH /api/sessions/{id} — set or clear (null) the manual session outcome.
+ */
+export async function patchSessionOutcome(
+  id: number,
+  outcome: SessionOutcome | null,
+): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/sessions/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `outcome failed: ${String(res.status)}`);
+  }
+}
+
+// --- global search (Cmd+K palette) ---------------------------------------------
+
+/**
+ * GET /api/search — grouped global search (sessions / turns / files /
+ * projects). Mock mode returns empty groups so the palette still renders its
+ * static Navigation section offline.
+ */
+export function fetchSearch(q: string, project?: string, limit = 20): Promise<SearchResponse> {
+  if (MOCK) {
+    return Promise.resolve({ query: q, sessions: [], turns: [], files: [], projects: [] });
+  }
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  if (project !== undefined && project !== '') qs.set('project', project);
+  return get(`/api/search?${qs.toString()}`);
+}
+
+/** GET /api/files/sessions — sessions that touched files matching `path`. */
+export function fetchFileSessions(path: string, project?: string): Promise<FileSessionsResponse> {
+  if (MOCK) return Promise.resolve({ path, sessions: [] });
+  const qs = new URLSearchParams({ path });
+  if (project !== undefined && project !== '') qs.set('project', project);
+  return get(`/api/files/sessions?${qs.toString()}`);
 }

@@ -238,3 +238,179 @@ func TestMigrate0008OnPopulatedDB(t *testing.T) {
 		t.Fatalf("re-run migrate: %v", err)
 	}
 }
+
+// TestMigrate0012FreshDB verifies turns_fts exists after a fresh migrate and
+// that the triggers track the ingester's REAL write pattern: INSERT with NULL
+// text (ingest.go upsertTurn) followed by UPDATE turns SET text (flushTurnTexts).
+func TestMigrate0012FreshDB(t *testing.T) {
+	db := openRaw(t)
+	if err := Migrate(db); err != nil {
+		t.Fatalf("migrate fresh db: %v", err)
+	}
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	matchCount := func(match string) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM turns_fts WHERE turns_fts MATCH ?`, match).Scan(&n); err != nil {
+			t.Fatalf("match %q: %v", match, err)
+		}
+		return n
+	}
+
+	mustExec(`INSERT INTO projects (id, path, slug, first_seen) VALUES (1, '/tmp/p', 'p', '2026-07-16T00:00:00Z')`)
+	mustExec(`INSERT INTO sessions (id, project_id, session_uuid, started_at) VALUES (1, 1, 'u1', '2026-07-16T00:00:00Z')`)
+	mustExec(`INSERT INTO turns (id, session_id, seq, role, started_at) VALUES (7, 1, 0, 'user', '2026-07-16T00:00:00Z')`)
+
+	// INSERT trigger indexed the row with NULL text → no tokens yet.
+	if n := matchCount(`"refactor"`); n != 0 {
+		t.Errorf("match before text set = %d, want 0", n)
+	}
+
+	// UPDATE OF text trigger: delete-old + insert-new.
+	mustExec(`UPDATE turns SET text = 'please refactor the reactor loop' WHERE id = 7`)
+	if n := matchCount(`"refactor"`); n != 1 {
+		t.Errorf("match after UPDATE OF text = %d, want 1", n)
+	}
+
+	// External-content contract: rowid == turns.id.
+	var rowid int64
+	if err := db.QueryRow(
+		`SELECT rowid FROM turns_fts WHERE turns_fts MATCH '"refactor"'`).Scan(&rowid); err != nil {
+		t.Fatalf("read rowid: %v", err)
+	}
+	if rowid != 7 {
+		t.Errorf("rowid = %d, want 7 (turns.id)", rowid)
+	}
+
+	// A second text update replaces tokens (no stale matches).
+	mustExec(`UPDATE turns SET text = 'now about databases instead' WHERE id = 7`)
+	if n := matchCount(`"refactor"`); n != 0 {
+		t.Errorf("stale token after re-update = %d, want 0", n)
+	}
+	if n := matchCount(`"databases"`); n != 1 {
+		t.Errorf("match after re-update = %d, want 1", n)
+	}
+
+	// DELETE trigger removes the row from the index.
+	mustExec(`DELETE FROM turns WHERE id = 7`)
+	if n := matchCount(`"databases"`); n != 0 {
+		t.Errorf("match after delete = %d, want 0", n)
+	}
+}
+
+// TestMigrate0012Backfill verifies the one-time backfill: rows written under
+// the 0011 schema (turns.text already set by the ingester) become searchable
+// when 0012 applies, and the external-content index passes integrity-check.
+func TestMigrate0012Backfill(t *testing.T) {
+	db := openRaw(t)
+	migrateUpTo(t, db, 11)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	mustExec(`INSERT INTO projects (id, path, slug, first_seen) VALUES (1, '/tmp/p', 'p', '2026-07-16T00:00:00Z')`)
+	mustExec(`INSERT INTO sessions (id, project_id, session_uuid, started_at) VALUES (1, 1, 'u1', '2026-07-16T00:00:00Z')`)
+	mustExec(`INSERT INTO turns (id, session_id, seq, role, started_at, text) VALUES
+		(1, 1, 0, 'user',      '2026-07-16T00:00:00Z', 'stabilize the plasma containment'),
+		(2, 1, 1, 'assistant', '2026-07-16T00:00:01Z', NULL)`)
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("migrate populated db: %v", err)
+	}
+
+	var rowid int64
+	if err := db.QueryRow(
+		`SELECT rowid FROM turns_fts WHERE turns_fts MATCH '"plasma"'`).Scan(&rowid); err != nil {
+		t.Fatalf("backfilled row not searchable: %v", err)
+	}
+	if rowid != 1 {
+		t.Errorf("rowid = %d, want 1", rowid)
+	}
+
+	// The NULL-text row must be registered too (index/content consistency):
+	// fts5 integrity-check errors if the shadow tables disagree with `turns`.
+	if _, err := db.Exec(`INSERT INTO turns_fts(turns_fts) VALUES ('integrity-check')`); err != nil {
+		t.Errorf("fts5 integrity-check failed: %v", err)
+	}
+
+	// Idempotency: a second Migrate run is a no-op (no double-backfill).
+	if err := Migrate(db); err != nil {
+		t.Fatalf("re-run migrate: %v", err)
+	}
+}
+
+// TestMigrate0015ProjectMeta verifies 0015 applies on a database populated
+// under the 0014 schema: projects gains pinned/tags with safe defaults, and
+// the runner stays idempotent.
+func TestMigrate0015ProjectMeta(t *testing.T) {
+	db := openRaw(t)
+	migrateUpTo(t, db, 14)
+
+	// Pre-0015 sanity: the meta columns must not exist yet.
+	if cols := columnSet(t, db, "projects"); cols["pinned"] || cols["tags"] {
+		t.Fatal("projects.pinned/tags exist before 0015 — migrateUpTo applied too much")
+	}
+	if _, err := db.Exec(`INSERT INTO projects (path, slug, first_seen) VALUES ('/tmp/p', 'p', '2026-07-16T00:00:00Z')`); err != nil {
+		t.Fatalf("insert project: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("migrate populated db: %v", err)
+	}
+	mustHaveColumns(t, db, "projects", "pinned", "tags")
+
+	// Existing rows are backfilled with the defaults (unpinned, empty array).
+	var pinned int
+	var tags string
+	if err := db.QueryRow(`SELECT pinned, tags FROM projects WHERE slug = 'p'`).Scan(&pinned, &tags); err != nil {
+		t.Fatalf("read migrated project: %v", err)
+	}
+	if pinned != 0 || tags != "[]" {
+		t.Errorf("backfill: want (0, []), got (%d, %s)", pinned, tags)
+	}
+
+	// Idempotency: a second Migrate run is a no-op.
+	if err := Migrate(db); err != nil {
+		t.Fatalf("re-run migrate: %v", err)
+	}
+}
+
+// TestMigration0013ApprovalRules: the auto-approve rules table exists with
+// its defaults and the action CHECK.
+func TestMigration0013ApprovalRules(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "rules.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(
+		`INSERT INTO approval_rules (tool_pattern, created_at)
+		 VALUES ('Read', '2026-07-16T00:00:00.000Z')`); err != nil {
+		t.Fatalf("insert minimal rule: %v", err)
+	}
+	var action string
+	var enabled int
+	if err := db.QueryRow(
+		`SELECT action, enabled FROM approval_rules WHERE id = 1`).Scan(&action, &enabled); err != nil {
+		t.Fatal(err)
+	}
+	if action != "approve" || enabled != 1 {
+		t.Errorf("defaults = (%q, %d), want ('approve', 1)", action, enabled)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO approval_rules (tool_pattern, action, created_at)
+		 VALUES ('Read', 'deny', '2026-07-16T00:00:00.000Z')`); err == nil {
+		t.Error("action CHECK must reject 'deny'")
+	}
+}
