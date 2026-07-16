@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
 )
 
 // maxRangeDays caps the requested span so a hostile ?from is not a fan-out.
@@ -144,6 +146,8 @@ type timeseriesDTO struct {
 	// approx is always false in Phase 1 (no per-agent $); it exists so the UI
 	// can render an "~approx" badge unchanged once Phase 2 lands.
 	Approx bool `json:"approx"`
+	// Cache is set only for metric=cache: range-total cache economics.
+	Cache *cacheSummaryDTO `json:"cache,omitempty"`
 }
 
 // validTimeseries gates metric×group: $/tokens come from turns — by
@@ -155,6 +159,10 @@ func validTimeseries(metric, group string) bool {
 		return group == "project" || group == "model" || group == "agent"
 	case "runs":
 		return group == "agent" || group == "skill"
+	case "cache":
+		// hit rate lives on turns; agent pivot is deliberately excluded — the
+		// orchestrator's cache dwarfs subagents and the ratio mix misleads.
+		return group == "project" || group == "model"
 	}
 	return false
 }
@@ -173,6 +181,11 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pf, pargs := scopeFilter(r)
+
+	if metric == "cache" {
+		h.timeseriesCache(w, r, group, dr, pf, pargs)
+		return
+	}
 
 	// acc[key] = {name, values aligned to dr.days, total}
 	type acc struct {
@@ -373,6 +386,153 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		return out.Series[i].Key < out.Series[j].Key
 	})
 	if r.URL.Query().Get("format") == "csv" {
+		writeTimeseriesCSV(w, out)
+		return
+	}
+	writeJSON(w, out, nil)
+}
+
+// cacheSummaryDTO is the range-total cache economics attached to a
+// metric=cache timeseries. saved_usd follows the honesty rule: it sums only
+// models present in the pricing table (REAL per-model cache_read rates from
+// config/pricing.json via internal/cost); nil when no cached token was
+// priceable — never a fabricated 10%-of-input guess.
+type cacheSummaryDTO struct {
+	HitRate         float64  `json:"hit_rate"`
+	CacheReadTokens int64    `json:"cache_read_tokens"`
+	InputTokens     int64    `json:"input_tokens"`
+	SavedUSD        *float64 `json:"saved_usd"`
+}
+
+// timeseriesCache serves metric=cache: the per-day cache hit rate
+// SUM(tokens_cache_read) / (SUM(tokens_cache_read)+SUM(tokens_in)) per group
+// member. Values are 0..1 fractions — NOT additive, so the UI must not stack
+// them. Savings: each cache-read token would have cost the input rate
+// uncached → saved = Σ_model cache_read × (input − cache_read) / 1e6.
+//
+// Retention: daily_rollups carry NO cache-token columns, so pruned days
+// cannot contribute — when the range overlaps rolled-up days the response is
+// flagged approx=true (same honesty rule as the non-project groupings).
+func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group string, dr dateRange, pf string, pargs []any) {
+	rows, err := h.DB.Query(`
+		SELECT t.started_at, p.slug, p.name,
+		       COALESCE(t.model, s.model, 'unknown') AS model,
+		       COALESCE(t.tokens_cache_read, 0), COALESCE(t.tokens_in, 0)
+		  FROM turns t
+		  JOIN sessions s ON s.id = t.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer rows.Close()
+
+	type acc struct {
+		name       string
+		num, den   []float64
+		tNum, tDen float64
+	}
+	series := map[string]*acc{}
+	var totCache, totIn int64
+	modelCache := map[string]int64{}
+	for rows.Next() {
+		var startedAt, slug, model string
+		var name sql.NullString
+		var cr, tin int64
+		if err := rows.Scan(&startedAt, &slug, &name, &model, &cr, &tin); err != nil {
+			writeErr(w, err)
+			return
+		}
+		day, ok := localDay(startedAt)
+		if !ok {
+			continue
+		}
+		idx, ok := dr.index[day]
+		if !ok {
+			continue
+		}
+		key, label := slug, projLabel(name, slug)
+		if group == "model" {
+			key, label = model, model
+		}
+		a := series[key]
+		if a == nil {
+			a = &acc{name: label, num: make([]float64, len(dr.days)), den: make([]float64, len(dr.days))}
+			series[key] = a
+		}
+		a.num[idx] += float64(cr)
+		a.den[idx] += float64(cr + tin)
+		a.tNum += float64(cr)
+		a.tDen += float64(cr + tin)
+		totCache += cr
+		totIn += tin
+		modelCache[model] += cr
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := timeseriesDTO{
+		From: dr.days[0], To: dr.days[len(dr.days)-1],
+		Metric: "cache", Group: group, Buckets: dr.days,
+		Series: make([]seriesDTO, 0, len(series)),
+	}
+	for key, a := range series {
+		if a.tDen == 0 {
+			continue // no token traffic at all — no rate to report
+		}
+		s := seriesDTO{Key: key, Name: a.name, Total: a.tNum / a.tDen, Values: make([]float64, len(dr.days))}
+		for i := range a.num {
+			if a.den[i] > 0 {
+				s.Values[i] = a.num[i] / a.den[i]
+			}
+		}
+		out.Series = append(out.Series, s)
+	}
+	sort.Slice(out.Series, func(i, j int) bool {
+		if out.Series[i].Total != out.Series[j].Total {
+			return out.Series[i].Total > out.Series[j].Total
+		}
+		return out.Series[i].Key < out.Series[j].Key
+	})
+
+	// Honesty over pruned history: rollups have no cache columns, so any
+	// rolled-up day in range makes the hit rate approximate.
+	var rolled int
+	if err := h.DB.QueryRow(
+		`SELECT COUNT(*) FROM daily_rollups r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
+		append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...).Scan(&rolled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approx = rolled > 0
+
+	summary := &cacheSummaryDTO{CacheReadTokens: totCache, InputTokens: totIn}
+	if d := totCache + totIn; d > 0 {
+		summary.HitRate = float64(totCache) / float64(d)
+	}
+	table := cost.Default()
+	saved, priced := 0.0, false
+	for model, cr := range modelCache {
+		if cr == 0 {
+			continue
+		}
+		if p, ok := table.PriceFor(model); ok {
+			saved += float64(cr) / 1e6 * (p.Input - p.CacheRead)
+			priced = true
+		}
+	}
+	if priced {
+		summary.SavedUSD = &saved
+	}
+	out.Cache = summary
+	if r.URL.Query().Get("format") == "csv" {
+		// Series values are 0..1 fractions; fmtCSVFloat renders them exactly.
 		writeTimeseriesCSV(w, out)
 		return
 	}
