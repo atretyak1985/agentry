@@ -13,6 +13,8 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// soft-archive a project from the list (reversible; row + sessions kept).
 	mux.HandleFunc("DELETE /api/projects/{id}", requireLocalOrigin(h.hideProject))
 	mux.HandleFunc("POST /api/projects/{id}/restore", requireLocalOrigin(h.restoreProject))
+	// dashboard meta (migration 0015): pin/unpin + tags — {pinned?, tags?}.
+	mux.HandleFunc("PATCH /api/projects/{id}", requireLocalOrigin(h.patchProject))
 	// detach the swarmery plugin from a project (.claude/settings.json). Fenced
 	// like onboarding: requireLocalOrigin + the SWARMERY_ONBOARD_ROOTS allow-list
 	// (disabled when unset). Supports ?dryRun to preview the plan.
