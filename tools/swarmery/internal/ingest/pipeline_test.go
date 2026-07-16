@@ -578,3 +578,55 @@ func waitFor(t *testing.T, ch <-chan Notification, typ string, timeout time.Dura
 		}
 	}
 }
+
+// TestStatusTicker_OnSessionTerminal: the ticker callback fires exactly once
+// per transition to 'completed', carrying the session's error-event count;
+// active→idle transitions must not fire it.
+func TestStatusTicker_OnSessionTerminal(t *testing.T) {
+	db := testDB(t)
+	now := time.Now().UTC()
+	if _, err := db.Exec(
+		`INSERT INTO projects (path, slug, name, first_seen)
+		 VALUES ('/tmp/t-proj', '-tmp-t-proj', 't-proj', ?)`,
+		now.Format("2006-01-02T15:04:05.000Z")); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(uuid, status string, age time.Duration) int64 {
+		r, err := db.Exec(
+			`INSERT INTO sessions (project_id, session_uuid, status, started_at, ended_at)
+			 VALUES (1, ?, ?, ?, ?)`,
+			uuid, status, now.Add(-2*time.Hour).Format(time.RFC3339),
+			now.Add(-age).UTC().Format("2006-01-02T15:04:05.000Z"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := r.LastInsertId()
+		return id
+	}
+	toDone := insert("t-done", "idle", 45*time.Minute)   // idle → completed (fires)
+	toIdle := insert("t-idle", "active", 10*time.Minute) // active → idle (must NOT fire)
+	_ = toIdle
+	// Two error events on the completing session.
+	for i, dk := range []string{"t:e1", "t:e2"} {
+		if _, err := db.Exec(
+			`INSERT INTO events (session_id, ts, type, status, payload, dedup_key)
+			 VALUES (?, ?, 'tool_call', 'error', '{}', ?)`,
+			toDone, now.Add(-time.Duration(i)*time.Minute).Format("2006-01-02T15:04:05.000Z"), dk); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type fired struct {
+		id   int64
+		errs int
+	}
+	var got []fired
+	p := NewPipeline(db, Config{OnSessionTerminal: func(id int64, errs int) {
+		got = append(got, fired{id, errs})
+	}}, nil)
+	p.recomputeStatuses()
+
+	if len(got) != 1 || got[0].id != toDone || got[0].errs != 2 {
+		t.Fatalf("OnSessionTerminal calls = %+v, want [{%d 2}]", got, toDone)
+	}
+}

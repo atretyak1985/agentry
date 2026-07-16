@@ -54,9 +54,17 @@ func procAlive(state string) bool {
 	return state == procwatch.StateRunning || state == procwatch.StateOrphaned
 }
 
+// StatusChange is one ticker transition: the session row id and the status
+// it was just moved to.
+type StatusChange struct {
+	ID     int64
+	Status string
+}
+
 // RecomputeStatuses moves stale sessions forward (active → idle → completed)
-// based on their last record timestamp, returning the ids of changed sessions
-// so the caller can emit session_updated for each. Reactivation happens on the
+// based on their last record timestamp, returning each changed session with
+// its NEW status so the caller can emit session_updated (and, for
+// 'completed', the terminal-notify callback). Reactivation happens on the
 // ingest path (new records re-upsert the session), never here.
 //
 // Liveness override: a session is never fast-forwarded to "completed" while
@@ -64,18 +72,14 @@ func procAlive(state string) bool {
 // live-but-quiet session stops reporting "Done". Sessions with no liveness
 // signal (proc_state NULL/dead/unknown) keep the pure time-based fallback;
 // procwatch itself already flips genuinely dead ones to "completed".
-func RecomputeStatuses(db *sql.DB, t Thresholds, now time.Time) ([]int64, error) {
+func RecomputeStatuses(db *sql.DB, t Thresholds, now time.Time) ([]StatusChange, error) {
 	rows, err := db.Query(
 		`SELECT id, status, COALESCE(ended_at, started_at), proc_state FROM sessions
 		 WHERE status IN ('active','idle')`)
 	if err != nil {
 		return nil, err
 	}
-	type change struct {
-		id     int64
-		status string
-	}
-	var changes []change
+	var changes []StatusChange
 	for rows.Next() {
 		var id int64
 		var status, lastTS string
@@ -93,7 +97,7 @@ func RecomputeStatuses(db *sql.DB, t Thresholds, now time.Time) ([]int64, error)
 			want = "idle" // alive but quiet — don't claim it finished
 		}
 		if want != status {
-			changes = append(changes, change{id, want})
+			changes = append(changes, StatusChange{ID: id, Status: want})
 		}
 	}
 	rows.Close()
@@ -101,12 +105,12 @@ func RecomputeStatuses(db *sql.DB, t Thresholds, now time.Time) ([]int64, error)
 		return nil, err
 	}
 
-	changed := make([]int64, 0, len(changes))
+	changed := make([]StatusChange, 0, len(changes))
 	for _, c := range changes {
-		if _, err := db.Exec(`UPDATE sessions SET status = ? WHERE id = ?`, c.status, c.id); err != nil {
+		if _, err := db.Exec(`UPDATE sessions SET status = ? WHERE id = ?`, c.Status, c.ID); err != nil {
 			return changed, err
 		}
-		changed = append(changed, c.id)
+		changed = append(changed, c)
 	}
 	return changed, nil
 }
