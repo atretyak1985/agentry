@@ -13,7 +13,7 @@ related-mrs: [{{repo-a !NNN}}, {{repo-b !NN}}]
 # Architecture — {{big-issue title}}
 
 > Copy this file to the issue's task dir at
-> `.claude-workspace/working/{{YYYY}}/{{MM}}/{{DD}}/{{slug}}/reports/architecture.md`.
+> `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{{YYYY}}/{{MM}}/{{DD}}/{{slug}}/reports/architecture.md`.
 > Keep the whole narrative **≤ 200 lines** — the diagrams carry the detail, prose only frames
 > them. Fill every `{{placeholder}}`; delete guidance blockquotes before you finish.
 
@@ -119,11 +119,11 @@ Diagram: `./c4-l2-container.mmd` → `./c4-l2-container.html`.
 
 <!-- PLACEMENT — do not delete -->
 **Where this doc lives.** Default is **task-scoped**: it stays under the issue's task dir
-`.claude-workspace/working/{{YYYY}}/{{MM}}/{{DD}}/{{slug}}/reports/` alongside its `.mmd`/`.html`.
+`${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{{YYYY}}/{{MM}}/{{DD}}/{{slug}}/reports/` alongside its `.mmd`/`.html`.
 **Promote** a copy to the project's architecture docs directory by default (matching
 `@architecture-designer`'s `{component}-design.md` output path; or another project docs area for a
 topic-specific doc) **only** when the doc is durable, cross-team, and agreed — the task-dir version
 stays as the work trail. A promotion that edits a cross-tier contract is an **ASK** (the project's
-ASK policy). **Never** write loose `PLAN-*/AUDIT-*/architecture-*.md` at the `.claude-workspace/`
+ASK policy). **Never** write loose `PLAN-*/AUDIT-*/architecture-*.md` at the workspace
 root — `protect-sensitive-files.sh` blocks it (exit 2). Task card `README.md` at start and
 `SUMMARY.md` at completion are mandatory.

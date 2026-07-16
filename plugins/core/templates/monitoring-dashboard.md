@@ -181,9 +181,9 @@ Operations (count)
 
 - [Performance Optimization Guide](../docs/PERFORMANCE-OPTIMIZATION.md)
 - [Performance Monitor Agent](../agents/performance-monitor.md)
-- [Trace Logs](./.claude-workspace/logs/)
-- [Metrics](./.claude-workspace/metrics/)
-- [Reports](./.claude-workspace/reports/)
+- [Trace Logs](../logs/)
+- [Metrics](../metrics/)
+- [Reports](../reports/)
 
 ---
 

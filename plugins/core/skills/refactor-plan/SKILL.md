@@ -46,6 +46,7 @@ Placeholders: `<mainApp>` = `project.json → mainApp`; `<device>` = `project.js
 # Outputs
 
 - Format: markdown refactoring plan document with the sections shown in the template below.
+- Save location: `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/plan/README.md` (workspace plan standard; date = task start, leaf folder = kebab slug). NEVER save the plan inside a code repo (`docs/`, repo root, legacy `.claude-workspace/`).
 - Length budget: max 200 lines for plans under 20 files affected; request phase breakdown for larger blast radii.
 
 <output-template>

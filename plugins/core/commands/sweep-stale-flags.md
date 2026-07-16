@@ -37,7 +37,7 @@ Generate a Dynamic Workflow that:
    - **Stale reads** = used in code, absent everywhere → likely dead code
    - **Orphan declarations** = declared, never read → likely dead config
    - **Schema drift** = declared in some envs but missing in others
-3. **Artifact** — `sweep-stale-flags-{date}.md` in `.claude-workspace/working/`.
+3. **Artifact** — `sweep-stale-flags-{date}.md` in `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/`.
 
 ## Categories
 

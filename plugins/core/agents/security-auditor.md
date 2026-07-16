@@ -46,7 +46,7 @@ Security Auditor for the project's platform (read `.claude/project.json` and `CL
 - `mode: "coverage" | "filtered"` — coverage reports all findings; filtered applies >80% confidence gate
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-security.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-security.md`
 - Length budget: 400 lines max [PE/Output/2.4]
 - Output template:
   ```markdown
@@ -102,7 +102,7 @@ File: src/app/api/v2/devices/command/route.ts:12
 
 [Full audit continues to completion...]
 
-SECURITY AUDIT: FAIL (1 P0) | P0: 1 | P1: 1 | P2: 0 | P3: 0 | Artifact: .claude-workspace/working/task-001/phases/05-security.md
+SECURITY AUDIT: FAIL (1 P0) | P0: 1 | P1: 1 | P2: 0 | P3: 0 | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/05-security.md
 </output>
 </example>
 

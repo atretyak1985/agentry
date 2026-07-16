@@ -24,7 +24,7 @@ Prompting Agent is an optional Phase 3.5 executor that generates structured, sel
 
 - Goal: Produce a prompt document (<=2000 tokens per prompt) that the target agent can execute without asking clarifying questions.
 - Success criteria (falsifiable):
-  - [ ] Prompt saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/artifacts/prompts/` and pointer at `phases/03.5-prompt.md`
+  - [ ] Prompt saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/artifacts/prompts/` and pointer at `phases/03.5-prompt.md`
   - [ ] Prompt contains all 9 required sections (see Output template)
   - [ ] Every code example cites file:line from the actual codebase
   - [ ] Acceptance criteria are falsifiable (can be checked with a command or boolean assertion)
@@ -44,7 +44,7 @@ Prompting Agent is an optional Phase 3.5 executor that generates structured, sel
 - `task_id: string` -- workspace task identifier
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/artifacts/prompts/{target}-prompt.md` + pointer at `phases/03.5-prompt.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/artifacts/prompts/{target}-prompt.md` + pointer at `phases/03.5-prompt.md`
 - Length budget: 2000 tokens per prompt; if longer, split into sequential prompts with clear ordering
 - Output template:
   ```markdown
@@ -158,7 +158,7 @@ Input:
 ```
 @prompting-agent create prompt for mission waypoint CRUD
 Feature: Add CRUD operations for mission waypoints
-Context: .claude-workspace/working/{YYYY}/{MM}/abc123/phases/02-context.md
+Context: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/phases/02-context.md
 Complexity: Medium
 Target Agent: @implementation-agent
 ```
@@ -174,7 +174,7 @@ For a Medium-complexity route handler prompt targeting @implementation-agent, I 
 
 Expected output:
 ```
-Prompt written: .claude-workspace/working/{YYYY}/{MM}/abc123/artifacts/prompts/implementation-agent-prompt.md | ~1800 tokens | Target: @implementation-agent | All 9 sections complete
+Prompt written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/artifacts/prompts/implementation-agent-prompt.md | ~1800 tokens | Target: @implementation-agent | All 9 sections complete
 ```
 </example>
 

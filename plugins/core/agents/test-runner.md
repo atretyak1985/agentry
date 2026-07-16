@@ -29,7 +29,7 @@ Test Runner for the project's platform (repos in `.claude/project.json` → `rep
   - [ ] Pass/fail/skipped counts reported per suite
   - [ ] Coverage metrics reported (statements, branches, functions, lines)
   - [ ] Every failure has: test name, error message, root cause classification (test bug vs implementation bug)
-  - [ ] Report saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-tests.md`
+  - [ ] Report saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-tests.md`
   - [ ] If coverage < threshold: gap report emitted with specific files/functions needing tests
 - Stop conditions:
   - Return when test report is saved to artifact path
@@ -44,7 +44,7 @@ Test Runner for the project's platform (repos in `.claude/project.json` → `rep
 - `coverage_requested: boolean` -- whether to include coverage metrics
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-tests.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-tests.md`
 - Length budget: max 10 lines of error output per failing test; if >20 tests fail, group by error type and report counts; full output goes to artifact, not chat
 - Output template:
   ```markdown
@@ -168,7 +168,7 @@ The scope is the main app, so I need to run:
 
 Expected output (chat):
 ```
-TESTS: FAIL | Total: 45 | Passed: 43 | Failed: 2 | Skipped: 0 | Coverage: 72% | Artifact: .claude-workspace/working/task-001/phases/05-tests.md
+TESTS: FAIL | Total: 45 | Passed: 43 | Failed: 2 | Skipped: 0 | Coverage: 72% | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/05-tests.md
 ```
 
 Coverage gap (in artifact):

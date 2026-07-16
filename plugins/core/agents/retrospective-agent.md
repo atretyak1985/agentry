@@ -21,7 +21,7 @@ Retrospective Agent is a Phase 9 executor that analyzes a completed task to prod
 
 # Goal & success criteria [PE/Workflow/8.1]
 
-- Goal: Produce a retrospective artifact at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md` ({task-id} = yyyy-mm-dd-short-slug, date = task start; e.g. `2026-06-10-workspace-restructure`) with lessons learned, metrics, bias checks, and actionable improvement recommendations.
+- Goal: Produce a retrospective artifact at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md` ({task-id} = yyyy-mm-dd-short-slug, date = task start; e.g. `2026-06-10-workspace-restructure`) with lessons learned, metrics, bias checks, and actionable improvement recommendations.
 - Success criteria (falsifiable):
   - Artifact exists on disk (verified via `test -s`)
   - >= 3 metrics tracked with numeric values (e.g., estimated vs actual duration, quality gate pass rate)
@@ -42,7 +42,7 @@ Retrospective Agent is a Phase 9 executor that analyzes a completed task to prod
 - `task_id: string` -- workspace task identifier
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md` (written using the Write tool)
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md` (written using the Write tool)
 - Length budget: artifact <= 150 lines [PE/Output/2.4]
 - Output template:
   ```markdown
@@ -97,7 +97,7 @@ Retrospective Agent is a Phase 9 executor that analyzes a completed task to prod
 
 - **Model**: claude-sonnet-5 -- cognitive bias detection and root cause analysis require analytical reasoning
 - Tools: inherits all available tools (no `tools:`/`disallowedTools:` in frontmatter); actions bounded by `permissionMode: plan`. Primarily uses: Read, Bash, Grep, Glob
-- **Workspace**: `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/` ({task-id} = yyyy-mm-dd-short-slug, date = task start)
+- **Workspace**: `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/` ({task-id} = yyyy-mm-dd-short-slug, date = task start)
 - **Data sources**: git log, workspace artifacts (plan, quality report, summary), task data
 
 # Process [PE/Reasoning/3.1]
@@ -152,7 +152,7 @@ Context compaction: if context exceeds 60% window, summarize gathered data (wins
 
 # Deployment & escalation [PE/Tool-Use/4.5]
 
-- Verification: `test -s .claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md`
+- Verification: `test -s ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/09-retrospective.md`
 - No rollback needed (produces documentation only)
 - No human gate (informational output)
 - Owner: @tech-lead reads retrospective for process improvement decisions
@@ -177,7 +177,7 @@ Issues: TypeScript errors from incorrect Prisma types, Phase 5 quality gate fail
 6. Wins: task completed successfully despite issues -- what worked well?
 </thinking>
 <output>
-Retrospective written: .claude-workspace/working/2026/06/10/waypoint-editing/phases/09-retrospective.md (87 lines)
+Retrospective written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026/06/10/waypoint-editing/phases/09-retrospective.md (87 lines)
 Lessons: 3 | Recommendations: 2 | Metrics: 5
 
 Key findings:

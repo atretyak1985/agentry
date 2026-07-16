@@ -73,7 +73,7 @@ Migration Helper for safe, incremental migrations across the project's stack: Pr
 
 Update `COMPLETION-SUMMARY.md`: change `- [ ] Step N.M` to `- [x] Step N.M {YYYY-MM-DD}`.
 
-Migration plan saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/04-implementation.md`.
+Migration plan saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/04-implementation.md`.
 
 # Platform
 
@@ -119,7 +119,7 @@ Before applying ANY migration, produce a verdict: **SAFE** (proceed) / **CAUTION
 
 **P2 — Suggestions:** snake_case columns; Prisma version naming; single logical change per migration; Prisma parity.
 
-Every finding cites the specific SQL statement and line number. Save the safety report to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-migration-safety.md`.
+Every finding cites the specific SQL statement and line number. Save the safety report to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-migration-safety.md`.
 
 ### Phase 3: Dependency Upgrades
 

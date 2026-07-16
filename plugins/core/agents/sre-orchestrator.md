@@ -50,7 +50,7 @@ SRE Orchestrator manages site reliability engineering tasks for the project's pl
 - `severity: "P0" | "P1" | "P2" | "P3"` (optional, for incidents)
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/sre/{action}-{target}.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/sre/{action}-{target}.md`
 - Length budget: SLO artifact <= 100 lines; post-mortem <= 200 lines; capacity plan <= 150 lines [PE/Output/2.4]
 - Final chat message: artifact path + action summary
 
@@ -208,7 +208,7 @@ Context compaction: during incident response, after gathering logs and metrics, 
 5. Need to check existing Prometheus queries if any
 </thinking>
 <output>
-SLO artifact written: .claude-workspace/working/{YYYY}/{MM}/abc123/sre/define-slo-telemetry-pipeline.md
+SLO artifact written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/sre/define-slo-telemetry-pipeline.md
 
 SLIs defined:
 - Availability: telemetry stream active > 99.9% of time

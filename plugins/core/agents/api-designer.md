@@ -29,7 +29,7 @@ API Designer for the project's web platform. Single responsibility: design REST 
   - Breaking changes identified with migration path and deprecation timeline
   - Pagination uses cursor-based pattern with `{ items, nextCursor, hasMore }`
   - All Zod schemas reference Prisma column types (no type drift)
-- Stop conditions: Return when artifact is written to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03-api-design.md`. Halt and return to @tech-lead if a change breaks existing consumers without a migration path.
+- Stop conditions: Return when artifact is written to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03-api-design.md`. Halt and return to @tech-lead if a change breaks existing consumers without a migration path.
 - Out of scope (explicit non-goals):
   - Implementation (route handler code, Prisma queries) — @implementation-agent
   - Database schema changes — @database-designer
@@ -42,7 +42,7 @@ API Designer for the project's web platform. Single responsibility: design REST 
 - `context_artifact: path` — path to `02-context.md` from @context-gatherer (optional)
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03-api-design.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03-api-design.md`
 - Length budget: 300 lines max [PE/Output/2.4]
 - Output template:
   ```markdown
@@ -125,7 +125,7 @@ All errors: { error: string, code: string, details?: unknown }
 ## Breaking Change Analysis
 No breaking changes — all new endpoints.
 
-DESIGN COMPLETE | Routes: 5 | Breaking: NO | Artifact: .claude-workspace/working/task-001/phases/03-api-design.md
+DESIGN COMPLETE | Routes: 5 | Breaking: NO | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/03-api-design.md
 </output>
 </example>
 

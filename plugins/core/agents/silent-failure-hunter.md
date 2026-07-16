@@ -29,7 +29,7 @@ Silent Failure Hunter for the project (consult `CLAUDE.md` + `project.json` for 
 - Success criteria (falsifiable):
   - All 7 hunt target categories scanned for the specified scope
   - Every finding has file, line, severity, scan method, and before/after fix snippet
-  - Findings report saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit-findings.md`
+  - Findings report saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit-findings.md`
   - Scan coverage section documents what was scanned and what was skipped
   - Fixes delegated to the correct agent with artifact path reference
   - Categories with zero findings explicitly listed as "0 findings" (not omitted)
@@ -100,7 +100,7 @@ Total findings: N (SAFETY: X | CRITICAL: Y | HIGH: Z | MEDIUM: W | LOW: V)
 - Next iteration (MEDIUM/LOW): {agent} -- {action}
 ```
 
-Save to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit-findings.md`.
+Save to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit-findings.md`.
 
 **Chat summary** (final output): 3-line summary (total findings, artifact path, delegated agents) -- not the full report.
 
@@ -226,7 +226,7 @@ Fix:
 ```
 Silent failure audit complete for apps/<mainApp>.
 Findings: 1 SAFETY, 3 CRITICAL, 7 HIGH, 4 MEDIUM, 2 LOW (17 total)
-Artifact: .claude-workspace/working/20260524_task/phases/05-audit-findings.md
+Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/20260524_task/phases/05-audit-findings.md
 Delegated: @implementation-agent (11 findings), @react-specialist (4), @tech-lead flagged (1 SAFETY)
 ```
 </example>

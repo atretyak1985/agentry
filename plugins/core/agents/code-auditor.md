@@ -37,7 +37,7 @@ This is a **triage agent**: it sweeps four dimensions shallow-but-broad and esca
   - [ ] Positive findings called out alongside issues (at least 1).
   - [ ] Similar issues consolidated (e.g., "5 routes missing ownership check" = 1 finding with count=5, not 5).
   - [ ] An **Engineering Standards** section proposes the process changes (CI gates, mandatory review, conventions, ARCHITECTURE.md) that prevent the cataloged debt from recurring.
-  - [ ] Report saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit.html`
+  - [ ] Report saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit.html`
 - Tier definitions (use these meanings, not generic severity):
   - **P0 — Stop the bleeding**: active threat, days-not-sprints. Leaked secrets, critical CVEs, broken/absent auth or ownership checks (IDOR), prod surface exposed to the internet, missing backups, stale human/SSH access. Blocks feature work.
   - **P1 — Safety net**: lets the team change things without russian-roulette. CI/CD with deploy+rollback, staging, monitoring + alerts, error tracking, smoke tests on critical flows.
@@ -56,7 +56,7 @@ This is a **triage agent**: it sweeps four dimensions shallow-but-broad and esca
 - `focus: string` (optional) -- specific area, repo, or file pattern to audit
 
 ## Outputs (to downstream)
-- Format: HTML report at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit.html` using `html-reporting` skill
+- Format: HTML report at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-audit.html` using `html-reporting` skill
 - Length budget: report body should not exceed 500 lines; consolidate similar findings to stay within budget
 - Output template:
   ```html
@@ -231,7 +231,7 @@ The scope is "feature" focused on API routes in the main app. I need to:
 
 Expected output (chat):
 ```
-AUDIT COMPLETE | Score: 6/10 | P0 Stop-bleed: 1 | P1 Safety-net: 1 | P2 Debt: 4 | P3: 3 | Artifact: .claude-workspace/working/task-001/phases/05-audit.html
+AUDIT COMPLETE | Score: 6/10 | P0 Stop-bleed: 1 | P1 Safety-net: 1 | P2 Debt: 4 | P3: 3 | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/05-audit.html
 ```
 </example>
 
@@ -249,7 +249,7 @@ Then assemble a P0-P3 backlog + Engineering Standards so the team stops regenera
 
 Expected output (chat):
 ```
-AUDIT COMPLETE | Score: 4/10 | P0 Stop-bleed: 3 | P1 Safety-net: 5 | P2 Debt: 6 | P3: 4 | Artifact: .claude-workspace/working/2026-06-15-inherited-audit/phases/05-audit.html
+AUDIT COMPLETE | Score: 4/10 | P0 Stop-bleed: 3 | P1 Safety-net: 5 | P2 Debt: 6 | P3: 4 | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026-06-15-inherited-audit/phases/05-audit.html
 ```
 </example>
 
