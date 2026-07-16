@@ -103,6 +103,8 @@ type sessionDTO struct {
 	// process liveness (migration 0009): proc_state and pid, null when untracked.
 	ProcState *string `json:"procState"`
 	ProcPID   *int64  `json:"procPid"`
+	// Manual verdict (migration 0014): success | fail | abandoned; null = not judged.
+	Outcome *string `json:"outcome"`
 	// why: a one-line intent summary derived from the first user turn's prose
 	// (additive optional — absent until the session has a user turn with text).
 	Why *string `json:"why,omitempty"`
@@ -342,7 +344,7 @@ const sessionSelect = `
 	       s.status, s.started_at, s.ended_at, s.title, s.source,
 	       agg.tokens, agg.cost_usd,
 	       tl.task_id, tl.external_id, tl.link_source, tl.confidence,
-	       s.proc_state, s.pid,
+	       s.proc_state, s.pid, s.outcome,
 	       why.text
 	FROM sessions s
 	JOIN projects p ON p.id = s.project_id
@@ -618,7 +620,7 @@ func scanSession(scan func(...any) error, s *sessionDTO) error {
 		&s.GitBranch, &s.CWD, &s.Status, &s.StartedAt, &s.EndedAt, &s.Title, &s.Source,
 		&s.Tokens, &s.CostUSD,
 		&s.TaskID, &s.TaskExternalID, &s.TaskLinkSource, &s.TaskConfidence,
-		&s.ProcState, &s.ProcPID,
+		&s.ProcState, &s.ProcPID, &s.Outcome,
 		&whyRaw); err != nil {
 		return err
 	}

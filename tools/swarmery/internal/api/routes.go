@@ -59,6 +59,8 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("POST /api/sessions/{id}/kill", requireLocalOrigin(h.KillSession))
 	// soft-hide a session from the list (reversible; row + transcript kept).
 	mux.HandleFunc("DELETE /api/sessions/{id}", requireLocalOrigin(h.hideSession))
+	// partial update (ops-hygiene): today only {outcome} — see session_patch.go.
+	mux.HandleFunc("PATCH /api/sessions/{id}", requireLocalOrigin(h.patchSession))
 
 	// session message: resume an idle/completed conversation headlessly
 	// (`claude -r <uuid> -p`) — see internal/api/session_message.go. Same D4

@@ -29,6 +29,8 @@ var (
 		"taskId", "taskExternalId", "taskLinkSource", "taskConfidence",
 		// phase 4 step-07+: process liveness (nullable).
 		"procState", "procPid",
+		// ops-hygiene: manual verdict (nullable, migration 0014).
+		"outcome",
 		// canvas wave: one-line intent from the first user turn (omitempty —
 		// present here because the fixture session has a user prompt).
 		"why",
