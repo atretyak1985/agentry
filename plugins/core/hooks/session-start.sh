@@ -71,7 +71,7 @@ EOF
 #   dated        working/<YYYY>/<MM>/<DD>/<slug>/README.md (depth 5)
 # swarmery model first (AGENT_PROJECT → sibling workspace); legacy fallback.
 if [ -n "${AGENT_PROJECT:-}" ]; then
-  working_dir="${AGENT_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}/${AGENT_PROJECT}/workspace/working"
+  working_dir="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace/working"
 else
   working_dir="${PROJECT_DIR}/.claude-workspace/working"
 fi

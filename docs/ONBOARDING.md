@@ -6,7 +6,7 @@ From the new project's root:
 
 ```bash
 bash <swarmery-repo>/scripts/init.sh <project-slug> [pack ...]
-# e.g.  bash /Volumes/Work/swarmery/scripts/init.sh my-shop web-pack
+# e.g.  bash <swarmery-repo>/scripts/init.sh my-shop web-pack
 ```
 
 It scaffolds `.claude/settings.json` (marketplace + core + chosen packs + env + safety denies),

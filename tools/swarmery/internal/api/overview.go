@@ -129,7 +129,7 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 		FROM events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ?
+		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ? AND p.archived = 0
 		GROUP BY p.id ORDER BY n DESC, p.slug LIMIT 8`, start, end)
 	if err != nil {
 		writeErr(w, err)
@@ -152,10 +152,12 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 
 	// cost_by_model: that day, descending, priced turns only.
 	rows, err = h.DB.Query(`
-		SELECT COALESCE(t.model, 'unknown') AS model, SUM(t.cost_usd) AS c
+		SELECT COALESCE(t.model, 'unknown') AS mdl, SUM(t.cost_usd) AS c
 		FROM turns t
-		WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ?
-		GROUP BY model ORDER BY c DESC, model`, start, end)
+		JOIN sessions s ON s.id = t.session_id
+		JOIN projects p ON p.id = s.project_id
+		WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0
+		GROUP BY mdl ORDER BY c DESC, mdl`, start, end)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -180,7 +182,7 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 		SELECT p.slug, p.name, COUNT(*) AS n
 		FROM sessions s
 		JOIN projects p ON p.id = s.project_id
-		WHERE s.started_at >= ? AND s.started_at < ?
+		WHERE s.started_at >= ? AND s.started_at < ? AND p.archived = 0
 		GROUP BY p.id ORDER BY n DESC, p.slug`, start, end)
 	if err != nil {
 		writeErr(w, err)

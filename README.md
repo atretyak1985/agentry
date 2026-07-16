@@ -13,6 +13,53 @@ It's built for people who run **many projects — often for different clients �
 
 ---
 
+## Quickstart
+
+**Prerequisites:** git, Go ≥ 1.25 (older Go auto-downloads the pinned toolchain), Node ≥ 22.
+
+**1 — install & run the control plane.** One command clones (if needed), builds the single embedded binary, and prints how to serve it:
+
+```bash
+git clone https://github.com/atretyak1985/swarmery.git
+cd swarmery
+bash scripts/install-swarmery.sh          # build only — prints next steps
+# or: bash scripts/install-swarmery.sh --serve   # build + serve in the foreground
+```
+
+Then serve it and open the dashboard:
+
+```bash
+./tools/swarmery/swarmery serve                     # listens on :7777
+curl -s http://localhost:7777/api/health            # → {"status":"ok",…}
+open http://localhost:7777
+```
+
+**2 — onboard a project.** From any project's root, one command writes its `.claude/` config and carves the workspace namespace (idempotent — safe to re-run):
+
+```bash
+cd /path/to/your/project
+# the built binary lives at <swarmery>/tools/swarmery/swarmery — add it to PATH,
+# run `swarmery install` (launchd, macOS), or call it by path:
+/path/to/swarmery/tools/swarmery/swarmery onboard <project-slug> [pack ...]
+#   packs: web-pack | iot-pack | uav-pack | infra-pack | lsp-pack
+```
+
+`swarmery onboard` is the binary twin of `scripts/init.sh` (the script delegates to it when the binary is on `PATH`, and falls back to pure bash otherwise). Open a fresh Claude Code session in the project, accept the `swarmery` marketplace trust prompt, and the project shows up in the dashboard as soon as its first session runs.
+
+The workspace namespace lands under `$HOME/swarmery-workspace` by default; point it anywhere with `SWARMERY_WORKSPACE_ROOT` (control plane) / `AGENT_WORKSPACE_ROOT` (plugins).
+
+**Enable the in-dashboard "＋ new project" button (optional).** Writing `.claude/` into an arbitrary path is opt-in, so the dashboard onboarding endpoint is **disabled until you allow-list the parent directories** it may write under. Serve or install with `SWARMERY_ONBOARD_ROOTS`:
+
+```bash
+SWARMERY_ONBOARD_ROOTS="$HOME/projects" ./tools/swarmery/swarmery serve
+# persist it into the launchd service (macOS):
+./tools/swarmery/swarmery install --onboard-roots "$HOME/projects"
+```
+
+Without it the button (and `POST /api/projects/onboard`) return `403 onboarding is disabled` — the CLI `swarmery onboard` still works regardless.
+
+---
+
 ## Control plane
 
 `swarmery serve` runs a lightweight daemon on `:7777` that indexes Claude Code sessions from their `.jsonl` transcripts into local SQLite and exposes a live web UI.
@@ -99,7 +146,7 @@ SWARMERY_SYSTEM_READONLY=1 ./swarmery serve
 Exclude throwaway projects:
 
 ```bash
-SWARMERY_EXCLUDE="-Volumes-Work-scratch,-Volumes-Work-tmp" ./swarmery serve
+SWARMERY_EXCLUDE="-home-dev-scratch,-home-dev-tmp" ./swarmery serve
 # or: --exclude-projects flag
 ```
 

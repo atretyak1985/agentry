@@ -36,7 +36,7 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE projects (
     id            INTEGER PRIMARY KEY,
-    path          TEXT NOT NULL UNIQUE,      -- /Volumes/Work/bloomblum
+    path          TEXT NOT NULL UNIQUE,      -- /path/to/my-project
     slug          TEXT NOT NULL,             -- як у ~/.claude/projects/
     name          TEXT,                      -- людська назва (редагується в UI)
     first_seen    TEXT NOT NULL,             -- ISO 8601

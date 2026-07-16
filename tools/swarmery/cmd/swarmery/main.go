@@ -8,6 +8,7 @@
 //	swarmery install               launchd auto-start (uninstall / status)
 //	swarmery hook <event>          runtime shim invoked by Claude Code hooks
 //	swarmery hooks <cmd>           manage hook entries in project settings
+//	swarmery onboard <slug>        bootstrap a consumer project (.claude + workspace)
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/api"
@@ -29,6 +31,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookshim"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/sysedit"
@@ -71,6 +74,10 @@ func main() {
 		os.Exit(cmdHook(os.Args[2:]))
 	case "hooks":
 		err = hookcfg.Cmd(os.Args[2:])
+	case "onboard":
+		err = cmdOnboard(os.Args[2:])
+	case "offboard":
+		err = cmdOffboard(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -97,12 +104,21 @@ func usage() {
   swarmery wscan    [--db <path>] [--workspace-root <dir>]   one-shot workspace scan
   swarmery sysscan  [--db <path>] [--claude-dir <dir>] [--overlays-dir <dir>]
                                    one-shot system-config scan (agents/skills/hooks/commands)
-  swarmery install  [--port <n>]   launchd auto-start
+  swarmery install  [--port <n>] [--onboard-roots <dirs>] [--workspace-root <dir>] [--statusline-src <dir>]
+                                   launchd auto-start; bakes SWARMERY_* into the plist's EnvironmentVariables
+                                   (--onboard-roots enables POST /api/projects/onboard + the dashboard button)
   swarmery uninstall               remove launchd service (keeps logs+db)
   swarmery status                  service health, pid, uptime, db size
   swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)
   swarmery hooks <install|uninstall|status> [--project <path>] [--all] [--port <n>]
-  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE`)
+  swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]
+                                   bootstrap a consumer project: .claude/settings.json +
+                                   project.json skeleton + workspace namespace (idempotent)
+  swarmery offboard [slug] [--dir <path>] [--dry-run]
+                                   detach swarmery from a project: prune the swarmery-owned
+                                   entries from .claude/settings.json (backs up to .bak; idempotent)
+  env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT
+       SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC`)
 }
 
 // defaultProjectsRoot resolves SWARMERY_PROJECTS_ROOT, falling back to
@@ -347,6 +363,146 @@ func cmdSysscan(args []string) error {
 	return nil
 }
 
+// defaultWorkspaceRoot resolves SWARMERY_WORKSPACE_ROOT (the same env
+// scripts/init.sh reads), falling back to the self-hosted default so the CLI
+// and the script stay behaviourally identical.
+func defaultWorkspaceRoot() string {
+	if v := os.Getenv("SWARMERY_WORKSPACE_ROOT"); v != "" {
+		return v
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "swarmery-workspace")
+	}
+	return "swarmery-workspace"
+}
+
+// onboardRoots parses SWARMERY_ONBOARD_ROOTS (comma-separated parent dirs) into
+// the allow-list that fences POST /api/projects/onboard. Empty/unset ⇒ the
+// endpoint is disabled — writing .claude/ into an arbitrary path is opt-in.
+func onboardRoots() []string {
+	v := os.Getenv("SWARMERY_ONBOARD_ROOTS")
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// cmdOnboard bootstraps a new consumer project via the shared onboard package —
+// the CLI twin of the control-plane onboarding endpoint and the delegation
+// target of scripts/init.sh when this binary is on PATH.
+func cmdOnboard(args []string) error {
+	fs := flag.NewFlagSet("onboard", flag.ExitOnError)
+	dir := fs.String("dir", "", "project root to bootstrap (default: current directory)")
+	wsRoot := fs.String("workspace-root", defaultWorkspaceRoot(),
+		"shared workspace repo root (env: SWARMERY_WORKSPACE_ROOT)")
+	statuslineSrc := fs.String("statusline-src", "",
+		"plugins/core/statusline dir to copy statusline scripts from (optional)")
+
+	// The natural invocation is `onboard <slug> [packs...] [flags...]`, but the
+	// flag package stops at the first positional. Split leading positionals
+	// (never dash-prefixed) from the flag tail so both orderings work.
+	positional, flagArgs := splitPositional(args)
+	fs.Parse(flagArgs)
+	if len(positional) < 1 {
+		return fmt.Errorf("usage: swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]\n  packs: %v", onboard.KnownPacks)
+	}
+
+	projectDir := *dir
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+		projectDir = cwd
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project dir: %w", err)
+	}
+
+	res, err := onboard.Run(onboard.Config{
+		Slug:          positional[0],
+		ProjectDir:    abs,
+		Packs:         positional[1:],
+		WorkspaceRoot: *wsRoot,
+		StatuslineSrc: *statuslineSrc,
+	})
+	if err != nil {
+		return err
+	}
+	for _, s := range res.Steps {
+		fmt.Println(s)
+	}
+	fmt.Printf("\nNext: open a FRESH Claude Code session in %s\n", abs)
+	fmt.Println("      → accept the 'swarmery' marketplace trust prompt → plugins install.")
+	fmt.Println("      Fill in .claude/project.json TODOs so agents know your repos/stack.")
+	return nil
+}
+
+// cmdOffboard removes the swarmery-owned entries from a project's
+// .claude/settings.json — the CLI twin of POST /api/projects/{id}/detach and
+// the inverse of `swarmery onboard`. It delegates to onboard.Detach so both
+// surfaces prune identically. --dry-run prints the plan without writing.
+func cmdOffboard(args []string) error {
+	fs := flag.NewFlagSet("offboard", flag.ExitOnError)
+	dir := fs.String("dir", "", "project root to detach (default: current directory)")
+	dryRun := fs.Bool("dry-run", false, "print what would be removed without writing")
+
+	positional, flagArgs := splitPositional(args)
+	fs.Parse(flagArgs)
+
+	projectDir := *dir
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+		projectDir = cwd
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project dir: %w", err)
+	}
+
+	// An optional leading slug guards env.AGENT_PROJECT pruning (removed only
+	// when it matches); omitting it removes the var regardless.
+	slug := ""
+	if len(positional) > 0 {
+		slug = positional[0]
+	}
+
+	res, err := onboard.Detach(onboard.DetachConfig{
+		ProjectDir:    abs,
+		Slug:          slug,
+		WorkspaceRoot: defaultWorkspaceRoot(),
+		DryRun:        *dryRun,
+	})
+	if err != nil {
+		return err
+	}
+	for _, s := range res.Steps {
+		fmt.Println(s)
+	}
+	return nil
+}
+
+// splitPositional partitions args into the leading run of positional tokens and
+// the remaining flag tail (everything from the first dash-prefixed token on).
+func splitPositional(args []string) (positional, flags []string) {
+	for i, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return args[:i], args[i:]
+		}
+	}
+	return args, nil
+}
+
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dbPath := dbFlag(fs)
@@ -444,6 +600,15 @@ func cmdServe(args []string) error {
 	// phase 4: system — GET /api/system/overlays reads overlays/*/project.json
 	// live from this dir on every request (empty disables the listing).
 	api.AttachOverlaysDir(sysCfg.OverlaysDir)
+
+	// onboarding: POST /api/projects/onboard writes .claude/ into a
+	// caller-supplied path, so it is opt-in and fenced to an explicit
+	// allow-list. Empty SWARMERY_ONBOARD_ROOTS ⇒ the endpoint stays disabled.
+	api.AttachOnboard(api.OnboardConfig{
+		Roots:         onboardRoots(),
+		WorkspaceRoot: defaultWorkspaceRoot(),
+		StatuslineSrc: os.Getenv("SWARMERY_STATUSLINE_SRC"),
+	})
 
 	// phase 4: system, Stage 2 (step-09) — the write surface for agents and
 	// skills. Every write goes through the sysedit pipeline; the editor reuses

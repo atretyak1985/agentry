@@ -15,7 +15,7 @@ export function fmtCost(n: number | null): string {
 
 /**
  * Clean project display label: prefer the project name, fall back to the
- * slug ("-Volumes-Work-swarmery") only while the name is still unset.
+ * slug ("-home-dev-swarmery") only while the name is still unset.
  */
 export function projectLabel(name: string | null | undefined, slug: string): string {
   return name != null && name !== '' ? name : slug;

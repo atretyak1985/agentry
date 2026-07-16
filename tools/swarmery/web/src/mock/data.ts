@@ -10,6 +10,8 @@ import type {
   HealthResponse,
   PermissionRequest,
   Project,
+  ProjectComponents,
+  ProjectDetail,
   Session,
   SessionDetail,
   SessionsResponse,
@@ -40,6 +42,8 @@ const now = Date.now();
 const iso = (msAgo: number): string => new Date(now - msAgo).toISOString();
 const MIN = 60_000;
 
+const swarmeryMarketplace = 'atretyak1985/swarmery';
+
 export const mockProjects: Project[] = [
   {
     id: 1,
@@ -50,6 +54,9 @@ export const mockProjects: Project[] = [
     lastActivity: iso(2 * MIN),
     archived: false,
     sessions: 41,
+    tokens: 4_820_000,
+    costUsd: 18.42,
+    plugin: { managed: true, packs: ['iot-pack'], marketplace: swarmeryMarketplace, underOnboardRoot: true },
   },
   {
     id: 2,
@@ -60,6 +67,9 @@ export const mockProjects: Project[] = [
     lastActivity: iso(6 * MIN),
     archived: false,
     sessions: 27,
+    tokens: 2_310_000,
+    costUsd: 9.07,
+    plugin: { managed: true, packs: [], marketplace: swarmeryMarketplace, underOnboardRoot: true },
   },
   {
     id: 3,
@@ -70,6 +80,9 @@ export const mockProjects: Project[] = [
     lastActivity: iso(4 * MIN),
     archived: false,
     sessions: 18,
+    tokens: 1_540_000,
+    costUsd: 6.13,
+    plugin: { managed: true, packs: [], marketplace: swarmeryMarketplace, underOnboardRoot: false },
   },
   {
     id: 4,
@@ -80,6 +93,9 @@ export const mockProjects: Project[] = [
     lastActivity: iso(26 * 60 * MIN),
     archived: false,
     sessions: 6,
+    tokens: null,
+    costUsd: null,
+    plugin: null,
   },
 ];
 
@@ -1084,6 +1100,45 @@ export const mockApi = {
   async projects(): Promise<Project[]> {
     await delay(120);
     return mockProjects.map((p) => ({ ...p }));
+  },
+
+  async project(id: number | string): Promise<ProjectDetail> {
+    await delay(140);
+    const numeric = typeof id === 'number' ? id : Number.parseInt(id, 10);
+    const found = mockProjects.find((p) => p.id === numeric);
+    if (!found) throw new Error(`mock: project ${String(id)} not found`);
+    const managed = found.plugin?.managed ?? false;
+    const components: ProjectComponents = {
+      agents: managed ? [{ name: 'tech-lead', source: 'local' }] : [],
+      skills: managed ? [{ name: 'browser-verification', source: 'local' }] : [],
+      commands: [],
+      hooks: managed ? [{ name: 'session-start.sh', source: 'local' }] : [],
+      counts: { agents: managed ? 1 : 0, skills: managed ? 1 : 0, commands: 0, hooks: managed ? 1 : 0 },
+    };
+    return {
+      project: { ...found },
+      components,
+      stats: {
+        sessions: found.sessions,
+        tokens: found.tokens,
+        costUsd: found.costUsd,
+        firstSeen: found.firstSeen,
+        lastActivity: found.lastActivity,
+        recentSessions: mockSessions
+          .filter((s) => s.projectSlug === found.slug)
+          .slice(0, 10)
+          .map((s) => ({
+            id: s.id,
+            sessionUuid: s.sessionUuid,
+            title: s.title,
+            status: s.status,
+            startedAt: s.startedAt,
+            model: s.model,
+            tokens: s.tokens ?? null,
+            costUsd: s.costUsd ?? null,
+          })),
+      },
+    };
   },
 
   async sessions(filters: MockFilters = {}): Promise<SessionsResponse> {

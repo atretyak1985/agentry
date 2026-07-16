@@ -9,6 +9,19 @@ import "net/http"
 func Routes(mux *http.ServeMux, h *Handler) {
 	// ── core: vertical slice (this file's owner) ──
 	mux.HandleFunc("GET /api/projects", h.listProjects)
+	mux.HandleFunc("GET /api/projects/{id}", h.getProject)
+	// soft-archive a project from the list (reversible; row + sessions kept).
+	mux.HandleFunc("DELETE /api/projects/{id}", requireLocalOrigin(h.hideProject))
+	mux.HandleFunc("POST /api/projects/{id}/restore", requireLocalOrigin(h.restoreProject))
+	// detach the swarmery plugin from a project (.claude/settings.json). Fenced
+	// like onboarding: requireLocalOrigin + the SWARMERY_ONBOARD_ROOTS allow-list
+	// (disabled when unset). Supports ?dryRun to preview the plan.
+	mux.HandleFunc("POST /api/projects/{id}/detach", requireLocalOrigin(h.detachProject))
+	// onboarding: bootstrap a new consumer project from the dashboard. Fenced
+	// by requireLocalOrigin + an explicit root allow-list (disabled when unset).
+	// The GET exposes defaults (workspace root, enabled state) to the modal.
+	mux.HandleFunc("GET /api/projects/onboard/config", h.onboardConfig)
+	mux.HandleFunc("POST /api/projects/onboard", requireLocalOrigin(h.onboardProject))
 	mux.HandleFunc("GET /api/sessions", h.listSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", h.getSession)
 
@@ -44,6 +57,8 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// process liveness + kill (phase 4 step-07+)
 	mux.HandleFunc("POST /api/hooks/session-start", requireLocalOrigin(h.hookSessionStart))
 	mux.HandleFunc("POST /api/sessions/{id}/kill", requireLocalOrigin(h.KillSession))
+	// soft-hide a session from the list (reversible; row + transcript kept).
+	mux.HandleFunc("DELETE /api/sessions/{id}", requireLocalOrigin(h.hideSession))
 
 	// session message: resume an idle/completed conversation headlessly
 	// (`claude -r <uuid> -p`) — see internal/api/session_message.go. Same D4

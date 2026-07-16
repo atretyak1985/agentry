@@ -5,6 +5,8 @@ import { App } from './App';
 import { Loading } from './components/ui';
 import { Approvals } from './pages/Approvals';
 import { Overview } from './pages/Overview';
+import { Projects } from './pages/Projects';
+import { ProjectDetail } from './pages/ProjectDetail';
 import { Sessions } from './pages/Sessions';
 import { SessionDetailPage } from './pages/SessionDetail';
 import { Docs } from './pages/Docs';
@@ -24,6 +26,8 @@ const router = createBrowserRouter([
       { path: 'approvals', element: <Approvals /> },
       { path: 'sessions', element: <Sessions /> },
       { path: 'sessions/:id', element: <SessionDetailPage /> },
+      { path: 'projects', element: <Projects /> },
+      { path: 'projects/:id', element: <ProjectDetail /> },
       {
         path: 'analytics',
         element: (

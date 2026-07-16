@@ -24,22 +24,27 @@ import (
 	"time"
 )
 
-// DefaultWorkspaceRoot is the conventional sibling workspace repo
-// (agent-work.sh v5.2 default); overridable via $AGENT_WORKSPACE_ROOT
-// or --workspace-root.
-const DefaultWorkspaceRoot = "/Volumes/Work/swarmery-workspace"
-
 // DefaultRescanInterval is the fallback periodic rescan cadence. Workspace
 // cards change on human/agent cadence, not telemetry cadence — 60s is plenty
 // and fsnotify is deliberately not used (E-lite).
 const DefaultRescanInterval = 60 * time.Second
+
+// DefaultWorkspaceRoot is the machine-neutral fallback workspace repo location
+// (~/swarmery-workspace) used when $AGENT_WORKSPACE_ROOT / --workspace-root is
+// unset. Per-user by construction — nothing host-specific is baked in.
+func DefaultWorkspaceRoot() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, "swarmery-workspace")
+	}
+	return "swarmery-workspace"
+}
 
 // Root resolves the workspace root: $AGENT_WORKSPACE_ROOT, else the default.
 func Root() string {
 	if v := os.Getenv("AGENT_WORKSPACE_ROOT"); v != "" {
 		return v
 	}
-	return DefaultWorkspaceRoot
+	return DefaultWorkspaceRoot()
 }
 
 // Config tunes the scanner. Zero values fall back to defaults.
@@ -152,7 +157,7 @@ type projectRow struct {
 // resolveCodePath maps a workspace slug to its consumer project checkout:
 // overlay/project.json codePath first, then <projects.path>/.claude/project.json
 // with a matching name, then a projects.path whose basename matches the slug
-// (probe finding: carsfinders/swarmery ship empty overlay/ dirs).
+// (probe finding: northwind/swarmery ship empty overlay/ dirs).
 func resolveCodePath(wsDir, slug string, projects []projectRow, warn func(string, ...any)) (code, display string) {
 	ov := filepath.Join(wsDir, "overlay", "project.json")
 	if raw, err := os.ReadFile(ov); err == nil {

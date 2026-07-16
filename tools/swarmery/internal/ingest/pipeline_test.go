@@ -379,7 +379,7 @@ func TestBackfillHealsNullProjectNames(t *testing.T) {
 	}
 	// Legacy row: NULL name, real path.
 	mustExec(`INSERT INTO projects (path, slug, first_seen) VALUES (?, ?, ?)`,
-		"/Volumes/Work/swarmery", "-Volumes-Work-swarmery", "2026-07-10T12:00:00Z")
+		"/home/dev/swarmery", "-home-dev-swarmery", "2026-07-10T12:00:00Z")
 	// Renamed row: user-chosen name must survive.
 	mustExec(`INSERT INTO projects (path, slug, name, first_seen) VALUES (?, ?, ?, ?)`,
 		"/Users/user/work/orders-api", "-Users-user-work-orders-api", "Orders API", "2026-07-10T12:00:00Z")
@@ -390,7 +390,7 @@ func TestBackfillHealsNullProjectNames(t *testing.T) {
 
 	var healed string
 	if err := db.QueryRow(
-		`SELECT name FROM projects WHERE path = '/Volumes/Work/swarmery'`).Scan(&healed); err != nil {
+		`SELECT name FROM projects WHERE path = '/home/dev/swarmery'`).Scan(&healed); err != nil {
 		t.Fatal(err)
 	}
 	if healed != "swarmery" {

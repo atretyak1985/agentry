@@ -102,7 +102,10 @@ func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
 
+	// Tasks of archived projects drop out of the list too (consistent with
+	// sessions/analytics); getTask by id stays reachable so the hide is reversible.
 	rows, err := h.DB.Query(taskSummarySelect+`
+		AND p.archived = 0
 		AND (t.started_at >= ? OR t.finished_at >= ? OR t.finished_at IS NULL)
 		ORDER BY agg.cost_usd DESC, t.started_at DESC`, cutoff, cutoff)
 	if err != nil {

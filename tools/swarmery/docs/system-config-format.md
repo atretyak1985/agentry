@@ -46,7 +46,7 @@ it **does not exist yet** (verified 2026-07-13); step-10 creates it.
 `projects` rows are the project universe for the scan. Two edge cases observed in the
 table itself: a `(unknown)` placeholder row (id 12, non-absolute path — skip exactly like
 `hookcfg.ProjectsFromDB` does) and paths containing **spaces**
-(`/Volumes/Work/Naomi School 24`) — shell-quoting hazard for any exec-based scanning.
+(`/home/dev/Acme School 24`) — shell-quoting hazard for any exec-based scanning.
 
 Observed on: 2026-07-13, machine-local.
 
@@ -59,11 +59,11 @@ Observed on: 2026-07-13, machine-local.
 | Source | Count | Layout notes |
 |---|---|---|
 | `~/.claude/agents/` | 0 | dir exists, only `.DS_Store` |
-| `/Volumes/Work/CarsFinders/.claude/agents/` | 6 | flat `*.md` (duplicated verbatim in the `CarsFinders/cars-infrastructure` sub-project) |
-| `/Volumes/Work/Naomi School 24/.claude/agents/` | 20 | **nested subdirs**: `core-workflow/ design/ quality/ specialists/` |
-| `/Volumes/Work/Sergiys/.claude/agents/` | 43 | nested subdirs **plus** a stray `README.md` and a `hooks/post-task-completion.md` inside the agents tree |
-| `/Volumes/Work/Skygor/.claude/agents/` | 1 | `devnext-operator.md` (mirrored in `Skygor/scripts`) |
-| `/Volumes/Work/PetsHalo/.claude/agents/` | 0 | empty dir |
+| `/home/dev/Northwind/.claude/agents/` | 6 | flat `*.md` (duplicated verbatim in the `Northwind/northwind-infrastructure` sub-project) |
+| `/home/dev/Acme School 24/.claude/agents/` | 20 | **nested subdirs**: `core-workflow/ design/ quality/ specialists/` |
+| `/home/dev/Contoso/.claude/agents/` | 43 | nested subdirs **plus** a stray `README.md` and a `hooks/post-task-completion.md` inside the agents tree |
+| `/home/dev/Fabrikam/.claude/agents/` | 1 | `devnext-operator.md` (mirrored in `Fabrikam/scripts`) |
+| `/home/dev/Adventure/.claude/agents/` | 0 | empty dir |
 | plugin cache `*/agents/*.md` | 89 | `swarmery/core@1.2.0` 44, `agentry/*@1.0.0` 45; **no official (`claude-plugins-official`) plugin ships agents** |
 
 Scanner consequences: recurse into subdirectories; skip non-frontmatter helper files
@@ -79,7 +79,7 @@ file starts with `---`, so that filter is safe); tolerate empty/near-empty dirs.
 | `permissionMode` | 159/159 | `default` \| `acceptEdits` \| `plan` | |
 | `maxTurns` | 159/159 | `200` | integer |
 | `color` | 159/159 | `purple` | |
-| `description` | **151/159** | one-liner or folded scalar | **8 files in Naomi School 24 lack it entirely** (`design/*`, `quality/*`) — real missing-field example |
+| `description` | **151/159** | one-liner or folded scalar | **8 files in Acme School 24 lack it entirely** (`design/*`, `quality/*`) — real missing-field example |
 | `skills` | 145/159 | YAML block list | one file (`swarmery core tech-lead`) lists `deployment` **twice** — duplicate-entry edge case |
 | `autonomy` | 153/159 | `auto` \| `semi-auto` | non-CC key (framework-specific) |
 | `version` | 143/159 | `1.0.0` | non-CC key |
@@ -100,13 +100,13 @@ project-local (non-plugin) agents here.
 - **Comments between keys** — `# Rationale: …` lines inside frontmatter (swarmery-style
   agents do this heavily). A naive `key: value` line-parser must skip `#` lines.
 - **Folded scalars** — `description: >` followed by an indented multi-line block
-  (`Naomi School 24/.claude/agents/core-workflow/tech-lead.md`). Line-oriented parsing
+  (`Acme School 24/.claude/agents/core-workflow/tech-lead.md`). Line-oriented parsing
   breaks here; use a YAML parser.
 - **Block lists** — `skills:` with `  - item` lines, including duplicates.
 - **Missing keys** — see `description` above; example file with no description at all:
 
 ```yaml
-# /Volumes/Work/Naomi School 24/.claude/agents/design/api-designer.md
+# /home/dev/Acme School 24/.claude/agents/design/api-designer.md
 ---
 name: api-designer
 model: claude-fable-5
@@ -154,7 +154,7 @@ Observed on: 2026-07-13, machine-local.
 |---|---|---|
 | `~/.claude/skills/*/SKILL.md` | 7 (all `gitnexus-*`) | `name`, `description` only; dir contains **only** SKILL.md |
 | plugin cache `**/SKILL.md` | 88 | `name` 88, `description` 88, `version` 44, `owner` 44, `disable-model-invocation` 35, `allowed-tools` 30, `color` 22, `tools` 2, `license` 1 |
-| project `.claude/skills/**/SKILL.md` | 47 (Sergiys 43-ish, Skygor 3, PetsHalo 1, bloomblum 1) + 6 (Naomi) | same shape plus one custom key: `mermaid-version` (1×) — arbitrary extra keys happen |
+| project `.claude/skills/**/SKILL.md` | 47 (Contoso 43-ish, Fabrikam 3, Adventure 1, litware 1) + 6 (Naomi) | same shape plus one custom key: `mermaid-version` (1×) — arbitrary extra keys happen |
 
 `name` + `description` are the only universal keys. `allowed-tools` (kebab-case!) and
 `disable-model-invocation` are the CC-recognized extras; `version`/`owner`/`color` are
@@ -216,14 +216,14 @@ Observed on: 2026-07-13, machine-local.
 | File | Events | Owner |
 |---|---|---|
 | `~/.claude/settings.json` | `PreToolUse` (matcher `Grep\|Glob\|Bash`), `PostToolUse` (matcher `Bash`) — both `node "<home>/.claude/hooks/gitnexus/gitnexus-hook.cjs"`, `timeout: 10`, with `statusMessage` | gitnexus (foreign) |
-| `<project>/.claude/settings.json` (Sergiys, Naomi) | 9 events / 12 entries: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `Notification`; all `$CLAUDE_PROJECT_DIR/.claude/hooks/*.sh` | agentry-era framework (foreign) |
-| `<project>/.claude/settings.local.json` (swarmery, Skygor, Sergiys, + others) | `PermissionRequest` (matcher `"*"`, `timeout: 130`) + `Stop` (no matcher) → `<home>/.swarmery/bin/swarmery hook <event>` | **swarmery** |
+| `<project>/.claude/settings.json` (Contoso, Naomi) | 9 events / 12 entries: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `Notification`; all `$CLAUDE_PROJECT_DIR/.claude/hooks/*.sh` | agentry-era framework (foreign) |
+| `<project>/.claude/settings.local.json` (swarmery, Fabrikam, Contoso, + others) | `PermissionRequest` (matcher `"*"`, `timeout: 130`) + `Stop` (no matcher) → `<home>/.swarmery/bin/swarmery hook <event>` | **swarmery** |
 
 swarmery-owned entries are recognized by the `"swarmery hook"` command substring — the
 exact `marker` in `internal/hookcfg/hookcfg.go`; installed shape matches `Install()`
 verbatim (PermissionRequest: matcher `*` + timeout 130; Stop: no matcher, no timeout; an
 optional `SWARMERY_PORT=<n> ` prefix is possible for non-default ports — not present in
-any current file). `settings.local.json.bak` files exist in Sergiys and Naomi — produced
+any current file). `settings.local.json.bak` files exist in Contoso and Naomi — produced
 by `hookcfg.writeSettings` before its first write. Scanner must **ignore `*.bak`**.
 
 Real example (project settings.local.json, swarmery-installed — full file):
@@ -285,8 +285,8 @@ Observed on: 2026-07-13, machine-local.
 ## 4. Commands — `commands/*.md`
 
 - `~/.claude/commands/` **does not exist** on this machine (user scope: 0 commands).
-- Plugin cache: 35 command `.md` files. Project scope: Sergiys (30), Skygor +
-  `Skygor/scripts` (10 each, mirrored), Naomi School 24 (4).
+- Plugin cache: 35 command `.md` files. Project scope: Contoso (30), Fabrikam +
+  `Fabrikam/scripts` (10 each, mirrored), Acme School 24 (4).
 - **There is no `name:` key** — the command name is the **file stem** (`dashboard.md` →
   `/dashboard`). All observed files start with `---` frontmatter.
 
@@ -299,7 +299,7 @@ Frontmatter keys observed:
 | `allowed-tools` | 16 | 20 | YAML block list |
 | `disable-model-invocation` | 1 | 0 | |
 
-Edge case: Sergiys ships a `README.md` **inside** `.claude/commands/` — a naive scanner
+Edge case: Contoso ships a `README.md` **inside** `.claude/commands/` — a naive scanner
 would register a `/README` command. Filter by "has frontmatter with description" or
 exclude `README.md` explicitly.
 
@@ -341,7 +341,7 @@ Observed on: 2026-07-13, machine-local.
 **A file belongs to plugin P iff its path has prefix** either
 `cache/<mp>/<P>/<version>/` **or** `marketplaces/<mp>/plugins/<P>/`. Both roots are live:
 `installed_plugins.json` points `core@swarmery` at
-`cache/swarmery/core/1.2.0` (scope `project`, projectPath `/Volumes/Work/Skygor`), while
+`cache/swarmery/core/1.2.0` (scope `project`, projectPath `/home/dev/Fabrikam`), while
 a live session in the swarmery repo itself resolves the *same* plugin's skills from
 `marketplaces/swarmery/plugins/core/skills/…` (observed base-dir of a running skill).
 
@@ -377,7 +377,7 @@ singletons observed).
 Superpowers additionally ships `.cursor-plugin/` and `.codex-plugin/` manifest dirs —
 scan `.claude-plugin/` only.
 
-`marketplace.json` (repo root `/Volumes/Work/swarmery/.claude-plugin/marketplace.json`):
+`marketplace.json` (repo root `/home/dev/swarmery/.claude-plugin/marketplace.json`):
 `{ "name", "owner": {name,email}, "metadata": {description, version},`
 `"plugins": [ {name, source: "./plugins/<name>", description} ] }`. The clone under
 `marketplaces/swarmery/` carries the same file pinned at the last-update commit (it

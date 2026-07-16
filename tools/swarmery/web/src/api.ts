@@ -6,12 +6,17 @@ import type {
   AnalyticsDimension,
   AnalyticsMetric,
   BreakdownResp,
+  DetachResponse,
   DocDetail,
   DocMeta,
   HealthResponse,
   MatrixResp,
+  OnboardConfig,
+  OnboardRequest,
+  OnboardResponse,
   PermissionRequest,
   PermissionRequestStatus,
+  ProjectDetail,
   ProjectsResponse,
   SessionDetailResponse,
   SessionsResponse,
@@ -40,9 +45,92 @@ export interface SessionFilters {
   status?: string;
 }
 
-export function fetchProjects(): Promise<ProjectsResponse> {
+export function fetchProjects(includeArchived = false): Promise<ProjectsResponse> {
   if (MOCK) return mockApi.projects();
-  return get('/api/projects');
+  return get(`/api/projects${includeArchived ? '?include=archived' : ''}`);
+}
+
+/** GET /api/projects/{id} — enriched project + local components + stats. */
+export function fetchProject(id: number | string): Promise<ProjectDetail> {
+  if (MOCK) return mockApi.project(id);
+  return get(`/api/projects/${encodeURIComponent(id)}`);
+}
+
+/** DELETE /api/projects/{id} — soft-archive (remove from the default list). */
+export async function archiveProject(id: number): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/projects/${String(id)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `archive failed: ${String(res.status)}`);
+  }
+}
+
+/** POST /api/projects/{id}/restore — un-archive. */
+export async function restoreProject(id: number): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/projects/${String(id)}/restore`, { method: 'POST' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `restore failed: ${String(res.status)}`);
+  }
+}
+
+/**
+ * POST /api/projects/{id}/detach — remove the swarmery-owned entries from the
+ * project's .claude/settings.json. dryRun=true returns the plan without writing
+ * (rendered as a preview before the real call). 403 when the endpoint is
+ * disabled (no SWARMERY_ONBOARD_ROOTS) or the path is outside the allow-list.
+ */
+export async function detachProject(id: number, dryRun: boolean): Promise<DetachResponse> {
+  if (MOCK) {
+    return {
+      detached: true,
+      dryRun,
+      steps: ['- enabledPlugins.core@swarmery', '- extraKnownMarketplaces.swarmery'],
+      ...(dryRun ? {} : { backup: '.claude/settings.json.bak' }),
+    };
+  }
+  const res = await fetch(`/api/projects/${String(id)}/detach${dryRun ? '?dryRun=1' : ''}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `detach failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as DetachResponse;
+}
+
+/** GET /api/projects/onboard/config — defaults + enabled state for the modal. */
+export function fetchOnboardConfig(): Promise<OnboardConfig> {
+  return get('/api/projects/onboard/config');
+}
+
+/**
+ * POST /api/projects/onboard — bootstrap a new consumer project (.claude/
+ * settings.json + project.json + workspace namespace). The endpoint is fenced
+ * to an allow-list and returns 403 when disabled; non-2xx throws the server's
+ * error text so the form can surface it inline. An empty workspaceRoot falls
+ * back to the server default.
+ */
+export async function onboardProject(
+  slug: string,
+  path: string,
+  packs: string[],
+  workspaceRoot?: string,
+): Promise<OnboardResponse> {
+  const body: OnboardRequest = { slug, path, packs };
+  if (workspaceRoot !== undefined && workspaceRoot !== '') body.workspaceRoot = workspaceRoot;
+  const res = await fetch('/api/projects/onboard', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `onboard failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as OnboardResponse;
 }
 
 export function fetchSessions(filters: SessionFilters = {}): Promise<SessionsResponse> {

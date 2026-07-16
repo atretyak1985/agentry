@@ -1,7 +1,7 @@
 #!/bin/bash
 # swarmery init — bootstrap a new consumer project in one command.
 #
-#   bash /Volumes/Work/swarmery/scripts/init.sh <project-slug> [pack ...]
+#   bash <swarmery-repo>/scripts/init.sh <project-slug> [pack ...]
 #
 #   # or fetch-and-run from anywhere, once the repo is on GitHub. PREFER the
 #   # download-then-inspect form so you read what you execute (piping a remote
@@ -23,7 +23,7 @@ shift || true
 PACKS=("$@")   # e.g. web-pack iot-pack uav-pack (core is always on)
 
 MARKETPLACE_REPO="atretyak1985/swarmery"
-WS_ROOT="${SWARMERY_WORKSPACE_ROOT:-/Volumes/Work/swarmery-workspace}"
+WS_ROOT="${SWARMERY_WORKSPACE_ROOT:-$HOME/swarmery-workspace}"
 
 if [ -z "$SLUG" ]; then
   echo "usage: init.sh <project-slug> [pack ...]        packs: uav-pack | iot-pack | web-pack | infra-pack | lsp-pack"
@@ -35,6 +35,22 @@ esac
 for p in "${PACKS[@]:-}"; do
   case "$p" in uav-pack|iot-pack|web-pack|lsp-pack|infra-pack|"") ;; *) echo "✗ unknown pack: $p"; exit 1;; esac
 done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SL_SRC="${SCRIPT_DIR}/../plugins/core/statusline"
+
+# ── delegate to the control-plane binary when present ──────────────
+# `swarmery onboard` is the Go port of everything below; it is the single
+# source of truth shared with the control-plane onboarding endpoint. When the
+# binary is on PATH we hand off to it (passing the repo-relative statusline
+# source it can't otherwise locate) and skip the inline bash fallback, which
+# stays only for machines that haven't installed the control plane yet.
+if command -v swarmery >/dev/null 2>&1; then
+  exec swarmery onboard "$SLUG" "${PACKS[@]:-}" \
+    --dir "$(pwd)" \
+    --workspace-root "$WS_ROOT" \
+    --statusline-src "$SL_SRC"
+fi
 
 PROJECT_DIR="$(pwd)"
 mkdir -p .claude
@@ -105,8 +121,6 @@ EOF
 fi
 
 # ── statusline (framework asset, deployed per project) ────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-SL_SRC="${SCRIPT_DIR}/../plugins/core/statusline"
 if [ -d "$SL_SRC" ] && [ ! -f .claude/statusline/statusline.sh ]; then
   mkdir -p .claude/statusline
   cp "$SL_SRC"/statusline.sh "$SL_SRC"/fetch-fable-usage.sh .claude/statusline/ 2>/dev/null || true
