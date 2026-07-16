@@ -221,7 +221,7 @@ export function mockToolStats(range: Range): ToolsResp {
   })
     .filter((t) => t.calls > 0)
     .sort((a, b) => b.calls - a.calls);
-  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools };
+  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools, approx: false };
 }
 
 export function mockErrorGroups(range: Range): ErrorsResp {
@@ -230,6 +230,7 @@ export function mockErrorGroups(range: Range): ErrorsResp {
   return {
     from: days[0] ?? isoDay(),
     to,
+    approx: false,
     groups: [
       {
         key: 'api error # overloaded (request id #)',

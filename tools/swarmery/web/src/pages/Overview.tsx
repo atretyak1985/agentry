@@ -37,7 +37,7 @@ import {
 import { argSummary } from '../lib/payload';
 import { useScope } from '../lib/scope';
 import { applyPermissionMessage, applySessionMessage, useLiveUpdates } from '../lib/ws';
-import { Empty, ErrorBox, Loading } from '../components/ui';
+import { ApproxHint, Empty, ErrorBox, Loading } from '../components/ui';
 import { ProjectName } from '../components/ProjectName';
 
 const LIVE_STATUSES = new Set<Session['status']>(['active', 'waiting_approval', 'idle']);
@@ -514,14 +514,19 @@ function ErrorDrilldown({
   onClose: () => void;
 }): JSX.Element {
   const [groups, setGroups] = useState<ErrorGroup[] | null>(null);
+  const [approx, setApprox] = useState(false);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     setGroups(null);
+    setApprox(false);
     setFailed(false);
     fetchErrorGroups({ from: day, to: day, ...(project !== null ? { project } : {}) })
-      .then((r) => setGroups(r.groups))
+      .then((r) => {
+        setGroups(r.groups);
+        setApprox(r.approx);
+      })
       .catch(() => setFailed(true));
   }, [day, project]);
 
@@ -555,6 +560,7 @@ function ErrorDrilldown({
         {groups !== null && groups.length === 0 && (
           <div className="mt-3 font-mono text-[11px] text-ink-dim">no errors for this day</div>
         )}
+        {approx && <ApproxHint />}
 
         {groups !== null &&
           groups.map((g) => (

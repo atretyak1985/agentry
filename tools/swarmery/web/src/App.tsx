@@ -159,7 +159,14 @@ function AppShell(): JSX.Element {
     },
     [syncInsights],
   );
-  useLiveUpdates(onMessage, syncPending);
+  // Reconnect / 60s reconcile: resync BOTH WS-driven badges — pending
+  // approvals and the System insights count — since either may have drifted
+  // while the socket was down.
+  const resyncBadges = useCallback((): void => {
+    syncPending();
+    syncInsights();
+  }, [syncPending, syncInsights]);
+  useLiveUpdates(onMessage, resyncBadges);
 
   const pendingCount = pendingIds.size;
   const items: NavItem[] = [

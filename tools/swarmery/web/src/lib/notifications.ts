@@ -57,16 +57,22 @@ export async function requestPermission(): Promise<boolean> {
   return (await Notification.requestPermission()) === 'granted';
 }
 
-function fire(title: string, body: string, tag: string, onClick: () => void): void {
-  if (!notificationsSupported() || Notification.permission !== 'granted') return;
-  if (!document.hidden) return; // never notify a visible tab
+function fire(title: string, body: string, tag: string, onClick: () => void): Notification | null {
+  if (!notificationsSupported() || Notification.permission !== 'granted') return null;
+  if (!document.hidden) return null; // never notify a visible tab
   const n = new Notification(title, { body, tag });
   n.onclick = () => {
     window.focus();
     onClick();
     n.close();
   };
+  return n;
 }
+
+// Open "Approval needed" notifications by tag, module-wide — closed early when
+// the matching permission_resolved frame arrives (a rule racing the broadcast,
+// a terminal/mobile resolve) so a stale toast never outlives its request.
+const openApprovalNotifications = new Map<string, Notification>();
 
 /**
  * Subscribe to the shared WS (one socket app-wide — lib/ws.ts) and fire
@@ -89,13 +95,33 @@ export function useBrowserNotifications(prefs: NotifyPrefs): void {
     (msg: WSMessage): void => {
       const p = prefsRef.current;
       if (msg.type === 'permission_requested') {
-        if (p.approvalRequested) {
-          fire(
+        // The daemon publishes permission_requested BEFORE rule evaluation and
+        // the WS frame hydrates from the DB at broadcast time, so a
+        // rule-auto-approved request usually arrives already 'approved' —
+        // nothing is waiting on the user, so no notification.
+        if (p.approvalRequested && msg.payload.status === 'pending') {
+          const tag = `approval-${String(msg.payload.id)}`;
+          const n = fire(
             `Approval needed: ${msg.payload.toolName}`,
             `request #${String(msg.payload.id)} is waiting on you`,
-            `approval-${String(msg.payload.id)}`,
+            tag,
             () => navigate('/approvals'),
           );
+          if (n !== null) {
+            openApprovalNotifications.set(tag, n);
+            n.onclose = () => openApprovalNotifications.delete(tag);
+          }
+        }
+        return;
+      }
+      if (msg.type === 'permission_resolved') {
+        // Belt-and-braces for the hydration race above: if this request's
+        // notification is still up, retract it — it is no longer actionable.
+        const tag = `approval-${String(msg.payload.id)}`;
+        const open = openApprovalNotifications.get(tag);
+        if (open !== undefined) {
+          openApprovalNotifications.delete(tag);
+          open.close();
         }
         return;
       }

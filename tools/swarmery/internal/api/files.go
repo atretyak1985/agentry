@@ -26,7 +26,7 @@ type fileSessionsResponseDTO struct {
 	Sessions []fileSessionDTO `json:"sessions"`
 }
 
-// GET /api/files/sessions?path=<substr>&project=<slug>
+// GET /api/files/sessions?path=<substr>&project=<slug|id>
 func (h *Handler) fileSessions(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	if path == "" {
@@ -45,8 +45,8 @@ func (h *Handler) fileSessions(w http.ResponseWriter, r *http.Request) {
 		WHERE fc.file_path LIKE ? ESCAPE '\' AND s.hidden = 0 AND p.archived = 0`
 	args := []any{likePattern(path)}
 	if project != "" {
-		query += ` AND p.slug = ?`
-		args = append(args, project)
+		query += projectScopePredicate // slug OR id — the shared global-scope match (scope.go)
+		args = append(args, project, project)
 	}
 	query += `
 		GROUP BY s.id

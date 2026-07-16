@@ -15,7 +15,7 @@ import (
 // (ingest.go): system api_error → payload {"error":{...}}; tool failure →
 // payload {"input":…, "result": "<error text>"}. Two api_errors differ only
 // in the request id and must fold to ONE group.
-func errorsServer(t *testing.T) (*httptest.Server, [3]string) {
+func errorsServer(t *testing.T) (*httptest.Server, [3]string, *sql.DB) {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "errors.db"))
 	if err != nil {
@@ -61,7 +61,7 @@ func errorsServer(t *testing.T) (*httptest.Server, [3]string) {
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv, [3]string{ts10, ts11, ts12}
+	return srv, [3]string{ts10, ts11, ts12}, db
 }
 
 func TestNormalizeErrKey(t *testing.T) {
@@ -181,7 +181,7 @@ func TestExtractErrMsg(t *testing.T) {
 }
 
 func TestStatsErrors(t *testing.T) {
-	srv, ts := errorsServer(t)
+	srv, ts, db := errorsServer(t)
 
 	var out errorsDTO
 	getJSON(t, srv.URL+"/api/stats/errors", &out)
@@ -228,5 +228,23 @@ func TestStatsErrors(t *testing.T) {
 		if g.Key == "api error # overloaded (request id #)" && g.Count != 1 {
 			t.Errorf("filtered api count = %d, want 1", g.Count)
 		}
+	}
+
+	// approx honesty: no rollup in range → false; a daily_rollups row inside
+	// the range (pruned history holding only an error count) → true.
+	if out.Approx {
+		t.Error("approx = true with no rolled-up days, want false")
+	}
+	prunedDay := time.Now().AddDate(0, 0, -5).Format("2006-01-02")
+	if _, err := db.Exec(`INSERT INTO daily_rollups
+		(day, project_id, agent_id, sessions, tasks_done, tasks_reverted,
+		 tool_calls, errors, tokens_in, tokens_out, cost_usd, wait_minutes)
+		VALUES (?, 1, NULL, 3, 0, 0, 40, 2, 1000, 400, 2.0, 0)`, prunedDay); err != nil {
+		t.Fatalf("seed rollup: %v", err)
+	}
+	var rolled errorsDTO
+	getJSON(t, srv.URL+"/api/stats/errors", &rolled)
+	if !rolled.Approx {
+		t.Error("approx = false over a range overlapping a rolled-up day, want true")
 	}
 }

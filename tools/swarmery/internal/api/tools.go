@@ -42,6 +42,10 @@ type toolsDTO struct {
 	From  string        `json:"from"`
 	To    string        `json:"to"`
 	Tools []toolStatDTO `json:"tools"`
+	// Approx is true when the range overlaps pruned (rolled-up) days — daily
+	// rollups carry no per-tool events, so the counts silently undercount
+	// there. Same honesty rule as the timeseries `approx` badge.
+	Approx bool `json:"approx"`
 }
 
 // GET /api/stats/tools?from&to&project — project is the optional global scope
@@ -153,5 +157,11 @@ func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 		}
 		return out.Tools[i].Tool < out.Tools[j].Tool
 	})
+	rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approx = rolled
 	writeJSON(w, out, nil)
 }

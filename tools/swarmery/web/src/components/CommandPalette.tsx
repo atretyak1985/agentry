@@ -26,6 +26,7 @@ import type {
   SearchTurn,
 } from '../api/types';
 import { fetchFileSessions, fetchSearch } from '../api';
+import { useScope } from '../lib/scope';
 
 interface NavEntry {
   label: string;
@@ -94,6 +95,9 @@ function sectionsFor(query: string, results: SearchResponse | null): Section[] {
 
 export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Element {
   const navigate = useNavigate();
+  // Global project scope: search + file drill-in respect it like every page
+  // does; the static Navigation section stays scope-independent.
+  const { scope } = useScope();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResponse | null>(null);
   // File drill-in: non-null while listing the sessions that touched one path.
@@ -116,7 +120,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     }
     const seq = ++reqSeq.current;
     const timer = setTimeout(() => {
-      fetchSearch(q)
+      fetchSearch(q, scope ?? undefined)
         .then((r) => {
           if (reqSeq.current === seq) {
             setResults(r);
@@ -128,7 +132,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         });
     }, 150);
     return () => clearTimeout(timer);
-  }, [query, filePath]);
+  }, [query, filePath, scope]);
 
   const sections = useMemo<Section[]>(() => {
     if (filePath !== null) {
@@ -157,7 +161,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     // invalidates any in-flight search, and a rapid second drill-in (or
     // backing out and searching again) drops this response as stale.
     const seq = ++reqSeq.current;
-    fetchFileSessions(path)
+    fetchFileSessions(path, scope ?? undefined)
       .then((r) => {
         if (reqSeq.current === seq) setFileSessions(r.sessions);
       })
@@ -231,6 +235,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-line-soft px-3.5 py-2.5">
+          {scope !== null && (
+            <span
+              className="max-w-[30%] shrink-0 truncate rounded-[6px] border border-line-strong bg-surface2 px-1.5 py-0.5 font-mono text-[10.5px] text-ink-dim"
+              title={`results scoped to ${scope}`}
+            >
+              {scope}
+            </span>
+          )}
           {filePath !== null && (
             <span className="max-w-[40%] shrink-0 truncate rounded-[6px] border border-line-strong bg-surface2 px-1.5 py-0.5 font-mono text-[10.5px] text-brand">
               {filePath}

@@ -189,6 +189,19 @@ export function ErrorBox({
   );
 }
 
+/**
+ * Honesty hint for stats endpoints whose range overlaps pruned (rolled-up)
+ * days: daily rollups keep aggregates only, so per-event breakdowns
+ * (tools, error groups) undercount there. Mirrors the backend `approx` flag.
+ */
+export function ApproxHint(): JSX.Element {
+  return (
+    <p className="mt-2 font-mono text-[10px] text-amber/80">
+      ≈ approximate — this range overlaps pruned days (daily rollups), so older detail is missing
+    </p>
+  );
+}
+
 export function Empty({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div className="my-3 rounded-xl border border-dashed border-line px-3.5 py-6 text-center text-[12.5px] text-ink-dim">

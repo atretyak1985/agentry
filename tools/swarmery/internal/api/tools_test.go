@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // main transcript and one inside a debugger sidechain (parented to its
 // subagent_start — the attribution the ingester actually stores), a denied
 // call on beta, and a Read call outside the default 14-day range.
-func toolsServer(t *testing.T) *httptest.Server {
+func toolsServer(t *testing.T) (*httptest.Server, *sql.DB) {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "tools.db"))
 	if err != nil {
@@ -65,11 +66,11 @@ func toolsServer(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, db
 }
 
 func TestStatsTools(t *testing.T) {
-	srv := toolsServer(t)
+	srv, db := toolsServer(t)
 
 	var out toolsDTO
 	getJSON(t, srv.URL+"/api/stats/tools", &out)
@@ -118,5 +119,23 @@ func TestStatsTools(t *testing.T) {
 		if tl.Tool == "Bash" && (tl.Calls != 4 || tl.Denied != 0) {
 			t.Errorf("filtered Bash = %+v, want 4 calls 0 denied", tl)
 		}
+	}
+
+	// approx honesty: no rollup in range → false; a daily_rollups row inside
+	// the range (pruned history the query cannot see) → true.
+	if out.Approx {
+		t.Error("approx = true with no rolled-up days, want false")
+	}
+	prunedDay := time.Now().AddDate(0, 0, -5).Format("2006-01-02")
+	if _, err := db.Exec(`INSERT INTO daily_rollups
+		(day, project_id, agent_id, sessions, tasks_done, tasks_reverted,
+		 tool_calls, errors, tokens_in, tokens_out, cost_usd, wait_minutes)
+		VALUES (?, 1, NULL, 3, 0, 0, 40, 2, 1000, 400, 2.0, 0)`, prunedDay); err != nil {
+		t.Fatalf("seed rollup: %v", err)
+	}
+	var rolled toolsDTO
+	getJSON(t, srv.URL+"/api/stats/tools", &rolled)
+	if !rolled.Approx {
+		t.Error("approx = false over a range overlapping a rolled-up day, want true")
 	}
 }

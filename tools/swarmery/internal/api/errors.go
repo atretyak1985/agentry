@@ -41,6 +41,10 @@ type errorsDTO struct {
 	From   string          `json:"from"`
 	To     string          `json:"to"`
 	Groups []errorGroupDTO `json:"groups"`
+	// Approx is true when the range overlaps pruned (rolled-up) days — daily
+	// rollups keep only an error COUNT, no error events, so the groups
+	// silently undercount there. Same honesty rule as the timeseries badge.
+	Approx bool `json:"approx"`
 }
 
 var (
@@ -188,5 +192,11 @@ func (h *Handler) statsErrors(w http.ResponseWriter, r *http.Request) {
 		out.Groups = append(out.Groups, acc[key].group)
 	}
 	sort.SliceStable(out.Groups, func(i, j int) bool { return out.Groups[i].Count > out.Groups[j].Count })
+	rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approx = rolled
 	writeJSON(w, out, nil)
 }

@@ -455,6 +455,8 @@ export interface ToolsResp {
   from: string;
   to: string;
   tools: ToolStatRow[];
+  /** True when the range overlaps pruned (rolled-up) days — counts undercount there. */
+  approx: boolean;
 }
 
 /** GET /api/stats/durations — session-length + approval-wait aggregates. */
@@ -488,6 +490,8 @@ export interface ErrorsResp {
   from: string;
   to: string;
   groups: ErrorGroup[];
+  /** True when the range overlaps pruned (rolled-up) days — groups undercount there. */
+  approx: boolean;
 }
 
 // --- Phase 2 — approvals + hooks (frozen at gate 2.2) ------------------------

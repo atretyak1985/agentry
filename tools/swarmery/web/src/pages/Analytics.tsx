@@ -46,7 +46,7 @@ import {
   isoDay,
 } from '../lib/format';
 import { useScope } from '../lib/scope';
-import { Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
+import { ApproxHint, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
 
 /* ----- metric / pivot vocabulary ----- */
 
@@ -691,7 +691,14 @@ function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
   const [open, setOpen] = useState<string | null>(null);
   const max = data.tools.reduce((m, t) => Math.max(m, t.calls), 0);
 
-  if (data.tools.length === 0) return <Empty>no tool calls in this range</Empty>;
+  if (data.tools.length === 0) {
+    return (
+      <>
+        <Empty>no tool calls in this range</Empty>
+        {data.approx && <ApproxHint />}
+      </>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -748,6 +755,7 @@ function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
           )}
         </div>
       ))}
+      {data.approx && <ApproxHint />}
     </div>
   );
 }
