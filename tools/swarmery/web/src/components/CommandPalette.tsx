@@ -104,7 +104,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
   const reqSeq = useRef(0);
 
   // Debounced search (150 ms); stale responses dropped by sequence number.
+  // Suspended while drilled into a file: the drill-in list is not query-driven,
+  // so firing here would only waste requests and reset the arrow position.
   useEffect(() => {
+    if (filePath !== null) return undefined;
     const q = query.trim();
     if (q === '') {
       setResults(null);
@@ -125,7 +128,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
         });
     }, 150);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, filePath]);
 
   const sections = useMemo<Section[]>(() => {
     if (filePath !== null) {
@@ -150,9 +153,17 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
     setFilePath(path);
     setFileSessions([]);
     setActive(0);
+    // Same sequence counter as the debounced search: bumping it also
+    // invalidates any in-flight search, and a rapid second drill-in (or
+    // backing out and searching again) drops this response as stale.
+    const seq = ++reqSeq.current;
     fetchFileSessions(path)
-      .then((r) => setFileSessions(r.sessions))
-      .catch(() => setFileSessions([]));
+      .then((r) => {
+        if (reqSeq.current === seq) setFileSessions(r.sessions);
+      })
+      .catch(() => {
+        if (reqSeq.current === seq) setFileSessions([]);
+      });
   }
 
   function select(item: PaletteItem): void {

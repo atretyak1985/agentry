@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,14 +56,18 @@ func searchServer(t *testing.T) *httptest.Server {
 
 	// Files: sessions 1 and 2 both touched reactor.go (2 changes in s2);
 	// s2's later event drives the recency ordering of the reverse lookup.
+	// setup_notes.md carries the only literal '_' in any fixture path/title —
+	// the probe for LIKE-metacharacter escaping.
 	mustExec(`INSERT INTO events (id, session_id, ts, type, dedup_key) VALUES
 		(1, 1, '2026-07-15T10:05:00.000Z', 'file_change', 'ev1'),
 		(2, 2, '2026-07-15T11:00:00.000Z', 'file_change', 'ev2'),
-		(3, 2, '2026-07-15T11:30:00.000Z', 'file_change', 'ev3')`)
+		(3, 2, '2026-07-15T11:30:00.000Z', 'file_change', 'ev3'),
+		(4, 1, '2026-07-15T10:06:00.000Z', 'file_change', 'ev4')`)
 	mustExec(`INSERT INTO file_changes (event_id, session_id, file_path, change_type, additions, deletions) VALUES
 		(1, 1, 'internal/reactor/reactor.go', 'edit',   10, 2),
 		(2, 2, 'internal/reactor/reactor.go', 'edit',    5, 1),
-		(3, 2, 'internal/reactor/reactor.go', 'edit',    3, 0)`)
+		(3, 2, 'internal/reactor/reactor.go', 'edit',    3, 0),
+		(4, 1, 'docs/setup_notes.md',         'add',    20, 0)`)
 
 	h, err := NewServer(db, false)
 	if err != nil {
@@ -173,7 +178,7 @@ func TestSearchEndpoint(t *testing.T) {
 
 	t.Run("hostile FTS syntax never 500s", func(t *testing.T) {
 		for _, q := range []string{`"foo`, `foo OR (`, `col:val NEAR/x`, `*`, `""`} {
-			resp, err := http.Get(srv.URL + "/api/search?q=" + urlQueryEscape(q))
+			resp, err := http.Get(srv.URL + "/api/search?q=" + url.QueryEscape(q))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,6 +187,29 @@ func TestSearchEndpoint(t *testing.T) {
 				t.Errorf("q=%q → 500, want safe handling", q)
 			}
 		}
+	})
+
+	// The LIKE groups (sessions, files, projects) must treat % and _ as
+	// literals — likePattern escapes them, ESCAPE '\' honors that.
+	t.Run("LIKE metacharacters are literal", func(t *testing.T) {
+		t.Run("% matches nothing (no fixture contains a literal %)", func(t *testing.T) {
+			var r searchResp
+			getJSON(t, srv.URL+"/api/search?q="+url.QueryEscape("%"), &r)
+			if len(r.Sessions) != 0 || len(r.Files) != 0 || len(r.Projects) != 0 {
+				t.Errorf("q=%% → %d/%d/%d sessions/files/projects, want 0/0/0 (%% must not act as a wildcard)",
+					len(r.Sessions), len(r.Files), len(r.Projects))
+			}
+		})
+		t.Run("_ matches only the path with a literal underscore", func(t *testing.T) {
+			var r searchResp
+			getJSON(t, srv.URL+"/api/search?q="+url.QueryEscape("_"), &r)
+			if len(r.Files) != 1 || r.Files[0].Path != "docs/setup_notes.md" {
+				t.Errorf("files = %+v, want only docs/setup_notes.md (_ must not act as a single-char wildcard)", r.Files)
+			}
+			if len(r.Sessions) != 0 || len(r.Projects) != 0 {
+				t.Errorf("q=_ → %d/%d sessions/projects, want 0/0", len(r.Sessions), len(r.Projects))
+			}
+		})
 	})
 
 	t.Run("missing q → 400", func(t *testing.T) {
@@ -209,9 +237,3 @@ func TestSearchEndpoint(t *testing.T) {
 	})
 }
 
-// urlQueryEscape percent-encodes the handful of characters the hostile-input
-// cases use, without pulling net/url into the import block.
-func urlQueryEscape(s string) string {
-	r := strings.NewReplacer(`"`, "%22", " ", "%20", "(", "%28", "*", "%2A", "/", "%2F")
-	return r.Replace(s)
-}
