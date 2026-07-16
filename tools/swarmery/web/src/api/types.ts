@@ -141,6 +141,16 @@ export interface DetachResponse {
   backup?: string;
 }
 
+/** POST /api/projects/{id}/attach — the plan (dry run) or the applied result. */
+export interface AttachResponse {
+  attached: boolean;
+  dryRun: boolean;
+  /** One human-readable line per restored entry (or a "nothing to attach" note). */
+  steps: string[];
+  /** Relative backup path, present only when a real run rewrote settings.json. */
+  backup?: string;
+}
+
 /** Go: sessionDTO */
 export interface Session {
   id: number;

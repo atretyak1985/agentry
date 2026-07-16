@@ -15,14 +15,19 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookcfg"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
 )
 
 type detachRequest struct {
 	// DryRun previews the plan without writing (also accepted as ?dryRun=1).
 	DryRun bool `json:"dryRun"`
+	// Full removes every onboarding artifact (project.json, statusline scripts),
+	// not just the settings.json entries. Also accepted as ?full=1.
+	Full bool `json:"full"`
 }
 
 type detachResponse struct {
@@ -48,13 +53,16 @@ func (h *Handler) detachProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// dryRun from ?dryRun=1|true or the JSON body {dryRun:true}.
+	// dryRun / full from ?dryRun=1|true / ?full=1|true or the JSON body.
 	q := r.URL.Query().Get("dryRun")
 	dryRun := q == "1" || q == "true"
-	if !dryRun && r.Body != nil {
+	fq := r.URL.Query().Get("full")
+	full := fq == "1" || fq == "true"
+	if r.Body != nil {
 		var req detachRequest
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err == nil {
-			dryRun = req.DryRun
+			dryRun = dryRun || req.DryRun
+			full = full || req.Full
 		}
 	}
 
@@ -81,11 +89,33 @@ func (h *Handler) detachProject(w http.ResponseWriter, r *http.Request) {
 		ProjectDir:    target,
 		Slug:          slug,
 		WorkspaceRoot: onboardCfg.WorkspaceRoot,
+		Full:          full,
 		DryRun:        dryRun,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+
+	// Full offboard also removes the swarmery approvals/liveness hooks from the
+	// project's .claude/settings.local.json (hookcfg surgery: only our entries,
+	// foreign hooks survive). Non-fatal — a hook failure never voids the
+	// settings.json detach that already happened.
+	if full {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			hooks := &hookcfg.System{Home: home, Out: io.Discard}
+			if st := hooks.Inspect(target, 0); st == hookcfg.StateInstalled || st == hookcfg.StateStale {
+				if dryRun {
+					res.Steps = append(res.Steps, "- .claude/settings.local.json swarmery hooks")
+					res.Detached = true
+				} else if uerr := hooks.Uninstall(target); uerr != nil {
+					res.Steps = append(res.Steps, "! hooks uninstall failed: "+uerr.Error())
+				} else {
+					res.Steps = append(res.Steps, "✓ .claude/settings.local.json swarmery hooks removed")
+					res.Detached = true
+				}
+			}
+		}
 	}
 
 	resp := detachResponse{Detached: res.Detached, DryRun: dryRun, Steps: res.Steps}

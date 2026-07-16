@@ -17,6 +17,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// like onboarding: requireLocalOrigin + the SWARMERY_ONBOARD_ROOTS allow-list
 	// (disabled when unset). Supports ?dryRun to preview the plan.
 	mux.HandleFunc("POST /api/projects/{id}/detach", requireLocalOrigin(h.detachProject))
+	// attach: the inverse — re-enable swarmery for a detached project (merge
+	// settings, restore project.json from .bak, reinstall hooks). Same fence.
+	mux.HandleFunc("POST /api/projects/{id}/attach", requireLocalOrigin(h.attachProject))
 	// onboarding: bootstrap a new consumer project from the dashboard. Fenced
 	// by requireLocalOrigin + an explicit root allow-list (disabled when unset).
 	// The GET exposes defaults (workspace root, enabled state) to the modal.

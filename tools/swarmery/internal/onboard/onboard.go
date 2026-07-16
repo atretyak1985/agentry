@@ -67,6 +67,9 @@ type Result struct {
 	// Detached is set by Detach: true when it removed at least one swarmery-owned
 	// entry (and thus wrote the file, unless DryRun). Zero for Run.
 	Detached bool
+	// Attached is set by Attach: true when it added/restored at least one
+	// onboarding artifact (and thus wrote, unless DryRun). Zero for Run/Detach.
+	Attached bool
 }
 
 // Validate checks the slug and packs without touching the filesystem, so the
@@ -256,16 +259,23 @@ func carveWorkspace(wsRoot, slug string, res *Result) error {
 // DetachConfig drives a single detach (offboard) run — the safe inverse of
 // Config/Run. It removes ONLY swarmery-owned entries from a project's
 // .claude/settings.json; the file is never deleted and unrelated keys are never
-// touched.
+// touched. Full additionally removes the other onboarding artifacts
+// (.claude/project.json and the deployed statusline scripts).
 type DetachConfig struct {
 	// ProjectDir is the project root holding .claude/settings.json. Required.
 	ProjectDir string
 	// Slug guards env pruning: env.AGENT_PROJECT is removed only when it equals
-	// Slug (or Slug is empty). Prevents clobbering a same-named var a user set.
+	// Slug, the project.json onboarding slug, or Slug is empty. Prevents
+	// clobbering a same-named var a user set.
 	Slug string
 	// WorkspaceRoot is the fallback additionalDirectories entry to drop when the
 	// settings carry no env.AGENT_WORKSPACE_ROOT of their own.
 	WorkspaceRoot string
+	// Full removes every onboarding artifact, not just the settings entries:
+	// .claude/project.json (backed up to project.json.bak) and the swarmery
+	// statusline scripts under .claude/statusline/. Project-local components
+	// (agents/, skills/, commands/, …) are never touched — they are user-owned.
+	Full bool
 	// DryRun reports the plan (Steps) without touching the filesystem.
 	DryRun bool
 }
@@ -298,6 +308,21 @@ func Detach(cfg DetachConfig) (*Result, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
+	// The onboarding slug as project.json records it. The API layer only knows
+	// the registry slug (path-derived, e.g. "-Volumes-Work-app"), which never
+	// matches the AGENT_PROJECT value onboarding wrote — without this the env
+	// entry would survive every dashboard-initiated detach.
+	projPath := filepath.Join(cfg.ProjectDir, ".claude", "project.json")
+	onboardSlug := ""
+	if raw, err := os.ReadFile(projPath); err == nil {
+		var pj struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &pj) == nil {
+			onboardSlug = pj.Name
+		}
+	}
+
 	// The workspace root this project actually uses (env is the source of truth,
 	// falling back to the caller's default) — used to target the one
 	// additionalDirectories entry onboarding added.
@@ -309,9 +334,11 @@ func Detach(cfg DetachConfig) (*Result, error) {
 	}
 
 	changed := false
+	settingsChanged := false
 	mark := func(step string) {
 		res.step("- " + step)
 		changed = true
+		settingsChanged = true
 	}
 
 	// 1) enabledPlugins: drop every "<name>@swarmery" key (core + packs).
@@ -333,7 +360,8 @@ func Detach(cfg DetachConfig) (*Result, error) {
 	// 3) env: the two swarmery vars only. AGENT_PROJECT is guarded by Slug so a
 	// user's unrelated same-named var survives.
 	if env, ok := settings["env"].(map[string]any); ok {
-		if v, ok := env["AGENT_PROJECT"].(string); ok && (cfg.Slug == "" || v == cfg.Slug) {
+		if v, ok := env["AGENT_PROJECT"].(string); ok &&
+			(cfg.Slug == "" || v == cfg.Slug || (onboardSlug != "" && v == onboardSlug)) {
 			delete(env, "AGENT_PROJECT")
 			mark("env.AGENT_PROJECT")
 		}
@@ -367,6 +395,32 @@ func Detach(cfg DetachConfig) (*Result, error) {
 		}
 	}
 
+	// 6) full offboard: the remaining onboarding artifacts. Planned here (so the
+	// dry run lists them), executed after the DryRun gate below. Project-local
+	// components (agents/, skills/, commands/, …) are user-owned and never touched.
+	var fullOps []func() error
+	if cfg.Full {
+		if raw, err := os.ReadFile(projPath); err == nil {
+			res.step("- .claude/project.json (backup: project.json.bak)")
+			changed = true
+			fullOps = append(fullOps, func() error {
+				if err := os.WriteFile(projPath+".bak", raw, 0o644); err != nil {
+					return fmt.Errorf("write backup %s.bak: %w", projPath, err)
+				}
+				return os.Remove(projPath)
+			})
+		}
+		slDir := filepath.Join(cfg.ProjectDir, ".claude", "statusline")
+		for _, name := range []string{"statusline.sh", "fetch-fable-usage.sh"} {
+			script := filepath.Join(slDir, name)
+			if _, err := os.Stat(script); err == nil {
+				res.step("- .claude/statusline/" + name)
+				changed = true
+				fullOps = append(fullOps, func() error { return os.Remove(script) })
+			}
+		}
+	}
+
 	res.Detached = changed
 	if !changed {
 		res.step("• no swarmery-owned entries found — nothing to detach")
@@ -377,14 +431,27 @@ func Detach(cfg DetachConfig) (*Result, error) {
 		return res, nil
 	}
 
-	// Back up the pre-change file verbatim, then write the pruned settings.
-	if err := os.WriteFile(path+".bak", orig, 0o644); err != nil {
-		return nil, fmt.Errorf("write backup %s.bak: %w", path, err)
+	if settingsChanged {
+		// Back up the pre-change file verbatim, then write the pruned settings.
+		if err := os.WriteFile(path+".bak", orig, 0o644); err != nil {
+			return nil, fmt.Errorf("write backup %s.bak: %w", path, err)
+		}
+		if err := writeJSON(path, settings); err != nil {
+			return nil, err
+		}
+		res.step("✓ .claude/settings.json rewritten (backup: .claude/settings.json.bak)")
 	}
-	if err := writeJSON(path, settings); err != nil {
-		return nil, err
+	for _, op := range fullOps {
+		if err := op(); err != nil {
+			return nil, err
+		}
 	}
-	res.step("✓ .claude/settings.json rewritten (backup: .claude/settings.json.bak)")
+	if cfg.Full && len(fullOps) > 0 {
+		// Drop the statusline dir when the removed scripts were its last content
+		// (best-effort — a non-empty dir means user files live there, keep it).
+		_ = os.Remove(filepath.Join(cfg.ProjectDir, ".claude", "statusline"))
+		res.step("✓ onboarding artifacts removed")
+	}
 	return res, nil
 }
 
