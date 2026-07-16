@@ -384,3 +384,17 @@ func TestInsightCounts(t *testing.T) {
 		t.Errorf("insightCounts = %d/%d, want 3/2 (must match len(computeInsights lists))", promos, stales)
 	}
 }
+
+func TestSystemSummaryInsights(t *testing.T) {
+	srv := insightsServer(t)
+
+	var s map[string]any
+	getJSON(t, srv.URL+"/api/system/summary", &s)
+	ins, ok := s["insights"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary.insights = %v, want an object", s["insights"])
+	}
+	if ins["promotions"].(float64) != 3 || ins["staleOverrides"].(float64) != 2 {
+		t.Errorf("summary.insights = %v, want promotions=3 staleOverrides=2", ins)
+	}
+}

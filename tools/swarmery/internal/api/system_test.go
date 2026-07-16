@@ -182,6 +182,10 @@ func TestSystemSummary(t *testing.T) {
 	if lint["error"].(float64) != 1 || lint["warn"].(float64) != 0 || lint["info"].(float64) != 1 {
 		t.Errorf("summary.lint = %v, want error=1 warn=0 info=1 (resolved warn must not count)", lint)
 	}
+	ins := s["insights"].(map[string]any)
+	if ins["promotions"].(float64) != 0 || ins["staleOverrides"].(float64) != 0 {
+		t.Errorf("summary.insights = %v, want 0/0 on the quiet fixture", ins)
+	}
 }
 
 func TestSystemAgentsList(t *testing.T) {

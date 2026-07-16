@@ -67,13 +67,21 @@ type systemLintCountsDTO struct {
 	Info  int64 `json:"info"`
 }
 
+// systemInsightCountsDTO carries the promotion/drift badge counters
+// (system_insights.go — insightCounts).
+type systemInsightCountsDTO struct {
+	Promotions     int64 `json:"promotions"`
+	StaleOverrides int64 `json:"staleOverrides"`
+}
+
 type systemSummaryDTO struct {
-	Agents   int64               `json:"agents"`
-	Skills   int64               `json:"skills"`
-	Hooks    int64               `json:"hooks"`
-	Commands int64               `json:"commands"`
-	Overlays int64               `json:"overlays"`
-	Lint     systemLintCountsDTO `json:"lint"`
+	Agents   int64                  `json:"agents"`
+	Skills   int64                  `json:"skills"`
+	Hooks    int64                  `json:"hooks"`
+	Commands int64                  `json:"commands"`
+	Overlays int64                  `json:"overlays"`
+	Lint     systemLintCountsDTO    `json:"lint"`
+	Insights systemInsightCountsDTO `json:"insights"`
 }
 
 // systemItemDTO is one agents/skills list row.
@@ -226,6 +234,15 @@ func (h *Handler) systemSummary(w http.ResponseWriter, r *http.Request) {
 			s.Lint.Info = n
 		}
 	}
+
+	// Insight badge counters — cheap COUNT queries (system_insights.go), no
+	// disk IO: the summary is refetched on every WS system_item_updated.
+	promos, stales, err := insightCounts(h.DB)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.Insights = systemInsightCountsDTO{Promotions: promos, StaleOverrides: stales}
 
 	overlays, _ := listOverlays(systemOverlaysDir)
 	s.Overlays = int64(len(overlays))
