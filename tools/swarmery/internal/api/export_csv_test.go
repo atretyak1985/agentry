@@ -35,12 +35,16 @@ func TestBreakdownCSV(t *testing.T) {
 		t.Error("body missing UTF-8 BOM (Excel compatibility)")
 	}
 	lines := strings.Split(strings.TrimSpace(strings.TrimPrefix(string(body), utf8BOM)), "\n")
-	if lines[0] != "key,name,cost_usd,tokens_in,tokens_out,runs,sessions,last_used,success_rate" {
+	if lines[0] != "key,name,cost_usd,tokens_in,tokens_out,runs,sessions,last_used,success_rate,tokens_cache_read,cache_hit_rate" {
 		t.Errorf("header = %q", lines[0])
 	}
 	// analyticsServer: alpha has $0.75 / 110 in / 55 out / 2 sessions in range.
 	if len(lines) < 2 || !strings.HasPrefix(lines[1], "-work-alpha,Alpha,0.75,110,55,,2,") {
 		t.Errorf("first row = %q, want alpha totals", lines[1])
+	}
+	// Cache columns export as plain fractions (analytics uplift): 940/1050.
+	if len(lines) >= 2 && !strings.Contains(lines[1], ",940,0.8952") {
+		t.Errorf("first row = %q, want cache columns 940 + ~0.895 hit rate", lines[1])
 	}
 }
 

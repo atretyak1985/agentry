@@ -547,7 +547,11 @@ type breakdownRow struct {
 	CostUSD   *float64 `json:"cost_usd"`
 	TokensIn  *int64   `json:"tokens_in"`
 	TokensOut *int64   `json:"tokens_out"`
-	Runs      *int64   `json:"runs"`
+	// Cache columns (analytics uplift): populated for project|model rows,
+	// null on agent|skill rows — same nullable contract as cost_usd.
+	TokensCacheRead *int64   `json:"tokens_cache_read"`
+	CacheHitRate    *float64 `json:"cache_hit_rate"`
+	Runs            *int64   `json:"runs"`
 	Sessions  int64    `json:"sessions"`
 	LastUsed  *string  `json:"last_used"`
 	// success/(success+fail) over outcome-carrying sessions that contain this
@@ -602,6 +606,7 @@ func (h *Handler) breakdownTurns(by string, dr dateRange, pf string, pargs []any
 		       COUNT(t.cost_usd)              AS priced,
 		       COALESCE(SUM(t.tokens_in), 0)  AS tin,
 		       COALESCE(SUM(t.tokens_out), 0) AS tout,
+		       COALESCE(SUM(t.tokens_cache_read), 0) AS tcr,
 		       COUNT(DISTINCT t.session_id)   AS sess
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
@@ -619,8 +624,8 @@ func (h *Handler) breakdownTurns(by string, dr dateRange, pf string, pargs []any
 		var key string
 		var name sql.NullString
 		var cost float64
-		var priced, tin, tout, sess int64
-		if err := rows.Scan(&key, &name, &cost, &priced, &tin, &tout, &sess); err != nil {
+		var priced, tin, tout, tcr, sess int64
+		if err := rows.Scan(&key, &name, &cost, &priced, &tin, &tout, &tcr, &sess); err != nil {
 			return nil, err
 		}
 		row := breakdownRow{Key: key, Sessions: sess, TokensIn: &tin, TokensOut: &tout}
@@ -633,6 +638,12 @@ func (h *Handler) breakdownTurns(by string, dr dateRange, pf string, pargs []any
 		if priced > 0 {
 			c := cost
 			row.CostUSD = &c
+		}
+		tcrV := tcr
+		row.TokensCacheRead = &tcrV
+		if den := tcr + tin; den > 0 {
+			hr := float64(tcr) / float64(den)
+			row.CacheHitRate = &hr
 		}
 		out = append(out, row)
 	}

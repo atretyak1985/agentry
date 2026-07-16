@@ -448,3 +448,25 @@ func TestStatsTimeseriesCache(t *testing.T) {
 		}
 	})
 }
+
+func TestStatsBreakdownCache(t *testing.T) {
+	srv := analyticsServer(t)
+	var rows []breakdownRow
+	getJSON(t, srv.URL+"/api/stats/breakdown?by=project", &rows)
+	byKey := map[string]breakdownRow{}
+	for _, r := range rows {
+		byKey[r.Key] = r
+	}
+	alpha := byKey["-work-alpha"]
+	if alpha.TokensCacheRead == nil || *alpha.TokensCacheRead != 940 {
+		t.Errorf("alpha cache read = %v, want 940", alpha.TokensCacheRead)
+	}
+	if alpha.CacheHitRate == nil || !almostEq(*alpha.CacheHitRate, 940.0/1050.0) {
+		t.Errorf("alpha hit rate = %v, want %v", alpha.CacheHitRate, 940.0/1050.0)
+	}
+	// beta: 0 cached over 30 input tokens → an honest 0.0, not null
+	beta := byKey["-work-beta"]
+	if beta.CacheHitRate == nil || *beta.CacheHitRate != 0 {
+		t.Errorf("beta hit rate = %v, want 0", beta.CacheHitRate)
+	}
+}

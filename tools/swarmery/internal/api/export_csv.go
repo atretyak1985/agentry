@@ -61,10 +61,11 @@ func writeTimeseriesCSV(w http.ResponseWriter, ts timeseriesDTO) {
 func writeBreakdownCSV(w http.ResponseWriter, by string, rows []breakdownRow) {
 	cw := csvStart(w, "breakdown-"+by)
 	_ = cw.Write([]string{"key", "name", "cost_usd", "tokens_in", "tokens_out",
-		"runs", "sessions", "last_used", "success_rate"})
+		"runs", "sessions", "last_used", "success_rate",
+		"tokens_cache_read", "cache_hit_rate"})
 	for _, r := range rows {
 		row := []string{r.Key, r.Name, "", "", "", "",
-			strconv.FormatInt(r.Sessions, 10), "", ""}
+			strconv.FormatInt(r.Sessions, 10), "", "", "", ""}
 		if r.CostUSD != nil {
 			row[2] = fmtCSVFloat(*r.CostUSD)
 		}
@@ -82,6 +83,13 @@ func writeBreakdownCSV(w http.ResponseWriter, by string, rows []breakdownRow) {
 		}
 		if r.SuccessRate != nil {
 			row[8] = fmtCSVFloat(*r.SuccessRate)
+		}
+		// Cache columns (analytics uplift): hit rate is a 0..1 fraction.
+		if r.TokensCacheRead != nil {
+			row[9] = strconv.FormatInt(*r.TokensCacheRead, 10)
+		}
+		if r.CacheHitRate != nil {
+			row[10] = fmtCSVFloat(*r.CacheHitRate)
 		}
 		_ = cw.Write(row)
 	}
