@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
+  ErrorGroup,
   Event,
   PermissionRequest,
   Session,
@@ -16,7 +17,13 @@ import type {
   StatsOverview,
   WSMessage,
 } from '../api/types';
-import { fetchApprovals, fetchSession, fetchSessions, fetchStatsOverview } from '../api';
+import {
+  fetchApprovals,
+  fetchErrorGroups,
+  fetchSession,
+  fetchSessions,
+  fetchStatsOverview,
+} from '../api';
 import { requestSummary } from '../lib/approvals';
 import { projectColor } from '../lib/colors';
 import {
@@ -492,7 +499,104 @@ function TriageBar({ pct }: { pct: number }): JSX.Element {
   );
 }
 
-function TriageRail({ stats }: { stats: StatsOverview }): JSX.Element {
+/* ----- error drill-down modal (analytics uplift) ----- */
+
+function ErrorDrilldown({
+  day,
+  project,
+  onClose,
+}: {
+  day: string;
+  project: string | null;
+  onClose: () => void;
+}): JSX.Element {
+  const [groups, setGroups] = useState<ErrorGroup[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGroups(null);
+    setFailed(false);
+    fetchErrorGroups({ from: day, to: day, ...(project !== null ? { project } : {}) })
+      .then((r) => setGroups(r.groups))
+      .catch(() => setFailed(true));
+  }, [day, project]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="error drill-down"
+      onClick={onClose}
+    >
+      <div
+        className="mt-[8vh] max-h-[76vh] w-full max-w-[560px] overflow-y-auto rounded-[14px] border border-line-strong bg-surface p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3">
+          <h2 className="min-w-0 flex-1 truncate font-mono text-[11px] tracking-[0.14em] text-red uppercase">
+            Errors · {project ?? 'all projects'} · {day}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-line px-2 py-1 font-mono text-[10.5px] text-ink-dim hover:text-ink"
+          >
+            close
+          </button>
+        </div>
+
+        {failed && <div className="mt-3 font-mono text-[11px] text-red">failed to load error groups</div>}
+        {groups === null && !failed && <div className="mt-3 font-mono text-[11px] text-ink-dim">loading…</div>}
+        {groups !== null && groups.length === 0 && (
+          <div className="mt-3 font-mono text-[11px] text-ink-dim">no errors for this day</div>
+        )}
+
+        {groups !== null &&
+          groups.map((g) => (
+            <div key={g.key} className="mt-3 rounded-xl border border-line px-3 py-2.5">
+              <button
+                type="button"
+                onClick={() => setOpen((o) => (o === g.key ? null : g.key))}
+                className="block w-full text-left"
+                aria-expanded={open === g.key}
+              >
+                <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
+                  <span className="shrink-0 text-red">{g.count}×</span>
+                  <span className="min-w-0 flex-1 truncate text-ink-3" title={g.example}>
+                    {g.example}
+                  </span>
+                  <span className="shrink-0 text-ink-faint">{fmtAgo(g.last_ts)}</span>
+                </div>
+              </button>
+              {open === g.key && (
+                <div className="mt-2 flex flex-col gap-1 border-t border-line pt-2">
+                  {g.samples.map((s) => (
+                    <Link
+                      key={s.session_id}
+                      to={`/sessions/${String(s.session_id)}`}
+                      className="truncate font-mono text-[11px] text-blue hover:underline"
+                    >
+                      #{s.session_id} · {s.title ?? 'untitled session'}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function TriageRail({
+  stats,
+  onSelect,
+}: {
+  stats: StatsOverview;
+  onSelect: (slug: string | null) => void;
+}): JSX.Element {
   const rows = stats.errors_by_project;
   const total = rows.reduce((a, r) => a + r.errors, 0);
   return (
@@ -502,25 +606,36 @@ function TriageRail({ stats }: { stats: StatsOverview }): JSX.Element {
         <h2 className="font-mono text-[11px] tracking-[0.14em] text-red uppercase">Needs triage</h2>
       </div>
       <div className="mt-3.5 rounded-xl border border-line bg-surface px-[15px] py-[13px]">
-        <div className="flex items-baseline justify-between">
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className="flex w-full items-baseline justify-between text-left"
+          title="show all error groups"
+        >
           <span className="font-mono text-[11px] text-ink-dim">
             errors across {rows.length} {rows.length === 1 ? 'project' : 'projects'}
           </span>
           <span className="font-display text-[20px] leading-none font-semibold text-red">
             {stats.errors}
           </span>
-        </div>
+        </button>
         {rows.length === 0 ? (
           <div className="mt-2 font-mono text-[11px] text-ink-dim">no errors — clean day</div>
         ) : (
           rows.map((row) => (
-            <div key={row.slug} className="mt-[11px]">
+            <button
+              key={row.slug}
+              type="button"
+              onClick={() => onSelect(row.slug)}
+              className="mt-[11px] block w-full text-left"
+              title={`show ${row.slug} error groups`}
+            >
               <div className="flex justify-between font-mono text-[11px]">
                 <ProjectName name={row.name} slug={row.slug} className="truncate" />
                 <span className="text-red">{row.errors}</span>
               </div>
               <TriageBar pct={total > 0 ? row.errors / total : 0} />
-            </div>
+            </button>
           ))
         )}
       </div>
@@ -539,6 +654,7 @@ export function Overview(): JSX.Element {
   const [prevStats, setPrevStats] = useState<StatsOverview | null>(null);
   const [statsError, setStatsError] = useState(false);
   const [approvals, setApprovals] = useState<PermissionRequest[] | null>(null);
+  const [drill, setDrill] = useState<{ project: string | null } | null>(null);
 
   const loadSessions = useCallback((): void => {
     fetchSessions(scope !== null ? { project: scope } : {})
@@ -637,8 +753,19 @@ export function Overview(): JSX.Element {
 
       <aside className="min-w-0 border-line px-4 pb-10 wide:sticky wide:top-14 wide:min-h-[calc(100vh-56px)] wide:border-l wide:px-7 wide:pt-[34px] wide:pb-10">
         {approvals !== null && approvals.length > 0 && <WaitingRail pending={approvals} />}
-        {stats !== null && <TriageRail stats={stats} />}
+        {stats !== null && (
+          <TriageRail
+            stats={stats}
+            // "all errors" under a global scope drills into that scope, so the
+            // modal always matches the scoped total shown on the rail.
+            onSelect={(slug) => setDrill({ project: slug ?? scope })}
+          />
+        )}
       </aside>
+
+      {drill !== null && (
+        <ErrorDrilldown day={day} project={drill.project} onClose={() => setDrill(null)} />
+      )}
     </div>
   );
 }

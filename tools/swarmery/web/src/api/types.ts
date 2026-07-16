@@ -469,6 +469,27 @@ export interface DurationsResp {
   wait_total_min: number;
 }
 
+/** One sample session inside an error group (title mirrors sessions.title, nullable). */
+export interface ErrorSample {
+  session_id: number;
+  title: string | null;
+}
+
+/** GET /api/stats/errors — one normalized-message error group. */
+export interface ErrorGroup {
+  key: string;
+  example: string;
+  count: number;
+  last_ts: string;
+  samples: ErrorSample[];
+}
+
+export interface ErrorsResp {
+  from: string;
+  to: string;
+  groups: ErrorGroup[];
+}
+
 // --- Phase 2 — approvals + hooks (frozen at gate 2.2) ------------------------
 
 /** permission_requests.status */

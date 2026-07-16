@@ -11,6 +11,7 @@ import type {
   DocDetail,
   DocMeta,
   DurationsResp,
+  ErrorsResp,
   FileSessionsResponse,
   HealthResponse,
   MatrixResp,
@@ -264,6 +265,12 @@ export function fetchToolStats(range: AnalyticsRange = {}): Promise<ToolsResp> {
 export function fetchDurations(range: AnalyticsRange = {}): Promise<DurationsResp> {
   if (MOCK) return mockApi.durations(range);
   return get(`/api/stats/durations?${rangeQuery(range, {})}`);
+}
+
+/** Error events grouped by normalized message key (analytics uplift). */
+export function fetchErrorGroups(range: AnalyticsRange = {}): Promise<ErrorsResp> {
+  if (MOCK) return mockApi.errorGroups(range);
+  return get(`/api/stats/errors?${rangeQuery(range, {})}`);
 }
 
 export function fetchDocs(): Promise<DocMeta[]> {

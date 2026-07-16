@@ -28,6 +28,7 @@ import type {
   AnalyticsMetric,
   BreakdownResp,
   DurationsResp,
+  ErrorsResp,
   MatrixResp,
   TimeseriesResp,
   ToolsResp,
@@ -37,6 +38,7 @@ import { mockApprovalsList, mockResolveApproval } from './approvals';
 import {
   mockBreakdown,
   mockDurations,
+  mockErrorGroups,
   mockMatrix,
   mockTimeseries,
   mockToolStats,
@@ -1245,6 +1247,11 @@ export const mockApi = {
   async durations(range: AnalyticsRangeArg = {}): Promise<DurationsResp> {
     await delay(100);
     return mockDurations(range);
+  },
+
+  async errorGroups(range: AnalyticsRangeArg = {}): Promise<ErrorsResp> {
+    await delay(110);
+    return mockErrorGroups(range);
   },
 
   async docs(): Promise<DocMeta[]> {

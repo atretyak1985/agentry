@@ -9,6 +9,7 @@ import type {
   BreakdownResp,
   BreakdownRow,
   DurationsResp,
+  ErrorsResp,
   MatrixResp,
   TimeseriesResp,
   ToolsResp,
@@ -221,6 +222,34 @@ export function mockToolStats(range: Range): ToolsResp {
     .filter((t) => t.calls > 0)
     .sort((a, b) => b.calls - a.calls);
   return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools };
+}
+
+export function mockErrorGroups(range: Range): ErrorsResp {
+  const days = resolveDays(range);
+  const to = days[days.length - 1] ?? isoDay();
+  return {
+    from: days[0] ?? isoDay(),
+    to,
+    groups: [
+      {
+        key: 'api error # overloaded (request id #)',
+        example: 'API Error 529 overloaded (request id req_011abc)',
+        count: 7,
+        last_ts: `${to}T16:42:00.000Z`,
+        samples: [
+          { session_id: 1, title: 'Fix flaky auth e2e' },
+          { session_id: 3, title: null },
+        ],
+      },
+      {
+        key: "error: enoent: no such file or directory, open '/tmp/build-#/out.log'",
+        example: "Error: ENOENT: no such file or directory, open '/tmp/build-4821/out.log'",
+        count: 2,
+        last_ts: `${to}T11:03:00.000Z`,
+        samples: [{ session_id: 2, title: 'Projects dashboard polish' }],
+      },
+    ],
+  };
 }
 
 export function mockDurations(range: Range): DurationsResp {
