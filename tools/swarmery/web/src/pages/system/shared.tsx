@@ -1,11 +1,11 @@
 // Shared primitives of the System screen (phase 4, Stage 1 read-only):
-// scope/origin/lint badges, the scope+project filter row, and the list-fetch
-// hook every tab uses. Visual language mirrors components/ui.tsx (hairline
+// scope/origin/lint badges, the scope filter row (project filtering lives in
+// the global header scope switcher), and the list-fetch hook every tab uses. Visual language mirrors components/ui.tsx (hairline
 // pill chips, mono micro-type); tooltips are native `title` attributes.
 
 import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import type { LintSeverity, Project } from '../../api/types';
+import type { LintSeverity } from '../../api/types';
 import type { SystemListFilters } from '../../api/system';
 import { useProjectColor } from '../../lib/projectColors';
 
@@ -190,73 +190,6 @@ function focusOption(menuRef: RefObject<HTMLDivElement | null>, delta: 1 | -1): 
   list[(idx + delta + list.length) % list.length]?.focus();
 }
 
-export function ProjectDropdown({
-  projects,
-  value,
-  onChange,
-}: {
-  projects: Project[];
-  value: string | null;
-  onChange: (slug: string | null) => void;
-}): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useDropdownDismiss(open, setOpen, rootRef, buttonRef);
-  const colorFor = useProjectColor();
-
-  const select = (slug: string | null): void => {
-    onChange(slug);
-    setOpen(false);
-    buttonRef.current?.focus();
-  };
-
-  const selected = value !== null ? (projects.find((p) => p.slug === value) ?? null) : null;
-  const label = value === null ? 'all projects' : (selected?.name ?? selected?.slug ?? value);
-
-  return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="filter by project"
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => { if (e.key === 'ArrowDown' && open) { e.preventDefault(); focusOption(menuRef, 1); } }}
-        className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-ink-dim aria-expanded:bg-surface2 aria-expanded:text-ink"
-      >
-        <span className="truncate" style={value !== null ? { color: colorFor(value) } : undefined}>{label}</span>
-        <span aria-hidden="true" className="text-[8px]">▾</span>
-      </button>
-      {open && (
-        <div
-          ref={menuRef}
-          role="listbox"
-          aria-label="project"
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusOption(menuRef, e.key === 'ArrowDown' ? 1 : -1); }
-          }}
-          className="absolute top-full left-0 z-20 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-xl shadow-black/40"
-        >
-          <DropdownOption selected={value === null} label="all projects" onSelect={() => select(null)} />
-          {projects.map((p) => (
-            <DropdownOption
-              key={p.id}
-              selected={value === p.slug}
-              label={p.name ?? p.slug}
-              labelColor={colorFor(p.slug)}
-              onSelect={() => select(p.slug)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ----- sort ----- */
 
 /** List sort keys (URL ?sort=). 'name' is the default and stays out of the URL. */
@@ -376,27 +309,22 @@ export function SortDropdown({
   );
 }
 
-/** Search input + project dropdown + scope chips — the top filter bar of every
- * System tab. Search is client-side; scope/project are pushed to the API. When
- * onSort is provided the client-side sort dropdown is shown (agents/skills). */
+/** Search input + scope chips — the top filter bar of every System tab.
+ * Search is client-side; scope is pushed to the API. Project filtering comes
+ * from the global header scope switcher, not from this row. When onSort is
+ * provided the client-side sort dropdown is shown (agents/skills). */
 export function FiltersRow({
   scope,
-  project,
-  projects,
   search,
   onSearch,
   onScope,
-  onProject,
   sort,
   onSort,
 }: {
   scope: 'global' | 'project' | null;
-  project: string | null;
-  projects: Project[];
   search: string;
   onSearch: (s: string) => void;
   onScope: (scope: 'global' | 'project' | null) => void;
-  onProject: (slug: string | null) => void;
   sort?: SystemSort;
   onSort?: (sort: SystemSort) => void;
 }): JSX.Element {
@@ -422,7 +350,6 @@ export function FiltersRow({
           </button>
         )}
       </div>
-      <ProjectDropdown projects={projects} value={project} onChange={onProject} />
       <span className="mx-1 w-px shrink-0 self-stretch bg-line-strong" aria-hidden="true" />
       <FilterChip selected={scope === null} onClick={() => onScope(null)}>all scopes</FilterChip>
       <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>global</FilterChip>

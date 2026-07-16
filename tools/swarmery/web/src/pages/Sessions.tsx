@@ -1,20 +1,18 @@
-// Sessions list (design §3.3): project filter (/api/projects) as a headless
-// dropdown ("● all projects ▾"), status chip row with live counts, title
-// search (client-side, debounced), live updates over WS. The project filter
-// is pushed to the API as a query param; status is filtered CLIENT-side so
-// the chip counts always reflect the searched+project-filtered list.
-// Redesign layout: mono search input + project dropdown + hairline separator
-// + status chips (wrapping row), sessions grouped by day under mono eyebrow
-// rules, each day one navy list card — aligned table columns at ≥900px.
+// Sessions list (design §3.3): status chip row with live counts, title
+// search (client-side, debounced), live updates over WS. Project filtering
+// comes from the GLOBAL header scope switcher (useScope) — pushed to the API
+// as a query param; status is filtered CLIENT-side so the chip counts always
+// reflect the searched+scoped list.
+// Redesign layout: mono search input + hairline separator + status chips
+// (wrapping row), sessions grouped by day under mono eyebrow rules, each day
+// one navy list card — aligned table columns at ≥900px.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import type { Project, Session, SessionStatus, WSMessage } from '../api/types';
-import { fetchProjects, fetchSessions } from '../api';
+import type { Session, SessionStatus, WSMessage } from '../api/types';
+import { fetchSessions } from '../api';
 import { liveActionText } from '../lib/payload';
 import { useScope } from '../lib/scope';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
-import { ProjectDropdown } from '../components/ProjectDropdown';
 import { SessionCard } from '../components/SessionCard';
 import { Empty, ErrorBox, GroupHeader, Loading } from '../components/ui';
 
@@ -91,21 +89,9 @@ function groupByDay(sorted: Session[]): DayGroup[] {
 }
 
 export function Sessions(): JSX.Element {
-  // Deep-linkable project filter (?project=<slug> — Overview rail rows) wins
-  // over the global scope on first render; scope changes re-seed it after.
-  const [searchParams] = useSearchParams();
+  // Project filtering comes from the global header scope switcher — this page
+  // has no local project dropdown of its own.
   const { scope } = useScope();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState<string | null>(searchParams.get('project') ?? scope);
-  // The header switcher re-seeds the local filter (spec: local filters still
-  // work, but initialize from — and follow — the global scope). Guarded by the
-  // previous scope so the mount run cannot clobber a ?project= deep link.
-  const prevScopeRef = useRef(scope);
-  useEffect(() => {
-    if (prevScopeRef.current === scope) return;
-    prevScopeRef.current = scope;
-    setProject(scope);
-  }, [scope]);
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -113,10 +99,10 @@ export function Sessions(): JSX.Element {
   const [nowById, setNowById] = useState<Record<number, string>>({});
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  // Request generation: bumped whenever the project filter resets the list so
-  // stale in-flight page responses (old project) are dropped, not appended —
-  // otherwise a slow page-2 fetch would leak old-project rows and resurrect
-  // the old cursor (project filtering is server-side, not re-checked here).
+  // Request generation: bumped whenever the scope resets the list so stale
+  // in-flight page responses (old scope) are dropped, not appended —
+  // otherwise a slow page-2 fetch would leak old-scope rows and resurrect
+  // the old cursor (scope filtering is server-side, not re-checked here).
   const genRef = useRef(0);
 
   // Title search: raw input + a ~150ms-debounced lowercase query.
@@ -127,21 +113,15 @@ export function Sessions(): JSX.Element {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
-    fetchProjects()
-      .then(setProjects)
-      .catch(() => setProjects([])); // dropdown degrades to "all projects"
-  }, []);
-
   // First page — also the WS-reconnect refetch: the live socket keeps the
   // loaded window fresh in between, so resetting to page 1 on reconnect is
   // the simplest correct behaviour (older pages reload on scroll).
-  // Only the project filter goes to the API — status stays client-side so
+  // Only the scope filter goes to the API — status stays client-side so
   // the chip counts can be computed over every status of the loaded list.
   const load = useCallback((): void => {
     const gen = genRef.current;
     const filters: { project?: string } = {};
-    if (project !== null) filters.project = project;
+    if (scope !== null) filters.project = scope;
     fetchSessions(filters, { limit: PAGE_LIMIT })
       .then((page) => {
         if (gen !== genRef.current) return; // stale — filter changed mid-flight
@@ -153,7 +133,7 @@ export function Sessions(): JSX.Element {
         if (gen !== genRef.current) return;
         setError(String(e));
       });
-  }, [project]);
+  }, [scope]);
 
   useEffect(() => {
     genRef.current += 1; // invalidate in-flight responses for the old filter
@@ -168,7 +148,7 @@ export function Sessions(): JSX.Element {
     loadingMoreRef.current = true;
     const gen = genRef.current;
     const filters: { project?: string } = {};
-    if (project !== null) filters.project = project;
+    if (scope !== null) filters.project = scope;
     fetchSessions(filters, { limit: PAGE_LIMIT, cursor: nextCursor })
       .then((page) => {
         if (gen !== genRef.current) return; // stale — would leak old-project rows
@@ -185,7 +165,7 @@ export function Sessions(): JSX.Element {
       .finally(() => {
         loadingMoreRef.current = false;
       });
-  }, [nextCursor, project]);
+  }, [nextCursor, scope]);
 
   // Infinite scroll: a sentinel row after the last day group fetches the next
   // page while one exists (rootMargin prefetches before it is visible).
@@ -203,8 +183,8 @@ export function Sessions(): JSX.Element {
   }, [nextCursor, loadMore]);
 
   const matchesProject = useCallback(
-    (s: Session): boolean => project === null || s.projectSlug === project,
-    [project],
+    (s: Session): boolean => scope === null || s.projectSlug === scope,
+    [scope],
   );
 
   const onMessage = useCallback(
@@ -254,7 +234,8 @@ export function Sessions(): JSX.Element {
         {sorted.length} match · newest first
       </div>
 
-      {/* Filters row (Canvas §Sessions): search · project dropdown │ status chips.
+      {/* Filters row (Canvas §Sessions): search │ status chips — project
+          filtering lives in the header scope switcher.
           Wraps cleanly at 390px — the input takes the first line. */}
       <div className="mt-5 flex flex-wrap items-center gap-2">
         <div className="relative w-full desk:w-[260px]">
@@ -278,7 +259,6 @@ export function Sessions(): JSX.Element {
           )}
         </div>
 
-        <ProjectDropdown projects={projects} value={project} onChange={setProject} />
         <span className="mx-1 w-px shrink-0 self-stretch bg-line-strong" aria-hidden="true" />
         {STATUSES.map((s) => (
           <FilterChip

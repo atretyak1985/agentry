@@ -307,7 +307,6 @@ export function HooksTab({
   lint,
   refreshKey,
   onScope,
-  onProject,
   onReadonly,
 }: {
   scope: 'global' | 'project' | null;
@@ -317,7 +316,6 @@ export function HooksTab({
   lint: LintSeverity | null;
   refreshKey: number;
   onScope: (scope: 'global' | 'project' | null) => void;
-  onProject: (slug: string | null) => void;
   /** A write hit the global readonly kill-switch — page-level banner. */
   onReadonly: () => void;
 }): JSX.Element {
@@ -357,12 +355,9 @@ export function HooksTab({
       <div className="shrink-0 pt-3 pb-2">
         <FiltersRow
           scope={scope}
-          project={project}
-          projects={projects}
           search={search}
           onSearch={setSearch}
           onScope={onScope}
-          onProject={onProject}
         />
       </div>
       {/* scrollable hook list */}

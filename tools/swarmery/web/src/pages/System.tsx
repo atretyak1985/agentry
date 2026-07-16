@@ -205,7 +205,6 @@ function ItemsTab({
   selectedId,
   refreshKey,
   onScope,
-  onProject,
   onSort,
   onSelect,
   onMutated,
@@ -223,7 +222,6 @@ function ItemsTab({
   selectedId: number | null;
   refreshKey: number;
   onScope: (scope: 'global' | 'project' | null) => void;
-  onProject: (slug: string | null) => void;
   onSort: (sort: SystemSort) => void;
   onSelect: (id: number | null) => void;
   /** A write landed in the panel/form — refetch list + summary + detail. */
@@ -315,12 +313,9 @@ function ItemsTab({
       <div className="shrink-0 pt-0 pb-3">
         <FiltersRow
           scope={scope}
-          project={project}
-          projects={projects}
           search={search}
           onSearch={setSearch}
           onScope={onScope}
-          onProject={onProject}
           sort={sort}
           onSort={onSort}
         />
@@ -388,10 +383,9 @@ export function System(): JSX.Element {
   const tab = parseTab(searchParams.get('tab'));
   const scope = parseScope(searchParams.get('level'));
   const { scope: globalScope } = useScope();
-  // Explicit ?project= (local filter) wins; otherwise the global scope seeds
-  // it. Clearing the local filter falls back to the global scope — clear the
-  // header switcher to see everything.
-  const project = searchParams.get('project') ?? globalScope;
+  // Project filtering comes from the global header scope switcher only —
+  // this page has no local project dropdown.
+  const project = globalScope;
   const lint = parseLint(searchParams.get('lint'));
   const sort = parseSort(searchParams.get('sort'));
   const itemParam = searchParams.get('item');
@@ -453,15 +447,12 @@ export function System(): JSX.Element {
   useLiveUpdates(onMessage, refresh);
 
   const setTab = (next: SystemTab): void => {
-    // Keep scope/project/lint across tabs (they mean the same thing); the
-    // item selection belongs to one list.
+    // Keep level/lint across tabs (they mean the same thing); the item
+    // selection belongs to one list.
     patchParams({ tab: next === 'agents' ? null : next, item: null });
   };
   const onScope = (next: 'global' | 'project' | null): void => {
     patchParams({ level: next, item: null });
-  };
-  const onProject = (slug: string | null): void => {
-    patchParams({ project: slug, item: null });
   };
   const onLint = (severity: LintSeverity | null): void => {
     patchParams({ lint: severity, item: null });
@@ -486,7 +477,6 @@ export function System(): JSX.Element {
     lint,
     refreshKey,
     onScope,
-    onProject,
   };
 
   // Insights tab-label badge: promotion + stale-override counters from the
