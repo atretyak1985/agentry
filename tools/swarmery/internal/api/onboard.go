@@ -47,12 +47,36 @@ type onboardRequest struct {
 	Slug  string   `json:"slug"`
 	Path  string   `json:"path"`
 	Packs []string `json:"packs"`
+	// WorkspaceRoot overrides the server default for this one project; empty
+	// falls back to onboardCfg.WorkspaceRoot (AGENT_WORKSPACE_ROOT baked in it).
+	WorkspaceRoot string `json:"workspaceRoot"`
 }
 
 type onboardResponse struct {
-	Slug  string   `json:"slug"`
-	Path  string   `json:"path"`
-	Steps []string `json:"steps"`
+	Slug string `json:"slug"`
+	Path string `json:"path"`
+	// WorkspaceRoot echoes the value actually used (default or override) so the
+	// UI can show where the namespace landed.
+	WorkspaceRoot string   `json:"workspaceRoot"`
+	Steps         []string `json:"steps"`
+}
+
+// onboardConfigResponse feeds the dashboard modal its default values and the
+// enabled state, so it can prefill placeholders and disable the form up front
+// instead of only discovering the 403 on submit.
+type onboardConfigResponse struct {
+	Enabled       bool     `json:"enabled"`
+	WorkspaceRoot string   `json:"workspaceRoot"`
+	Roots         []string `json:"roots"`
+}
+
+// onboardConfig handles GET /api/projects/onboard/config (read-only, no fence).
+func (h *Handler) onboardConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, onboardConfigResponse{
+		Enabled:       len(onboardCfg.Roots) > 0,
+		WorkspaceRoot: onboardCfg.WorkspaceRoot,
+		Roots:         onboardCfg.Roots,
+	}, nil)
 }
 
 // onboardProject handles POST /api/projects/onboard.
@@ -88,11 +112,17 @@ func (h *Handler) onboardProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-project workspace override; empty falls back to the server default.
+	wsRoot := strings.TrimSpace(req.WorkspaceRoot)
+	if wsRoot == "" {
+		wsRoot = onboardCfg.WorkspaceRoot
+	}
+
 	cfg := onboard.Config{
 		Slug:          req.Slug,
 		ProjectDir:    target,
 		Packs:         req.Packs,
-		WorkspaceRoot: onboardCfg.WorkspaceRoot,
+		WorkspaceRoot: wsRoot,
 		StatuslineSrc: onboardCfg.StatuslineSrc,
 	}
 	if err := onboard.Validate(cfg); err != nil {
@@ -104,7 +134,9 @@ func (h *Handler) onboardProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSONStatus(w, http.StatusCreated, onboardResponse{Slug: req.Slug, Path: target, Steps: res.Steps})
+	writeJSONStatus(w, http.StatusCreated, onboardResponse{
+		Slug: req.Slug, Path: target, WorkspaceRoot: wsRoot, Steps: res.Steps,
+	})
 }
 
 // resolveUnderRoots returns the cleaned absolute target path only if it lives

@@ -29,10 +29,10 @@ import {
   type AnswerMap,
   type ParsedQuestion,
 } from '../lib/approvals';
-import { projectColor } from '../lib/colors';
-import { fmtAgo, projectLabel } from '../lib/format';
+import { fmtAgo } from '../lib/format';
 import { applyPermissionMessage, useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
+import { ProjectName } from '../components/ProjectName';
 
 const HISTORY_LIMIT = 50;
 
@@ -65,10 +65,20 @@ const OPTIMISTIC_STATUS: Record<ApprovalAction, PermissionRequestStatus> = {
 
 /* ----- session attribution (project + title when resolvable) ----- */
 
-function sessionLabel(sessionId: number, session: Session | null): string {
-  if (session === null) return `session #${String(sessionId)}`;
-  const project = projectLabel(session.projectName, session.projectSlug);
-  return session.title !== null ? `${project} · ${session.title}` : project;
+function SessionLabel({
+  sessionId,
+  session,
+}: {
+  sessionId: number;
+  session: Session | null;
+}): JSX.Element {
+  if (session === null) return <>session #{String(sessionId)}</>;
+  return (
+    <>
+      <ProjectName name={session.projectName} slug={session.projectSlug} />
+      {session.title !== null ? ` · ${session.title}` : ''}
+    </>
+  );
 }
 
 /* ----- one pending card ----- */
@@ -231,14 +241,7 @@ function PendingCard({
         to={sessionTo}
         className="mt-2.5 flex items-center gap-[7px] font-mono text-[11px] text-ink-dim transition-colors hover:text-brand"
       >
-        {session !== null && (
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: projectColor(session.projectSlug) }}
-            aria-hidden="true"
-          />
-        )}
-        <span className="truncate">{sessionLabel(request.sessionId, session)}</span>
+        <span className="truncate"><SessionLabel sessionId={request.sessionId} session={session} /></span>
       </Link>
 
       {questions !== null && (
@@ -371,7 +374,7 @@ function HistoryRow({
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px] text-ink-dim">
-        <span className="truncate font-mono text-[10.5px]">{sessionLabel(request.sessionId, session)}</span>
+        <span className="truncate font-mono text-[10.5px]"><SessionLabel sessionId={request.sessionId} session={session} /></span>
         {request.reason !== null && (
           <span className="min-w-0 [text-wrap:pretty]">reason: “{request.reason}”</span>
         )}

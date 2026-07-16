@@ -66,6 +66,54 @@ func TestOnboardHappyPath(t *testing.T) {
 	}
 }
 
+func TestOnboardConfigReportsDefaults(t *testing.T) {
+	ws := t.TempDir()
+	root := t.TempDir()
+	srv, _ := onboardServer(t, OnboardConfig{Roots: []string{root}, WorkspaceRoot: ws})
+
+	out := doJSON(t, http.MethodGet, srv.URL+"/api/projects/onboard/config", nil, http.StatusOK)
+	if out["enabled"] != true {
+		t.Errorf("enabled = %v, want true", out["enabled"])
+	}
+	if out["workspaceRoot"] != ws {
+		t.Errorf("workspaceRoot = %v, want %v", out["workspaceRoot"], ws)
+	}
+}
+
+func TestOnboardConfigDisabledWhenNoRoots(t *testing.T) {
+	srv, _ := onboardServer(t, OnboardConfig{})
+	out := doJSON(t, http.MethodGet, srv.URL+"/api/projects/onboard/config", nil, http.StatusOK)
+	if out["enabled"] != false {
+		t.Errorf("enabled = %v, want false", out["enabled"])
+	}
+}
+
+func TestOnboardWorkspaceRootOverride(t *testing.T) {
+	root := t.TempDir()
+	serverWS := t.TempDir()
+	overrideWS := t.TempDir()
+	proj := filepath.Join(root, "ovr-project")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := onboardServer(t, OnboardConfig{Roots: []string{root}, WorkspaceRoot: serverWS})
+
+	out := doJSON(t, http.MethodPost, srv.URL+"/api/projects/onboard",
+		map[string]any{"slug": "ovr-project", "path": proj, "workspaceRoot": overrideWS},
+		http.StatusCreated)
+
+	if out["workspaceRoot"] != overrideWS {
+		t.Errorf("workspaceRoot echo = %v, want %v", out["workspaceRoot"], overrideWS)
+	}
+	// Namespace carved under the OVERRIDE, not the server default.
+	if _, err := os.Stat(filepath.Join(overrideWS, "ovr-project", "workspace", "plans")); err != nil {
+		t.Errorf("namespace not carved under override: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(serverWS, "ovr-project")); !os.IsNotExist(err) {
+		t.Errorf("server-default workspace should be untouched")
+	}
+}
+
 func TestOnboardRejectsPathOutsideRoots(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir() // a sibling tmp dir, NOT under root

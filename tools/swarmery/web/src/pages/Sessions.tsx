@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { Project, Session, SessionStatus, WSMessage } from '../api/types';
 import { fetchProjects, fetchSessions } from '../api';
-import { projectColor } from '../lib/colors';
+import { useProjectColor } from '../lib/projectColors';
 import { projectLabel } from '../lib/format';
 import { liveActionText } from '../lib/payload';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
@@ -62,19 +62,7 @@ function FilterChip({
   );
 }
 
-/* ----- project dropdown — headless "● all projects ▾" (screenshot 1) ----- */
-
-const ALL_PROJECTS_DOT = '#8b8f99'; // ink-dim — neutral "all projects" dot
-
-function Dot({ color }: { color: string }): JSX.Element {
-  return (
-    <span
-      className="h-1.5 w-1.5 shrink-0 rounded-full"
-      style={{ background: color }}
-      aria-hidden="true"
-    />
-  );
-}
+/* ----- project dropdown — headless "all projects ▾" (screenshot 1) ----- */
 
 function ProjectDropdown({
   projects,
@@ -90,6 +78,11 @@ function ProjectDropdown({
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // App-wide map: evenly-spaced, guaranteed-distinct colors across the whole
+  // project list, so no two rows share a hue (deep-linked slugs fall back to
+  // the per-slug hash).
+  const colorFor = useProjectColor();
 
   // Escape closes (restoring focus to the trigger); outside click closes.
   useEffect(() => {
@@ -130,8 +123,6 @@ function ProjectDropdown({
   // Deep-linked slug not in /api/projects yet — show the raw slug, keep the filter.
   const label =
     value === null ? 'all projects' : selected !== null ? projectLabel(selected.name, selected.slug) : value;
-  const dot = value === null ? ALL_PROJECTS_DOT : projectColor(value);
-
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -149,8 +140,9 @@ function ProjectDropdown({
         }}
         className="flex max-w-[200px] items-center gap-1.5 rounded-full border border-line-strong px-[11px] py-[5px] font-mono text-[10.5px] whitespace-nowrap text-ink-dim transition-colors hover:text-ink aria-expanded:border-[#4a4e58] aria-expanded:bg-surface2 aria-expanded:text-ink"
       >
-        <Dot color={dot} />
-        <span className="truncate">{label}</span>
+        <span className="truncate" style={value !== null ? { color: colorFor(value) } : undefined}>
+          {label}
+        </span>
         <span aria-hidden="true" className="text-[9px] text-ink-faint">
           ▾
         </span>
@@ -170,7 +162,6 @@ function ProjectDropdown({
         >
           <DropdownOption
             selected={value === null}
-            dot={ALL_PROJECTS_DOT}
             label="all projects"
             onSelect={() => select(null)}
           />
@@ -178,8 +169,8 @@ function ProjectDropdown({
             <DropdownOption
               key={p.id}
               selected={value === p.slug}
-              dot={projectColor(p.slug)}
               label={projectLabel(p.name, p.slug)}
+              labelColor={colorFor(p.slug)}
               onSelect={() => select(p.slug)}
             />
           ))}
@@ -191,13 +182,14 @@ function ProjectDropdown({
 
 function DropdownOption({
   selected,
-  dot,
   label,
+  labelColor,
   onSelect,
 }: {
   selected: boolean;
-  dot: string;
   label: string;
+  /** Color the option label (project rows); omit for "all projects". */
+  labelColor?: string;
   onSelect: () => void;
 }): JSX.Element {
   return (
@@ -210,8 +202,12 @@ function DropdownOption({
         selected ? 'bg-surface2 text-ink' : 'text-ink-3'
       }`}
     >
-      <Dot color={dot} />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span
+        className="min-w-0 flex-1 truncate"
+        style={labelColor !== undefined ? { color: labelColor } : undefined}
+      >
+        {label}
+      </span>
       {selected && <span aria-hidden="true">✓</span>}
     </button>
   );

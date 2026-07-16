@@ -10,9 +10,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { SessionDetail, SessionStatus, WSMessage } from '../api/types';
 import { fetchSession } from '../api';
-import { fmtAgo, fmtCost, fmtSpan, fmtTokens, projectLabel } from '../lib/format';
+import { fmtAgo, fmtCost, fmtSpan, fmtTokens } from '../lib/format';
 import { useLiveUpdates } from '../lib/ws';
 import { TaskChip } from '../components/TaskChip';
+import { ProjectName } from '../components/ProjectName';
 import { ErrorBox, Loading } from '../components/ui';
 import { Timeline } from './detail/Timeline';
 import { Diffs } from './detail/Diffs';
@@ -217,8 +218,8 @@ export function SessionDetailPage(): JSX.Element {
             ← sessions
           </Link>
           <span aria-hidden="true">/</span>
-          <span className="truncate text-brand">
-            {projectLabel(detail.projectName, detail.projectSlug)}
+          <span className="truncate">
+            <ProjectName name={detail.projectName} slug={detail.projectSlug} />
             {detail.gitBranch !== null ? ` · ${detail.gitBranch}` : ''}
           </span>
         </div>
