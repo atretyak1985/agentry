@@ -1026,6 +1026,7 @@ export interface SearchTurn {
   sessionId: number;
   sessionTitle: string | null;
   projectSlug: string;
+  projectName: string | null;
   startedAt: string;
   role: TurnRole;
   /** Subagent that produced the turn; null = orchestrator. */

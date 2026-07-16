@@ -97,7 +97,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
   const navigate = useNavigate();
   // Global project scope: search + file drill-in respect it like every page
   // does; the static Navigation section stays scope-independent.
-  const { scope } = useScope();
+  const { scope, scopeName } = useScope();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResponse | null>(null);
   // File drill-in: non-null while listing the sessions that touched one path.
@@ -238,9 +238,9 @@ export function CommandPalette({ onClose }: { onClose: () => void }): JSX.Elemen
           {scope !== null && (
             <span
               className="max-w-[30%] shrink-0 truncate rounded-[6px] border border-line-strong bg-surface2 px-1.5 py-0.5 font-mono text-[10.5px] text-ink-dim"
-              title={`results scoped to ${scope}`}
+              title={`results scoped to ${scopeName ?? scope}`}
             >
-              {scope}
+              {scopeName ?? scope}
             </span>
           )}
           {filePath !== null && (
@@ -309,7 +309,8 @@ function ItemRow({ item }: { item: PaletteItem }): JSX.Element {
             {item.session.title ?? item.session.gitBranch ?? `session #${String(item.session.id)}`}
           </span>
           <span className="ml-auto shrink-0 font-mono text-[10.5px] text-ink-faint">
-            {item.session.projectSlug} · {item.session.startedAt.slice(0, 10)}
+            {item.session.projectName ?? item.session.projectSlug} ·{' '}
+            {item.session.startedAt.slice(0, 10)}
           </span>
         </>
       );
@@ -323,7 +324,7 @@ function ItemRow({ item }: { item: PaletteItem }): JSX.Element {
             <Snippet text={item.turn.snippet} />
           </span>
           <span className="ml-auto shrink-0 font-mono text-[10.5px] text-ink-faint">
-            {item.turn.sessionTitle ?? item.turn.projectSlug}
+            {item.turn.sessionTitle ?? item.turn.projectName ?? item.turn.projectSlug}
           </span>
         </>
       );

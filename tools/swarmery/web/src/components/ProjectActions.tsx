@@ -98,7 +98,7 @@ function TagEditor({
           if (e.key === 'Escape') onClose();
         }}
         placeholder="billing, infra"
-        aria-label={`tags for ${project.slug}`}
+        aria-label={`tags for ${project.name ?? project.slug}`}
         autoFocus
         className="mt-2 w-full rounded-[9px] border border-line-strong bg-surface px-2.5 py-[6px] font-mono text-[11.5px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-ink-dim"
       />
@@ -224,7 +224,7 @@ export function ProjectActions({
         onCancel={() => setConfirm(null)}
         onConfirm={() => void run(() => archiveProject(project.id))}
       >
-        Hide <span className="font-mono text-ink">{project.slug}</span> from the projects list.
+        Hide <span className="font-mono text-ink">{project.name ?? project.slug}</span> from the projects list.
         Nothing is deleted — its sessions and transcripts are kept, and you can restore it from
         “show archived”.
       </ConfirmDialog>
@@ -237,7 +237,7 @@ export function ProjectActions({
         onCancel={() => setConfirm(null)}
         onConfirm={() => void run(() => restoreProject(project.id))}
       >
-        Bring <span className="font-mono text-ink">{project.slug}</span> back into the default
+        Bring <span className="font-mono text-ink">{project.name ?? project.slug}</span> back into the default
         projects list.
       </ConfirmDialog>
 

@@ -20,6 +20,7 @@ import {
 import { fmtAgo } from '../lib/format';
 import { useScope } from '../lib/scope';
 import { useLiveUpdates } from '../lib/ws';
+import { HeaderFilters } from '../components/HeaderFilters';
 import { Empty, ErrorBox, Loading } from '../components/ui';
 import {
   FiltersRow,
@@ -309,8 +310,8 @@ function ItemsTab({
 
   return (
     <div className="flex h-full flex-col">
-      {/* filters + new agent — never scroll */}
-      <div className="shrink-0 pt-0 pb-3">
+      {/* filters (header slot on desk+, in-body below) + new agent — never scroll */}
+      <HeaderFilters>
         <FiltersRow
           scope={scope}
           search={search}
@@ -318,7 +319,20 @@ function ItemsTab({
           onScope={onScope}
           sort={sort}
           onSort={onSort}
+          header
         />
+      </HeaderFilters>
+      <div className="shrink-0 pt-0 pb-3">
+        <div className="xl:hidden">
+          <FiltersRow
+            scope={scope}
+            search={search}
+            onSearch={setSearch}
+            onScope={onScope}
+            sort={sort}
+            onSort={onSort}
+          />
+        </div>
         {kind === 'agents' && (
           <div className="mt-[14px]">
             {creating ? (
@@ -581,7 +595,10 @@ export function System(): JSX.Element {
         )}
         {tab === 'insights' && (
           <div className="h-full overflow-y-auto pb-4 pt-3 [-webkit-overflow-scrolling:touch]">
-            <InsightsTab refreshKey={refreshKey} />
+            <InsightsTab
+              refreshKey={refreshKey}
+              projectNames={Object.fromEntries(projects.map((p) => [p.slug, p.name ?? p.slug]))}
+            />
           </div>
         )}
       </div>

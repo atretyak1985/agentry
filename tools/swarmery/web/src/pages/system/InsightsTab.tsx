@@ -6,7 +6,7 @@
 // diff (DiffBlock, shared with the detail panel) + a copyable next-step
 // hint. Display-only by design — promotion itself stays a manual flow.
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type {
   SystemDeadComponent,
   SystemInsights,
@@ -50,15 +50,20 @@ function SimilarityChip({
   );
 }
 
+/** slug → display name map, provided once at the tab root so every chip can
+ * show the clean project name instead of the raw path-derived slug. */
+const NamesCtx = createContext<Record<string, string>>({});
+
 function ProjectChip({ slug }: { slug: string | null }): JSX.Element {
   // App-wide distinct-color map (falls back to the per-slug hash off-list).
   const colorFor = useProjectColor();
+  const names = useContext(NamesCtx);
   if (slug === null) {
     return <span className="font-mono text-[10.5px] text-ink-dim">global</span>;
   }
   return (
     <span className="font-mono text-[10.5px]" style={{ color: colorFor(slug) }}>
-      {slug}
+      {names[slug] ?? slug}
     </span>
   );
 }
@@ -238,7 +243,14 @@ function DeadRow({ d }: { d: SystemDeadComponent }): JSX.Element {
 
 /* ----- the tab ----- */
 
-export function InsightsTab({ refreshKey }: { refreshKey: number }): JSX.Element {
+export function InsightsTab({
+  refreshKey,
+  projectNames,
+}: {
+  refreshKey: number;
+  /** slug → display name (from the page's projects list) for clean chips. */
+  projectNames: Record<string, string>;
+}): JSX.Element {
   const [insights, setInsights] = useState<SystemInsights | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -263,6 +275,7 @@ export function InsightsTab({ refreshKey }: { refreshKey: number }): JSX.Element
   if (insights === null) return <Loading label="insights…" />;
 
   return (
+    <NamesCtx.Provider value={projectNames}>
     <div className="space-y-4">
       <InsightSection
         title="Promotion candidates"
@@ -302,5 +315,6 @@ export function InsightsTab({ refreshKey }: { refreshKey: number }): JSX.Element
         )}
       </InsightSection>
     </div>
+    </NamesCtx.Provider>
   );
 }

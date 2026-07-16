@@ -67,7 +67,7 @@ export function AttachModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="font-display text-[14px] font-bold text-ink">
-          Attach <span className="font-mono">{project.slug}</span>
+          Attach <span className="font-mono">{project.name ?? project.slug}</span>
         </div>
         <div className="mt-1 text-[12px] leading-relaxed text-ink-dim">
           Merges the swarmery entries back into{' '}

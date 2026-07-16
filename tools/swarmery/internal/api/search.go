@@ -40,6 +40,7 @@ type searchTurnDTO struct {
 	SessionID    int64   `json:"sessionId"`
 	SessionTitle *string `json:"sessionTitle"`
 	ProjectSlug  string  `json:"projectSlug"`
+	ProjectName  *string `json:"projectName"`
 	StartedAt    string  `json:"startedAt"`
 	Role         string  `json:"role"`
 	AgentName    *string `json:"agentName"`
@@ -165,7 +166,7 @@ func (h *Handler) searchSessions(q, project string, limit int) ([]searchSessionD
 
 func (h *Handler) searchTurns(q, project string, limit int) ([]searchTurnDTO, error) {
 	query := `
-		SELECT t.id, s.id, s.title, p.slug, t.started_at, t.role, t.agent_name,
+		SELECT t.id, s.id, s.title, p.slug, p.name, t.started_at, t.role, t.agent_name,
 		       snippet(turns_fts, 0, '` + snipOpen + `', '` + snipClose + `', '…', 12)
 		FROM turns_fts
 		JOIN turns t ON t.id = turns_fts.rowid
@@ -189,7 +190,7 @@ func (h *Handler) searchTurns(q, project string, limit int) ([]searchTurnDTO, er
 	for rows.Next() {
 		var t searchTurnDTO
 		if err := rows.Scan(&t.TurnID, &t.SessionID, &t.SessionTitle, &t.ProjectSlug,
-			&t.StartedAt, &t.Role, &t.AgentName, &t.Snippet); err != nil {
+			&t.ProjectName, &t.StartedAt, &t.Role, &t.AgentName, &t.Snippet); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

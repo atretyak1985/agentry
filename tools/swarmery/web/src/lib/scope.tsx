@@ -16,6 +16,8 @@ import {
   type ReactNode,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { Project } from '../api/types';
+import { fetchProjects } from '../api';
 
 const STORAGE_KEY = 'swarmery.scope';
 
@@ -23,9 +25,19 @@ interface ScopeValue {
   /** Selected project slug, or null = all projects. */
   scope: string | null;
   setScope: (slug: string | null) => void;
+  /** Non-archived projects, fetched once here and shared by every consumer
+   * (header switcher, command palette, …) — display names live on these. */
+  projects: Project[];
+  /** Clean display name for the current scope (never the raw path slug). */
+  scopeName: string | null;
 }
 
-const ScopeContext = createContext<ScopeValue>({ scope: null, setScope: () => undefined });
+const ScopeContext = createContext<ScopeValue>({
+  scope: null,
+  setScope: () => undefined,
+  projects: [],
+  scopeName: null,
+});
 
 function storedScope(): string | null {
   try {
@@ -71,7 +83,18 @@ export function ScopeProvider({ children }: { children: ReactNode }): JSX.Elemen
     if (urlScope !== null && urlScope !== scope) setScopeState(urlScope);
   }, [urlScope, scope]);
 
-  const value = useMemo(() => ({ scope, setScope }), [scope, setScope]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    fetchProjects()
+      .then(setProjects)
+      .catch(() => setProjects([])); // consumers degrade to slug labels
+  }, []);
+
+  const value = useMemo(() => {
+    const selected = scope !== null ? (projects.find((p) => p.slug === scope) ?? null) : null;
+    const scopeName = scope === null ? null : (selected?.name ?? scope);
+    return { scope, setScope, projects, scopeName };
+  }, [scope, setScope, projects]);
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 

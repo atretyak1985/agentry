@@ -13,6 +13,7 @@ import { fetchSessions } from '../api';
 import { liveActionText } from '../lib/payload';
 import { useScope } from '../lib/scope';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
+import { HeaderFilters } from '../components/HeaderFilters';
 import { SessionCard } from '../components/SessionCard';
 import { Empty, ErrorBox, GroupHeader, Loading } from '../components/ui';
 
@@ -58,6 +59,59 @@ function FilterChip({
     >
       {children}
     </button>
+  );
+}
+
+/** Title search + status chips — rendered twice: teleported into the header
+ * slot on xl+ (compact variant) and inline in the page body below xl.
+ * Both instances share the page's state, so they always agree. */
+function FilterControls({
+  search,
+  onSearch,
+  status,
+  onStatus,
+  counts,
+  header = false,
+}: {
+  search: string;
+  onSearch: (s: string) => void;
+  status: SessionStatus | null;
+  onStatus: (s: SessionStatus | null) => void;
+  counts: Record<SessionStatus, number>;
+  header?: boolean;
+}): JSX.Element {
+  return (
+    <>
+      <div className={header ? 'relative w-[200px] shrink-0' : 'relative w-full desk:w-[260px]'}>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="filter by title…"
+          aria-label="filter sessions by title"
+          className="w-full rounded-[9px] border border-line-strong bg-field px-3 py-[6px] pr-8 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-ink-dim"
+        />
+        {search !== '' && (
+          <button
+            type="button"
+            onClick={() => onSearch('')}
+            aria-label="clear search"
+            className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <span
+        className={`mx-1 w-px shrink-0 bg-line-strong ${header ? 'h-4' : 'self-stretch'}`}
+        aria-hidden="true"
+      />
+      {STATUSES.map((s) => (
+        <FilterChip key={s} selected={status === s} onClick={() => onStatus(status === s ? null : s)}>
+          {counts[s] > 0 ? `${STATUS_LABELS[s]} · ${String(counts[s])}` : STATUS_LABELS[s]}
+        </FilterChip>
+      ))}
+    </>
   );
 }
 
@@ -234,41 +288,28 @@ export function Sessions(): JSX.Element {
         {sorted.length} match · newest first
       </div>
 
-      {/* Filters row (Canvas §Sessions): search │ status chips — project
-          filtering lives in the header scope switcher.
-          Wraps cleanly at 390px — the input takes the first line. */}
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        <div className="relative w-full desk:w-[260px]">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="filter by title…"
-            aria-label="filter sessions by title"
-            className="w-full rounded-[9px] border border-line-strong bg-field px-3 py-[7px] pr-8 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-ink-dim"
-          />
-          {search !== '' && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              aria-label="clear search"
-              className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
-            >
-              ×
-            </button>
-          )}
-        </div>
-
-        <span className="mx-1 w-px shrink-0 self-stretch bg-line-strong" aria-hidden="true" />
-        {STATUSES.map((s) => (
-          <FilterChip
-            key={s}
-            selected={status === s}
-            onClick={() => setStatus(status === s ? null : s)}
-          >
-            {counts[s] > 0 ? `${STATUS_LABELS[s]} · ${String(counts[s])}` : STATUS_LABELS[s]}
-          </FilterChip>
-        ))}
+      {/* Filters (Canvas §Sessions): search │ status chips — project
+          filtering lives in the header scope switcher. On desk+ the controls
+          teleport into the header slot; below desk they render here (the
+          input takes the first line, wraps cleanly at 390px). */}
+      <HeaderFilters>
+        <FilterControls
+          search={search}
+          onSearch={setSearch}
+          status={status}
+          onStatus={setStatus}
+          counts={counts}
+          header
+        />
+      </HeaderFilters>
+      <div className="mt-5 flex flex-wrap items-center gap-2 xl:hidden">
+        <FilterControls
+          search={search}
+          onSearch={setSearch}
+          status={status}
+          onStatus={setStatus}
+          counts={counts}
+        />
       </div>
 
       {error !== null && <ErrorBox message={error} onRetry={load} />}

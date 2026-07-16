@@ -16,6 +16,7 @@ import {
   SystemWriteError,
   type SystemListFilters,
 } from '../../api/system';
+import { HeaderFilters } from '../../components/HeaderFilters';
 import { ConfirmDialog, Empty, ErrorBox, GroupHeader, Loading } from '../../components/ui';
 import { FiltersRow, ScopeBadge, useSystemList } from './shared';
 
@@ -351,14 +352,12 @@ export function HooksTab({
 
   return (
     <div className="flex h-full flex-col">
-      {/* filters — never scroll */}
-      <div className="shrink-0 pt-3 pb-2">
-        <FiltersRow
-          scope={scope}
-          search={search}
-          onSearch={setSearch}
-          onScope={onScope}
-        />
+      {/* filters — header slot on desk+, in-body below; never scroll */}
+      <HeaderFilters>
+        <FiltersRow scope={scope} search={search} onSearch={setSearch} onScope={onScope} header />
+      </HeaderFilters>
+      <div className="shrink-0 pt-3 pb-2 xl:hidden">
+        <FiltersRow scope={scope} search={search} onSearch={setSearch} onScope={onScope} />
       </div>
       {/* scrollable hook list */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">

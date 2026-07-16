@@ -320,6 +320,7 @@ export function FiltersRow({
   onScope,
   sort,
   onSort,
+  header = false,
 }: {
   scope: 'global' | 'project' | null;
   search: string;
@@ -327,10 +328,18 @@ export function FiltersRow({
   onScope: (scope: 'global' | 'project' | null) => void;
   sort?: SystemSort;
   onSort?: (sort: SystemSort) => void;
+  /** Compact variant for the app-header slot (no top margin, no wrap). */
+  header?: boolean;
 }): JSX.Element {
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-2">
-      <div className="relative w-[240px] max-w-full">
+    <div
+      className={
+        header
+          ? 'flex min-w-0 flex-1 items-center gap-2'
+          : 'mt-4 flex flex-wrap items-center gap-2'
+      }
+    >
+      <div className={header ? 'relative w-[200px] shrink-0' : 'relative w-[240px] max-w-full'}>
         <input
           type="text"
           value={search}
@@ -350,7 +359,10 @@ export function FiltersRow({
           </button>
         )}
       </div>
-      <span className="mx-1 w-px shrink-0 self-stretch bg-line-strong" aria-hidden="true" />
+      <span
+        className={`mx-1 w-px shrink-0 bg-line-strong ${header ? 'h-4' : 'self-stretch'}`}
+        aria-hidden="true"
+      />
       <FilterChip selected={scope === null} onClick={() => onScope(null)}>all scopes</FilterChip>
       <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>global</FilterChip>
       <FilterChip selected={scope === 'project'} onClick={() => onScope('project')}>project</FilterChip>

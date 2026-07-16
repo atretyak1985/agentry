@@ -34,7 +34,7 @@ function PinToggle({ project, onChanged }: { project: Project; onChanged: () => 
       type="button"
       disabled={busy}
       aria-pressed={project.pinned}
-      aria-label={project.pinned ? `unpin ${project.slug}` : `pin ${project.slug}`}
+      aria-label={project.pinned ? `unpin ${project.name ?? project.slug}` : `pin ${project.name ?? project.slug}`}
       title={project.pinned ? 'unpin' : 'pin to top'}
       onClick={() => {
         setBusy(true);

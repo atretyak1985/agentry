@@ -69,7 +69,7 @@ export function DetachModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="font-display text-[14px] font-bold text-ink">
-          Detach <span className="font-mono">{project.slug}</span>
+          Detach <span className="font-mono">{project.name ?? project.slug}</span>
         </div>
         <div className="mt-1 text-[12px] leading-relaxed text-ink-dim">
           Removes the swarmery-owned entries from{' '}
