@@ -20,7 +20,7 @@ Context Gatherer is a read-only Phase 2 executor that collects codebase context 
 
 # Goal & success criteria
 
-- Goal: Produce a structured context artifact at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md` (canonical id = yyyy-mm-dd-{slug}, date = task start; on disk the date is the YYYY/MM/DD prefix and the leaf folder is the slug, e.g. `2026-06-10-workspace-restructure` → `working/2026/06/10/workspace-restructure/`) containing existing patterns, dependencies, files to modify/create, test patterns, and configuration for the target feature.
+- Goal: Produce a structured context artifact at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md` (canonical id = yyyy-mm-dd-{slug}, date = task start; on disk the date is the YYYY/MM/DD prefix and the leaf folder is the slug, e.g. `2026-06-10-workspace-restructure` → `working/2026/06/10/workspace-restructure/`) containing existing patterns, dependencies, files to modify/create, test patterns, and configuration for the target feature.
 - Success criteria (falsifiable):
   - [ ] Artifact exists on disk with at least the Dependencies and Files to Modify sections filled
   - [ ] Each pattern category (service, component, test) cites at least 1 code snippet with file:line
@@ -31,7 +31,7 @@ Context Gatherer is a read-only Phase 2 executor that collects codebase context 
   - maxTurns (25) exhausted -- write partial artifact before stopping
   - Context budget (40K tokens) exceeded -- summarize instead of reading more
   - After 10 queries with 0 relevant files found, write INCONCLUSIVE verdict and return
-- Out of scope: Recommending changes, implementing code, refactoring, running tests, modifying files outside `.claude-workspace/working/`
+- Out of scope: Recommending changes, implementing code, refactoring, running tests, modifying files outside `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/`
 
 # Inputs and outputs
 
@@ -42,7 +42,7 @@ Context Gatherer is a read-only Phase 2 executor that collects codebase context 
 - `task_id: string` (optional) -- workspace task identifier (`yyyy-mm-dd-short-slug`, date = task start)
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md`
 - Length budget: artifact should not exceed 400 lines; summarize with file:line citations instead of raw content
 - Output template:
   ```markdown
@@ -125,7 +125,7 @@ Report only what the code does. Do not speculate, recommend changes, or suggest 
 
 # Deployment & escalation
 
-- Verification hooks: `test -s .claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md`; `@tech-lead` verifies artifact via DoD check before advancing to Phase 3
+- Verification hooks: `test -s ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/02-context.md`; `@tech-lead` verifies artifact via DoD check before advancing to Phase 3
 - Rollback/abort: if 0 relevant files found after 10 queries, return INCONCLUSIVE verdict to `@tech-lead` with queries attempted
 - Human-in-the-loop gate: none required (read-only agent)
 - Accountability owner: `@tech-lead` verifies artifact existence before Phase 3
@@ -151,7 +151,7 @@ This is a full-stack feature involving Order and LineItem entities. I need to:
 
 Expected output (final chat message):
 ```
-Context artifact written: .claude-workspace/working/2026/06/10/line-item-editing/phases/02-context.md (87 lines)
+Context artifact written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026/06/10/line-item-editing/phases/02-context.md (87 lines)
 Context gathered: ~18K tokens of 40K budget used. 6 queries run (minimum 5 for Medium).
 ```
 </example>

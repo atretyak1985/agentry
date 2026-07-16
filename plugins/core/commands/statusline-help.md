@@ -40,7 +40,7 @@ terminal. Script: `agents/statusline/agents-statusline.sh` (wired via the
 | | `⏱ <dur>` | Session duration | JSON `.cost.total_duration_ms` |
 | **7 PWD** | `dir` | Current folder | JSON `.workspace.current_dir` |
 | | `Branch/Age/Mod/Sync` | Git branch · time since last commit · dirty count · ahead/behind. **Vanishes outside a git repo.** | `git` against cwd |
-| **8 MEMORY** | `Memories/Tasks/Sessions` | Memory files · active task dirs · recorded sessions | filesystem under `memory/`, `.claude-workspace/working/`, the sessions dir |
+| **8 MEMORY** | `Memories/Tasks/Sessions` | Memory files · active task dirs · recorded sessions | filesystem under `memory/`, the workspace `working/` tree (legacy: `.claude-workspace/working/`), the sessions dir |
 
 3. **Mention the knobs:**
    - Change weather city: `export SWARMERY_STATUSLINE_LOC="Kyiv"` (or `""` for auto-by-IP).

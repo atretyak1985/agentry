@@ -52,7 +52,7 @@ Task Documenter for the project. Single responsibility: create structured docume
 - `{task-id}` = `yyyy-mm-dd-short-slug` (date = task start, lowercase kebab slug; e.g. `2026-06-10-workspace-restructure`)
 - Output template:
 
-**Phase files** in `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/`:
+**Phase files** in `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/`:
 
 | File | Content | Source priority |
 |------|---------|----------------|
@@ -65,14 +65,14 @@ Task Documenter for the project. Single responsibility: create structured docume
 | `08-summary.md` | What was done, file counts, next steps | Synthesized from above |
 | `09-retrospective.md` | What went well, improvements, lessons, timing | Conversation + manifest metrics |
 
-**Task-root files** in `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/`: verify `README.md` (task card) exists -- create it if missing; verify `SUMMARY.md` (final report) exists -- flag if missing at completion.
+**Task-root files** in `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/`: verify `README.md` (task card) exists -- create it if missing; verify `SUMMARY.md` (final report) exists -- flag if missing at completion.
 
 **manifest.json** (optional -- create only for orchestrated tasks) fields: task id, name, type, complexity, agents involved, timing (use `"estimated": true` if timing unavailable), outcome (files created/modified/deleted counts, lines added/removed from `git diff --stat`), related_links, tags, lessons learned.
 
 **Summary output:**
 ```
 Task documented: {task_id}
-Location: .claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/
+Location: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/
 Phase files: {N}/8 created ({N/A files listed with reason})
 Manifest: files_modified={N}, lines_added={N}, lines_removed={N} (source: git diff)
 Indexes: index.json and metrics.json updated
@@ -85,7 +85,7 @@ Related: {issue IDs if present}
 - Tools: inherits all available tools (no `tools:`/`disallowedTools:` in frontmatter); actions bounded by `permissionMode: acceptEdits`. Primarily uses: Read, Edit, Write, Bash, Grep, Glob
 - Limitations: cannot spawn subagents; relies on structured inputs or conversation history
 - Reversibility: documentation files can be deleted or regenerated
-- Workspace path: `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/` (canonical id = yyyy-mm-dd-{slug}, date = task start; the date is the YYYY/MM/DD path prefix, the leaf folder is the slug); completed tasks move to `.claude-workspace/archive/{YYYY}/{MM}/{DD}/{slug}/`
+- Workspace path: `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/` (canonical id = yyyy-mm-dd-{slug}, date = task start; the date is the YYYY/MM/DD path prefix, the leaf folder is the slug); completed tasks move to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/archive/{YYYY}/{MM}/{DD}/{slug}/`
 - Init script: `.claude/scripts/agent-work.sh init "[Task Name]" [agent] [complexity]`
 - Complete script: `.claude/scripts/agent-work.sh complete {task-id}`
 - Project repos (note which were affected): see `.claude/project.json` → repos, plus CI (GitHub Actions)
@@ -162,13 +162,13 @@ The completing agent provides structured inputs. I should use those as the prima
 @task-documenter document this task
   task_id: 2026-05-24-add-mission-filter
   file_list: [apps/<mainApp>/src/app/missions/page.tsx, apps/<mainApp>/src/components/MissionFilter.tsx]
-  phase_artifacts_path: .claude-workspace/working/2026-05-24-add-mission-filter/phases/
+  phase_artifacts_path: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026-05-24-add-mission-filter/phases/
 ```
 
 **Example 2: Summary output**
 ```
 Task documented: 2026-05-24-add-mission-filter
-Location: .claude-workspace/working/2026-05-24-add-mission-filter/
+Location: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026-05-24-add-mission-filter/
 Phase files: 8/8 created (02-context.md: N/A -- insufficient history)
 Manifest: files_modified=2, lines_added=47, lines_removed=12 (source: git diff)
 Indexes: index.json and metrics.json updated
@@ -178,7 +178,7 @@ Related: PROJ-1234 (added to manifest.json related_links)
 **Example 3: Failed task documentation**
 ```
 Task documented: 2026-05-24-fix-websocket-timeout
-Location: .claude-workspace/working/2026-05-24-fix-websocket-timeout/
+Location: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026-05-24-fix-websocket-timeout/
 Outcome: failed (root cause not identified within turn budget)
 Phase files: 6/8 created (04-implementation.md: N/A, 05-quality.md: N/A)
 ```

@@ -49,7 +49,7 @@ Tech Lead is the primary orchestrator for all structured development work in the
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
 - `{task-id}` = `yyyy-mm-dd-short-slug` (date = task **start** date, lowercase kebab slug; e.g. `2026-06-10-workspace-restructure`). Canonical standard: `docs/03-usage-guides/AGENT-WORK-DOCUMENTATION.md`.
-- Format: Phase artifacts in `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/`, plan artifacts in `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/plan/`, modified source files (via delegates)
+- Format: Phase artifacts in `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/`, plan artifacts in `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/plan/`, modified source files (via delegates)
 - Task dir is created in Phase 1 with a mandatory `README.md` task card; Phase 8 summary lands in `{task-id}/SUMMARY.md` (canonical) in addition to `phases/08-summary.md`; delegation log lives at `{task-id}/logs/agents.md`
 - Length budget: gap-analysis <= 50 lines; pre-mortem table <= 30 lines; phase transition log entry = 1-2 lines each [PE/Output/2.4]
 - Tech Lead produces three direct artifacts:
@@ -97,7 +97,7 @@ Mode routing has a fourth option above "Full" -- **Dynamic** -- for codebase-wid
 ## Phase Definitions
 
 ### Phase 1: Understanding + Gap Analysis (Tech Lead owns)
-1. Create the task dir `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/` ({task-id} = yyyy-mm-dd-short-slug, date = task start) with a `README.md` task card -- never write loose files directly in `working/`
+1. Create the task dir `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/` ({task-id} = yyyy-mm-dd-short-slug, date = task start) with a `README.md` task card -- never write loose files directly in `working/`
 2. Record 4-bucket partition: Known / Unknown-codebase / Unknown-research / Unknown-user
 3. Block Phase 3 until user-only gaps are resolved
 4. Route codebase/research gaps to Phase 2 delegates
@@ -158,7 +158,7 @@ After each phase transition, log:
 PHASE {N} COMPLETE | Agents: [{list}] | Artifacts: [{paths}] | Decision: {1-sentence rationale for next routing}
 ```
 
-Additionally write a machine-readable checkpoint to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/checkpoint.json` ({task-id} = yyyy-mm-dd-short-slug, date = task start):
+Additionally write a machine-readable checkpoint to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/checkpoint.json` ({task-id} = yyyy-mm-dd-short-slug, date = task start):
 
 ```json
 {"phase": 4, "mode": "Full", "decisions": ["chose task-planner over implementation-planner"], "open_gaps": [], "next_action": "dispatch @implementation-agent with plan/step-2.md", "ts": "2026-06-09T18:00:00Z"}

@@ -32,7 +32,7 @@ The project's own tiers, repos, and containers are **not** baked into this skill
 # Required environment
 
 - `rg` / `Glob` / `Read` to inventory the affected repos before drawing (repo list from `.claude/project.json` → `repos`).
-- A task dir under `.claude-workspace/working/YYYY/MM/DD/{slug}/` (create via `agent-work.sh init` or `mkdir -p`).
+- A task dir under `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/YYYY/MM/DD/{slug}/` (create via `agent-work.sh init` or `mkdir -p`).
 - A Mermaid renderer to view `.mmd` for review — the project's viewer skill if it ships one, otherwise the `mmdc` CLI (`@mermaid-js/mermaid-cli`).
 
 # Inputs

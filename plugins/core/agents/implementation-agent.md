@@ -157,8 +157,8 @@ Opus 4.8 is trained to flag uncertainty and avoid unsupported claims. Lean into 
 Input:
 ```
 @implementation-agent implement order line-item editing
-Reference: .claude-workspace/working/{YYYY}/{MM}/abc123/plan/phase-1/step-1.2-line-item-crud.md
-Context: Phase 2 context at .claude-workspace/working/{YYYY}/{MM}/abc123/phases/02-context.md
+Reference: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/plan/phase-1/step-1.2-line-item-crud.md
+Context: Phase 2 context at ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/phases/02-context.md
 ```
 
 <thinking>

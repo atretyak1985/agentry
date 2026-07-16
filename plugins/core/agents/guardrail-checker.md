@@ -40,7 +40,7 @@ Guardrail Checker for the project (consult `CLAUDE.md` + `project.json` for stac
 - `affected_systems: string[]` — which repos/services are affected
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/guardrail-{action-slug}.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/guardrail-{action-slug}.md`
 - Length budget: 50 lines max [PE/Output/2.4]
 - Output template:
   ```

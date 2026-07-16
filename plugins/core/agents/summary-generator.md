@@ -21,7 +21,7 @@ Summary Generator is a Phase 8 executor that creates professional, structured HT
 
 # Goal & success criteria [PE/Workflow/8.1]
 
-- Goal: Produce the canonical final report at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/SUMMARY.md` ({task-id} = yyyy-mm-dd-short-slug, date = task start) with quantified metrics and role-specific content, plus a mirror copy at `phases/08-summary.md` when the 9-phase flow is active.
+- Goal: Produce the canonical final report at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/SUMMARY.md` ({task-id} = yyyy-mm-dd-short-slug, date = task start) with quantified metrics and role-specific content, plus a mirror copy at `phases/08-summary.md` when the 9-phase flow is active.
 - Success criteria (falsifiable):
   - `SUMMARY.md` exists at the task root with sections: Результат, Змінені файли, Агенти, Сесії, Відхилення від плану, Follow-ups
   - Mirror copy exists at `phases/08-summary.md` (only when the 9-phase flow is active)
@@ -45,7 +45,7 @@ Summary Generator is a Phase 8 executor that creates professional, structured HT
 - `task_id: string` -- workspace task identifier
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/SUMMARY.md` (canonical) + mirror at `phases/08-summary.md` (9-phase flow only); optional HTML dashboard at `phases/08-summary.html` via `html-reporting` skill
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/SUMMARY.md` (canonical) + mirror at `phases/08-summary.md` (9-phase flow only); optional HTML dashboard at `phases/08-summary.html` via `html-reporting` skill
 - Length budget: SUMMARY.md <= 300 lines [PE/Output/2.4]
 - SUMMARY.md structure:
   ```markdown
@@ -85,7 +85,7 @@ Summary Generator is a Phase 8 executor that creates professional, structured HT
 - **Model**: claude-haiku-4-5 -- sufficient for formatting and summarization
 - Tools: inherits all available tools (no `tools:`/`disallowedTools:` in frontmatter); actions bounded by `permissionMode: acceptEdits`. Primarily uses: Read, Write, Bash, Grep, Glob
 - **Data sources**: git history, workspace artifacts, build/test output
-- **Workspace**: `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/` ({task-id} = yyyy-mm-dd-short-slug, date = task start)
+- **Workspace**: `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/` ({task-id} = yyyy-mm-dd-short-slug, date = task start)
 
 # Process [PE/Reasoning/3.1]
 
@@ -165,7 +165,7 @@ Next steps: [Add bulk waypoint import (owner: @implementation-agent, timeline: S
 5. One next step with owner assigned
 </thinking>
 <output>
-Summary written: .claude-workspace/working/2026/06/10/waypoint-editing/SUMMARY.md (mirrored to phases/08-summary.md)
+Summary written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026/06/10/waypoint-editing/SUMMARY.md (mirrored to phases/08-summary.md)
 Type: Feature Summary | Metrics: 7 quantified | Status: COMPLETE
 </output>
 </example>
@@ -186,7 +186,7 @@ Next steps: [Add reconnect integration test (owner: @iot-data-specialist, timeli
 4. Coverage unchanged -- note that
 </thinking>
 <output>
-Summary written: .claude-workspace/working/2026-06-09-ws-reconnect-fix/SUMMARY.md (mirrored to phases/08-summary.md)
+Summary written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026-06-09-ws-reconnect-fix/SUMMARY.md (mirrored to phases/08-summary.md)
 Type: Bug Fix Summary | Metrics: 5 quantified | Status: COMPLETE
 </output>
 </example>

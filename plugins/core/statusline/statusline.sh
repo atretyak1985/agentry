@@ -80,7 +80,7 @@
 #
 #  8) MEMORY:  📁 <n> Memories │ ◆ <n> Tasks │ ⊕ <n> Sessions
 #       Memories     : ~/.claude/projects/<cwd-slug>/memory/*.md (derived from PROJECT_DIR)
-#       Tasks        : .claude-workspace/working/YYYY/MM/DD/<slug>/ dirs
+#       Tasks        : workspace working/YYYY/MM/DD/<slug>/ dirs (legacy: .claude-workspace/)
 #       Sessions     : .swarmery/sessions/*.json (fallback /tmp/claude-session-*.jsonl)
 #
 #  RELIABILITY TIERS:
@@ -172,8 +172,12 @@ HOOKS=$(find "$CLAUDE_DIR/hooks" -name "*.sh" 2>/dev/null | wc -l | tr -d ' ')
 # ----- memory / tasks / sessions ------------------------------------------
 MEM_DIR="$HOME/.claude/projects/$(echo "$PROJECT_DIR" | tr '/' '-')/memory"
 MEMORIES=$(find "$MEM_DIR" -name "*.md" -not -name "MEMORY.md" 2>/dev/null | wc -l | tr -d ' ')
-# Active task dirs: .claude-workspace/working/YYYY/MM/DD/<slug>
-WORK_ROOT="$PROJECT_DIR/.claude-workspace/working"
+# Active task dirs: working/YYYY/MM/DD/<slug> — swarmery workspace first, legacy fallback
+if [ -n "${AGENT_PROJECT:-}" ]; then
+  WORK_ROOT="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace/working"
+else
+  WORK_ROOT="$PROJECT_DIR/.claude-workspace/working"
+fi
 TASKS=$(find "$WORK_ROOT" -mindepth 4 -maxdepth 4 -type d 2>/dev/null | wc -l | tr -d ' ')
 # Recorded sessions
 SESS=$(find "$PROJECT_DIR/.swarmery/sessions" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
