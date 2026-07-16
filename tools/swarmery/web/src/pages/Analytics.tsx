@@ -663,6 +663,10 @@ export function Analytics(): JSX.Element {
 
   const rangeLabel = `${fmtDayShort(from)} → ${fmtDayShort(to)}`;
 
+  // Export links mirror the exact query the page is showing.
+  const csvQuery = (extra: Record<string, string>): string =>
+    new URLSearchParams({ from, to, format: 'csv', ...extra }).toString();
+
   return (
     <div className="px-4 pt-6 pb-10 desk:px-10 desk:pt-[34px] desk:pb-[60px]">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
@@ -694,6 +698,25 @@ export function Analytics(): JSX.Element {
             setTo(d);
           }}
         />
+      </div>
+
+      {/* Export CSV (ops-hygiene): same range + pivot as the panels above. */}
+      <div className="mt-2.5 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-ink-dim">
+        <span className="text-[10px] tracking-[0.14em] text-ink-faint uppercase">Export CSV</span>
+        <a
+          href={`/api/stats/breakdown?${csvQuery({ by: pivot })}`}
+          download
+          className="rounded-[7px] border border-line-strong px-[9px] py-[5px] transition-colors hover:text-ink"
+        >
+          breakdown · {pivot}
+        </a>
+        <a
+          href={`/api/stats/timeseries?${csvQuery({ metric, group: pivot })}`}
+          download
+          className="rounded-[7px] border border-line-strong px-[9px] py-[5px] transition-colors hover:text-ink"
+        >
+          series · {metric}
+        </a>
       </div>
 
       {error !== null && <ErrorBox message={error} onRetry={load} />}
