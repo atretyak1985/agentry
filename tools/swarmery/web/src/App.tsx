@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import type { WSMessage } from './api/types';
 import { fetchApprovals, fetchDocs, fetchStatsOverview, MOCK } from './api';
+import { CommandPalette } from './components/CommandPalette';
 import { NewProjectButton } from './components/NewProjectButton';
 import { isoDay } from './lib/format';
 import { useHealth, shortVersion } from './lib/health';
@@ -49,6 +50,7 @@ export function App(): JSX.Element {
   // Pending approvals as a SET of ids: WS +/- stays idempotent when the same
   // permission_resolved arrives twice (own action + fan-out) or after resync.
   const [pendingIds, setPendingIds] = useState<ReadonlySet<number>>(new Set());
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { health, unreachable } = useHealth();
   const crumb = crumbFor(useLocation().pathname);
 
@@ -56,6 +58,20 @@ export function App(): JSX.Element {
     fetchDocs()
       .then((docs) => setHasDocs(docs.length > 0))
       .catch(() => setHasDocs(false)); // empty/unreachable → hide the Docs item
+  }, []);
+
+  // Global Cmd+K / Ctrl+K → command palette. Window-level so it works from
+  // any focused element; preventDefault stops the browser's own search-bar
+  // focus shortcut.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -120,13 +136,20 @@ export function App(): JSX.Element {
             {crumb}
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="ml-auto hidden items-center gap-2 rounded-lg border border-line bg-field px-2.5 py-1 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim sm:flex"
+        >
+          search <span className="rounded-[4px] border border-line-strong px-1">⌘K</span>
+        </button>
         {!MOCK && (
-          <span className="ml-auto">
+          <span className="ml-3">
             <NewProjectButton />
           </span>
         )}
         <span
-          className={`flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim ${MOCK ? 'ml-auto' : 'ml-3'}`}
+          className="ml-3 flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim"
         >
           {MOCK ? (
             <>
@@ -211,6 +234,8 @@ export function App(): JSX.Element {
           </NavLink>
         ))}
       </nav>
+
+      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
     </div>
   );
 }
