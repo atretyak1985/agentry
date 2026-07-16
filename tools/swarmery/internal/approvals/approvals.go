@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 )
 
 // Request statuses (permission_requests.status, frozen contract).
@@ -104,6 +105,10 @@ type Options struct {
 	Exclude        ingest.ExcludeList // cwd globs that never mint session/project rows
 	AnswerDelivery string             // DeliveryUpdatedInput (default) | DeliveryDenyMessage
 	Now            func() time.Time   // test seam (default time.Now)
+
+	// Notifier is the outbound webhook dispatcher (nil = disabled). Emit is
+	// nil-receiver-safe and never blocks (buffered queue, drop on overflow).
+	Notifier *notify.Notifier
 }
 
 // Service owns the approvals lifecycle. Bus may be nil (no live WS updates,
@@ -312,6 +317,8 @@ func (s *Service) Open(in HookInput) (id int64, ch chan Decision, isNew bool, er
 	s.publish(ingest.Notification{Type: ingest.NoteSessionUpdated, SessionID: sessionID})
 	s.publish(ingest.Notification{Type: ingest.NoteEventAppended, SessionID: sessionID, EventID: eventID})
 	s.publish(ingest.Notification{Type: ingest.NotePermissionRequested, SessionID: sessionID, RequestID: id})
+
+	s.notifyApproval(notify.EventApprovalRequested, id, sessionID, in.ToolName, in.ToolInput)
 	return id, ch, true, nil
 }
 
@@ -392,9 +399,10 @@ func (s *Service) Resolve(id int64, status, via, reason string) error {
 
 func (s *Service) resolveLocked(id int64, status, via, reason string, updatedInput json.RawMessage) error {
 	var sessionID int64
-	var cur string
+	var cur, toolName string
 	err := s.db.QueryRow(
-		`SELECT session_id, status FROM permission_requests WHERE id = ?`, id).Scan(&sessionID, &cur)
+		`SELECT session_id, status, tool_name FROM permission_requests WHERE id = ?`, id).
+		Scan(&sessionID, &cur, &toolName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -436,6 +444,10 @@ func (s *Service) resolveLocked(id int64, status, via, reason string, updatedInp
 
 	s.publish(ingest.Notification{Type: ingest.NoteEventAppended, SessionID: sessionID, EventID: eventID})
 	s.publish(ingest.Notification{Type: ingest.NotePermissionResolved, SessionID: sessionID, RequestID: id})
+
+	if status == StatusExpired {
+		s.notifyApproval(notify.EventApprovalExpired, id, sessionID, toolName, nil)
+	}
 
 	d := Decision{Status: status, Reason: reason, UpdatedInput: updatedInput}
 	for ch := range s.waiters[id] {
@@ -737,6 +749,39 @@ func (s *Service) Sweep() {
 		}
 		s.mu.Unlock()
 	}
+}
+
+// ── outbound webhooks (control-plane v2) ─────────────────────────────────────
+
+// notifyApproval emits one webhook event for a permission request. Never
+// blocks and never fails the caller: Notifier.Emit is nil-safe and
+// queue-dropping; the project lookup failing just blanks the label.
+func (s *Service) notifyApproval(typ string, requestID, sessionID int64, toolName string, toolInput json.RawMessage) {
+	if s.opt.Notifier == nil {
+		return
+	}
+	var project string
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(p.name, p.slug) FROM sessions se
+		 JOIN projects p ON p.id = se.project_id WHERE se.id = ?`,
+		sessionID).Scan(&project); err != nil {
+		project = ""
+	}
+	body := toolName
+	if arg, ok := argOf(toolName, toolInput); ok {
+		body = toolName + ": " + truncate(arg, 160)
+	}
+	if project != "" {
+		body = project + " — " + body
+	}
+	title := "Approval needed: " + toolName
+	if typ == notify.EventApprovalExpired {
+		title = "Approval expired: " + toolName
+	}
+	s.opt.Notifier.Emit(notify.Event{
+		Type: typ, SessionID: sessionID, RequestID: requestID,
+		Project: project, Tool: toolName, Title: title, Body: body,
+	})
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
