@@ -91,7 +91,7 @@ function parseFrontmatter(frontmatter: string): FmRow[] | null {
 
 /* ----- unified diff block (tones match pages/detail/Diffs.tsx) ----- */
 
-function DiffBlock({ diff }: { diff: string }): JSX.Element {
+export function DiffBlock({ diff }: { diff: string }): JSX.Element {
   const lines = diff.split('\n');
   return (
     <div className="my-2 overflow-x-auto rounded-lg border border-line bg-bg py-2 font-mono text-[11px] leading-[1.6]">
