@@ -1,8 +1,10 @@
 package api
 
 import (
+	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,122 @@ func errorsServer(t *testing.T) (*httptest.Server, [3]string) {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, [3]string{ts10, ts11, ts12}
+}
+
+func TestNormalizeErrKey(t *testing.T) {
+	longCyrillic := strings.Repeat("ошибка соединения ", 10) // 180 runes, multibyte
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "digit tokens fold to # so ids and status codes share a group",
+			in:   "API Error 529 overloaded (request id req_011abc)",
+			want: "api error # overloaded (request id #)",
+		},
+		{
+			name: "hex ids, ports and path segments with digits fold too",
+			in:   "ECONNREFUSED 127.0.0.1:8080 in /tmp/build-4821/out.log",
+			want: "econnrefused #.#.#.#:# in /tmp/build-#/out.log",
+		},
+		{
+			name: "whitespace folds and trims",
+			in:   "  connection\t\treset\n by peer  ",
+			want: "connection reset by peer",
+		},
+		{
+			name: "80-rune truncation counts runes, not bytes, on multibyte input",
+			in:   longCyrillic,
+			want: string([]rune(strings.TrimSpace(longCyrillic))[:80]),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeErrKey(tc.in); got != tc.want {
+				t.Errorf("normalizeErrKey(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	if got := normalizeErrKey(longCyrillic); len([]rune(got)) != 80 {
+		t.Errorf("multibyte key length = %d runes, want 80", len([]rune(got)))
+	}
+}
+
+func TestExtractErrMsg(t *testing.T) {
+	str := func(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
+	none := sql.NullString{}
+	tests := []struct {
+		name     string
+		typ      string
+		toolName sql.NullString
+		payload  sql.NullString
+		want     string
+	}{
+		{
+			name: "api error with a plain string payload.error",
+			typ:  "error", toolName: none,
+			payload: str(`{"error":"stream disconnected"}`),
+			want:    "stream disconnected",
+		},
+		{
+			name: "api error with error.message object",
+			typ:  "error", toolName: none,
+			payload: str(`{"error":{"message":"overloaded"}}`),
+			want:    "overloaded",
+		},
+		{
+			name: "api error with one-level nested error.error.message",
+			typ:  "error", toolName: none,
+			payload: str(`{"error":{"type":"api_error","error":{"message":"rate limited"}}}`),
+			want:    "rate limited",
+		},
+		{
+			name: "api error object without message falls back to its JSON marshal",
+			typ:  "error", toolName: none,
+			payload: str(`{"error":{"code":529,"type":"overloaded_error"}}`),
+			want:    `{"code":529,"type":"overloaded_error"}`,
+		},
+		{
+			name: "api error with empty payload falls back to the generic label",
+			typ:  "error", toolName: none, payload: none,
+			want: "api error",
+		},
+		{
+			name: "tool failure with a string result",
+			typ:  "tool_call", toolName: str("Bash"),
+			payload: str(`{"input":{"command":"npm test"},"result":"exit status 1"}`),
+			want:    "exit status 1",
+		},
+		{
+			name: "tool failure with a result.message object",
+			typ:  "tool_call", toolName: str("Edit"),
+			payload: str(`{"result":{"message":"old_string not found"}}`),
+			want:    "old_string not found",
+		},
+		{
+			name: "tool failure with an object result without message marshals it",
+			typ:  "tool_call", toolName: str("Edit"),
+			payload: str(`{"result":{"interrupted":true}}`),
+			want:    `{"interrupted":true}`,
+		},
+		{
+			name: "empty payload falls back to the tool name",
+			typ:  "tool_call", toolName: str("Bash"), payload: none,
+			want: "Bash error",
+		},
+		{
+			name: "no payload and no tool name falls back to the generic label",
+			typ:  "tool_call", toolName: none, payload: none,
+			want: "error",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractErrMsg(tc.typ, tc.toolName, tc.payload); got != tc.want {
+				t.Errorf("extractErrMsg(%q, %v, %v) = %q, want %q",
+					tc.typ, tc.toolName, tc.payload, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestStatsErrors(t *testing.T) {

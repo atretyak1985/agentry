@@ -367,16 +367,12 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 	// frozen contract is finally honest instead of the series silently
 	// under-reporting pruned history.
 	if !rolledUp {
-		var n int
-		if err := h.DB.QueryRow(
-			`SELECT COUNT(*) FROM daily_rollups r
-			  JOIN projects p ON p.id = r.project_id
-			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
-			append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...).Scan(&n); err != nil {
+		rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		out.Approx = n > 0
+		out.Approx = rolled
 	}
 	// Deterministic order: total desc, then key asc (stable legend).
 	sort.Slice(out.Series, func(i, j int) bool {
@@ -392,11 +388,25 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, nil)
 }
 
+// hasRolledUpDays reports whether any project-level daily rollup overlaps
+// [firstDay, lastDay] under the current scope filter — the honesty signal
+// behind the `approx` badge (rollups cannot reconstruct every grouping and
+// carry no cache columns).
+func (h *Handler) hasRolledUpDays(firstDay, lastDay, pf string, pargs []any) (bool, error) {
+	var n int
+	err := h.DB.QueryRow(
+		`SELECT COUNT(*) FROM daily_rollups r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
+		append([]any{firstDay, lastDay}, pargs...)...).Scan(&n)
+	return n > 0, err
+}
+
 // cacheSummaryDTO is the range-total cache economics attached to a
 // metric=cache timeseries. saved_usd follows the honesty rule: it sums only
-// models present in the pricing table (REAL per-model cache_read rates from
-// config/pricing.json via internal/cost); nil when no cached token was
-// priceable — never a fabricated 10%-of-input guess.
+// models present in the pricing table (REAL per-model cache_read and
+// cache_write rates from config/pricing.json via internal/cost); nil when no
+// cached token was priceable — never a fabricated 10%-of-input guess.
 type cacheSummaryDTO struct {
 	HitRate         float64  `json:"hit_rate"`
 	CacheReadTokens int64    `json:"cache_read_tokens"`
@@ -407,8 +417,10 @@ type cacheSummaryDTO struct {
 // timeseriesCache serves metric=cache: the per-day cache hit rate
 // SUM(tokens_cache_read) / (SUM(tokens_cache_read)+SUM(tokens_in)) per group
 // member. Values are 0..1 fractions — NOT additive, so the UI must not stack
-// them. Savings: each cache-read token would have cost the input rate
-// uncached → saved = Σ_model cache_read × (input − cache_read) / 1e6.
+// them. Savings are NET: each cache-read token would have cost the input rate
+// uncached, minus the premium paid to write the cache in the first place →
+// saved = Σ_model [cache_read × (input − cache_read)
+//                  − cache_write × (cache_write_rate − input)] / 1e6.
 //
 // Retention: daily_rollups carry NO cache-token columns, so pruned days
 // cannot contribute — when the range overlaps rolled-up days the response is
@@ -417,7 +429,8 @@ func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group 
 	rows, err := h.DB.Query(`
 		SELECT t.started_at, p.slug, p.name,
 		       COALESCE(t.model, s.model, 'unknown') AS model,
-		       COALESCE(t.tokens_cache_read, 0), COALESCE(t.tokens_in, 0)
+		       COALESCE(t.tokens_cache_read, 0), COALESCE(t.tokens_in, 0),
+		       COALESCE(t.tokens_cache_write, 0)
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
@@ -436,12 +449,13 @@ func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group 
 	}
 	series := map[string]*acc{}
 	var totCache, totIn int64
-	modelCache := map[string]int64{}
+	type modelTokens struct{ read, write int64 }
+	modelCache := map[string]*modelTokens{}
 	for rows.Next() {
 		var startedAt, slug, model string
 		var name sql.NullString
-		var cr, tin int64
-		if err := rows.Scan(&startedAt, &slug, &name, &model, &cr, &tin); err != nil {
+		var cr, tin, cw int64
+		if err := rows.Scan(&startedAt, &slug, &name, &model, &cr, &tin, &cw); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -468,7 +482,13 @@ func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group 
 		a.tDen += float64(cr + tin)
 		totCache += cr
 		totIn += tin
-		modelCache[model] += cr
+		mt := modelCache[model]
+		if mt == nil {
+			mt = &modelTokens{}
+			modelCache[model] = mt
+		}
+		mt.read += cr
+		mt.write += cw
 	}
 	if err := rows.Err(); err != nil {
 		writeErr(w, err)
@@ -501,16 +521,12 @@ func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group 
 
 	// Honesty over pruned history: rollups have no cache columns, so any
 	// rolled-up day in range makes the hit rate approximate.
-	var rolled int
-	if err := h.DB.QueryRow(
-		`SELECT COUNT(*) FROM daily_rollups r
-		  JOIN projects p ON p.id = r.project_id
-		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
-		append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...).Scan(&rolled); err != nil {
+	rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	out.Approx = rolled > 0
+	out.Approx = rolled
 
 	summary := &cacheSummaryDTO{CacheReadTokens: totCache, InputTokens: totIn}
 	if d := totCache + totIn; d > 0 {
@@ -518,12 +534,16 @@ func (h *Handler) timeseriesCache(w http.ResponseWriter, r *http.Request, group 
 	}
 	table := cost.Default()
 	saved, priced := 0.0, false
-	for model, cr := range modelCache {
-		if cr == 0 {
+	for model, mt := range modelCache {
+		if mt.read == 0 && mt.write == 0 {
 			continue
 		}
 		if p, ok := table.PriceFor(model); ok {
-			saved += float64(cr) / 1e6 * (p.Input - p.CacheRead)
+			// Gross saving on reads, net of the premium paid on writes
+			// (cache_write rate > input rate) — unpriced models contribute
+			// neither side (honesty rule).
+			saved += float64(mt.read) / 1e6 * (p.Input - p.CacheRead)
+			saved -= float64(mt.write) / 1e6 * (p.CacheWrite - p.Input)
 			priced = true
 		}
 	}

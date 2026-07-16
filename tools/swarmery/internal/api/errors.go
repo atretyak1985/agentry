@@ -116,12 +116,21 @@ func (h *Handler) statsErrors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pf, pargs := scopeFilter(r)
+	// The type IN (…) predicate is semantics-preserving — these six are the
+	// only event types ingest.go ever marks status='error' ('error' from
+	// system api_error; tool_call/skill_use/subagent_start via closeToolCall's
+	// status UPDATE; subagent_stop and test_run inserted with the mirrored
+	// status) — and it lets SQLite drive the query off idx_events_type
+	// instead of a full events scan. EXPLAIN QUERY PLAN without it:
+	// "SCAN e"; with it: "SEARCH e USING INDEX idx_events_type
+	// (type=? AND ts>? AND ts<?)".
 	rows, err := h.DB.Query(`
 		SELECT e.type, e.tool_name, e.payload, e.ts, s.id, s.title
 		  FROM events e
 		  JOIN sessions s ON s.id = e.session_id
 		  JOIN projects p ON p.id = s.project_id
 		 WHERE e.status = 'error'
+		   AND e.type IN ('error','tool_call','skill_use','subagent_start','subagent_stop','test_run')
 		   AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf+`
 		 ORDER BY e.ts DESC`,
 		append([]any{dr.start, dr.end}, pargs...)...)

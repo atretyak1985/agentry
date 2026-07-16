@@ -504,10 +504,13 @@ function TriageBar({ pct }: { pct: number }): JSX.Element {
 function ErrorDrilldown({
   day,
   project,
+  projectName,
   onClose,
 }: {
   day: string;
   project: string | null;
+  /** Display name for the header; falls back to the slug, then "all projects". */
+  projectName: string | null;
   onClose: () => void;
 }): JSX.Element {
   const [groups, setGroups] = useState<ErrorGroup[] | null>(null);
@@ -536,7 +539,7 @@ function ErrorDrilldown({
       >
         <div className="flex items-center gap-3">
           <h2 className="min-w-0 flex-1 truncate font-mono text-[11px] tracking-[0.14em] text-red uppercase">
-            Errors · {project ?? 'all projects'} · {day}
+            Errors · {projectName ?? project ?? 'all projects'} · {day}
           </h2>
           <button
             type="button"
@@ -595,7 +598,7 @@ function TriageRail({
   onSelect,
 }: {
   stats: StatsOverview;
-  onSelect: (slug: string | null) => void;
+  onSelect: (slug: string | null, name: string | null) => void;
 }): JSX.Element {
   const rows = stats.errors_by_project;
   const total = rows.reduce((a, r) => a + r.errors, 0);
@@ -608,7 +611,7 @@ function TriageRail({
       <div className="mt-3.5 rounded-xl border border-line bg-surface px-[15px] py-[13px]">
         <button
           type="button"
-          onClick={() => onSelect(null)}
+          onClick={() => onSelect(null, null)}
           className="flex w-full items-baseline justify-between text-left"
           title="show all error groups"
         >
@@ -626,7 +629,7 @@ function TriageRail({
             <button
               key={row.slug}
               type="button"
-              onClick={() => onSelect(row.slug)}
+              onClick={() => onSelect(row.slug, row.name)}
               className="mt-[11px] block w-full text-left"
               title={`show ${row.slug} error groups`}
             >
@@ -654,7 +657,7 @@ export function Overview(): JSX.Element {
   const [prevStats, setPrevStats] = useState<StatsOverview | null>(null);
   const [statsError, setStatsError] = useState(false);
   const [approvals, setApprovals] = useState<PermissionRequest[] | null>(null);
-  const [drill, setDrill] = useState<{ project: string | null } | null>(null);
+  const [drill, setDrill] = useState<{ project: string | null; name: string | null } | null>(null);
 
   const loadSessions = useCallback((): void => {
     fetchSessions(scope !== null ? { project: scope } : {})
@@ -757,14 +760,31 @@ export function Overview(): JSX.Element {
           <TriageRail
             stats={stats}
             // "all errors" under a global scope drills into that scope, so the
-            // modal always matches the scoped total shown on the rail.
-            onSelect={(slug) => setDrill({ project: slug ?? scope })}
+            // modal always matches the scoped total shown on the rail. The
+            // display name comes from the clicked row, or is looked up for the
+            // scope slug so the header never shows a raw slug when a name exists.
+            onSelect={(slug, name) => {
+              const project = slug ?? scope;
+              setDrill({
+                project,
+                name:
+                  name ??
+                  (project !== null
+                    ? (stats.errors_by_project.find((r) => r.slug === project)?.name ?? null)
+                    : null),
+              });
+            }}
           />
         )}
       </aside>
 
       {drill !== null && (
-        <ErrorDrilldown day={day} project={drill.project} onClose={() => setDrill(null)} />
+        <ErrorDrilldown
+          day={day}
+          project={drill.project}
+          projectName={drill.name}
+          onClose={() => setDrill(null)}
+        />
       )}
     </div>
   );

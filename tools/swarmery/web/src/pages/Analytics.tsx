@@ -231,7 +231,7 @@ function CacheHero({ series }: { series: TimeseriesResp }): JSX.Element | null {
       <div className="min-w-0 flex-[1_1_300px]">
         <div className="font-display text-[20px] font-medium leading-[1.3] tracking-[-0.01em] text-ink text-balance">
           Cache served {pct}% of prompt tokens this range
-          {c.saved_usd !== null ? ` — saving ~${fmtCost(c.saved_usd)} vs full-price input.` : '.'}
+          {c.saved_usd !== null ? ` — saving ~${fmtCost(c.saved_usd)} net of cache-write premium.` : '.'}
         </div>
         <div className="mt-[7px] font-mono text-[10.5px] text-ink-dim">
           {fmtTokens(c.cache_read_tokens)} cache reads · {fmtTokens(c.input_tokens)} uncached input
@@ -404,10 +404,14 @@ function ChartTooltip({
           <span className="text-ink">{fmtValue(metric, p.value ?? 0)}</span>
         </div>
       ))}
-      <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-1.5 font-mono text-[11px]">
-        <span className="flex-1 text-ink-dim">total</span>
-        <span className="font-semibold text-ink">{fmtValue(metric, total)}</span>
-      </div>
+      {/* Cache values are per-series hit-rate fractions — summing them is
+          meaningless (e.g. "175.3%"), so the total row is cost/tokens only. */}
+      {metric !== 'cache' && (
+        <div className="mt-1.5 flex items-center gap-2 border-t border-line pt-1.5 font-mono text-[11px]">
+          <span className="flex-1 text-ink-dim">total</span>
+          <span className="font-semibold text-ink">{fmtValue(metric, total)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -558,9 +562,7 @@ function BreakdownPanel({
               {cacheView ? (
                 <>
                   <span className="text-ink">
-                    {r.cache_hit_rate !== null && r.cache_hit_rate !== undefined
-                      ? `${(r.cache_hit_rate * 100).toFixed(1)}%`
-                      : '—'}
+                    {r.cache_hit_rate !== null ? `${(r.cache_hit_rate * 100).toFixed(1)}%` : '—'}
                   </span>
                   <span className="w-16 text-right text-ink-faint">
                     {fmtTokens(r.tokens_cache_read ?? 0)}

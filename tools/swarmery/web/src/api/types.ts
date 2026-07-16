@@ -408,8 +408,8 @@ export interface BreakdownRow {
   tokens_in: number | null;
   tokens_out: number | null;
   /** Cache columns (analytics uplift): set on project|model rows, null on agent|skill. */
-  tokens_cache_read?: number | null;
-  cache_hit_rate?: number | null;
+  tokens_cache_read: number | null;
+  cache_hit_rate: number | null;
   runs: number | null;
   sessions: number;
   last_used: string | null;

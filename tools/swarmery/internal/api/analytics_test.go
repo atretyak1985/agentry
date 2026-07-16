@@ -48,11 +48,11 @@ func analyticsServer(t *testing.T) *httptest.Server {
 		(3, 2, 'u3', 'mystery-model',  'completed', ?),
 		(4, 2, 'u4', 'claude-fable-5', 'completed', ?)`, today, today, day3, day20)
 
-	mustExec(`INSERT INTO turns (session_id, seq, role, model, started_at, tokens_in, tokens_out, tokens_cache_read, cost_usd) VALUES
-		(1, 0, 'assistant', 'claude-fable-5', ?, 100, 50, 900,  0.5),
-		(2, 0, 'assistant', 'cheap-model',    ?, 10,  5,  40,   0.25),
-		(3, 0, 'assistant', 'mystery-model',  ?, 30,  20, NULL, NULL),
-		(4, 0, 'assistant', 'claude-fable-5', ?, 7,   7,  100,  1.0)`,
+	mustExec(`INSERT INTO turns (session_id, seq, role, model, started_at, tokens_in, tokens_out, tokens_cache_read, tokens_cache_write, cost_usd) VALUES
+		(1, 0, 'assistant', 'claude-fable-5', ?, 100, 50, 900,  200,  0.5),
+		(2, 0, 'assistant', 'cheap-model',    ?, 10,  5,  40,   50,   0.25),
+		(3, 0, 'assistant', 'mystery-model',  ?, 30,  20, NULL, NULL, NULL),
+		(4, 0, 'assistant', 'claude-fable-5', ?, 7,   7,  100,  999,  1.0)`,
 		today, today, day3, day20)
 
 	// subagent_start: two notations of tech-lead on alpha today (fold → 2),
@@ -418,11 +418,13 @@ func TestStatsTimeseriesCache(t *testing.T) {
 		if !almostEq(ts.Cache.HitRate, 940.0/1080.0) {
 			t.Errorf("hit rate = %v, want %v", ts.Cache.HitRate, 940.0/1080.0)
 		}
-		// Only claude-fable-5 is in pricing.json (input 10, cache_read 1):
-		// saved = 900 × (10−1)/1e6 = 0.0081. cheap-model's 40 cached tokens are
-		// unpriceable → excluded (honesty rule).
-		if ts.Cache.SavedUSD == nil || !almostEq(*ts.Cache.SavedUSD, 0.0081) {
-			t.Errorf("saved = %v, want 0.0081", ts.Cache.SavedUSD)
+		// Only claude-fable-5 is in pricing.json (input 10, cache_read 1,
+		// cache_write 12.5). NET saving = read gain − write premium:
+		// 900 × (10−1)/1e6 − 200 × (12.5−10)/1e6 = 0.0081 − 0.0005 = 0.0076.
+		// cheap-model's 40 cached reads / 50 writes are unpriceable → excluded
+		// (honesty rule); the day20 write of 999 is outside the range.
+		if ts.Cache.SavedUSD == nil || !almostEq(*ts.Cache.SavedUSD, 0.0076) {
+			t.Errorf("saved = %v, want 0.0076", ts.Cache.SavedUSD)
 		}
 	})
 
