@@ -300,6 +300,10 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		}
 		return out.Series[i].Key < out.Series[j].Key
 	})
+	if r.URL.Query().Get("format") == "csv" {
+		writeTimeseriesCSV(w, out)
+		return
+	}
 	writeJSON(w, out, nil)
 }
 
@@ -343,6 +347,10 @@ func (h *Handler) statsBreakdown(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if r.URL.Query().Get("format") == "csv" {
+		writeBreakdownCSV(w, by, out)
 		return
 	}
 	writeJSON(w, out, nil)
