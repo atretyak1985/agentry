@@ -189,31 +189,52 @@ function AppShell(): JSX.Element {
   return (
     <div className="app-shell flex h-dvh flex-col">
       {/* Full-width top header: wordmark left, breadcrumb, live status right. */}
-      <header className="header-hairline z-20 flex h-14 shrink-0 items-center gap-4 bg-bg px-4 desk:px-6">
-        <span className="font-sans text-[16px] leading-none font-extrabold tracking-[0.09em] text-ink uppercase">
-          SW<span className="text-brand">◆</span>RMERY
+      <header className="header-hairline relative z-20 flex h-14 shrink-0 items-center gap-4 bg-bg px-4 desk:px-6">
+        {/* Fixed-width block on desktop: 24px header padding + 208px + 16px gap
+            = 248px, so the scope switcher starts exactly where the sidebar ends. */}
+        <span className="flex min-w-0 items-center desk:w-[208px] desk:shrink-0">
+          <span className="font-sans text-[16px] leading-none font-extrabold tracking-[0.09em] text-ink uppercase">
+            SW<span className="text-brand">◆</span>RMERY
+          </span>
         </span>
+        <ScopeSwitcher />
+        {/* Crumb yields to the centered search pill on xl+ (page context is
+            already visible in the sidebar highlight). */}
         {crumb !== '' && (
-          <span className="hidden font-mono text-[10.5px] tracking-[0.1em] text-ink-faint uppercase sm:inline">
+          <span className="hidden truncate font-mono text-[10.5px] tracking-[0.1em] text-ink-faint uppercase sm:inline xl:hidden">
             {crumb}
           </span>
         )}
-        <ScopeSwitcher />
+        {/* Centered search pill — absolutely positioned so it stays in the true
+            middle of the header regardless of left/right cluster widths. */}
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="ml-auto hidden items-center gap-2 rounded-lg border border-line bg-field px-2.5 py-1 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim sm:flex"
+          className="absolute left-1/2 top-1/2 hidden w-[clamp(280px,34vw,480px)] -translate-x-1/2 -translate-y-1/2 items-center justify-between rounded-xl border border-line bg-field px-4 py-2 font-mono text-[12px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim xl:flex"
+        >
+          <span className="flex items-center gap-2">
+            <span aria-hidden="true" className="text-[13px] leading-none">⌕</span>
+            search sessions, files, projects…
+          </span>
+          <span className="rounded-[5px] border border-line-strong px-1.5 py-px text-[10.5px]">⌘K</span>
+        </button>
+        <span className="ml-auto flex items-center gap-3">
+        {/* Compact fallback below xl, where the centered pill is hidden. */}
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="hidden items-center gap-2 rounded-lg border border-line bg-field px-2.5 py-1 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim sm:flex xl:hidden"
         >
           search <span className="rounded-[4px] border border-line-strong px-1">⌘K</span>
         </button>
         {!MOCK && (
-          <span className="ml-3 flex items-center gap-2">
+          <span className="flex items-center gap-2">
             <NotifySettings prefs={notifyPrefs} onChange={setNotifyPrefs} />
             <NewProjectButton />
           </span>
         )}
         <span
-          className="ml-3 flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim"
+          className="flex items-center gap-1.5 font-mono text-[10.5px] text-ink-dim"
         >
           {MOCK ? (
             <>
@@ -229,6 +250,7 @@ function AppShell(): JSX.Element {
               {health !== null ? ` · ${shortVersion(health.version)}` : ''}
             </>
           )}
+        </span>
         </span>
       </header>
 
