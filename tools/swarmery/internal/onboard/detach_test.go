@@ -189,3 +189,115 @@ func TestDetachGuardsForeignAgentProject(t *testing.T) {
 		t.Error("AGENT_PROJECT with a non-matching value must not be removed")
 	}
 }
+
+// The API layer only knows the registry slug (path-derived, "-Volumes-Work-app"),
+// which never equals the AGENT_PROJECT value onboarding wrote — the project.json
+// name must unlock the env prune (live bug: env.AGENT_PROJECT survived every
+// dashboard-initiated detach).
+func TestDetachAcceptsProjectJSONSlug(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestSettings(t, dir, `{"env": {"AGENT_PROJECT": "demo"}}`)
+	pj := filepath.Join(dir, ".claude", "project.json")
+	if err := os.WriteFile(pj, []byte(`{"name": "demo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Detach(DetachConfig{ProjectDir: dir, Slug: "-Volumes-Work-demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detached {
+		t.Fatal("want Detached=true via the project.json onboarding slug")
+	}
+	if env, ok := readSettings(t, path)["env"].(map[string]any); ok {
+		if _, ok := env["AGENT_PROJECT"]; ok {
+			t.Error("env.AGENT_PROJECT not removed despite matching project.json name")
+		}
+	}
+}
+
+// Full offboard removes project.json (with backup) and the statusline scripts,
+// drops the emptied statusline dir, and never touches user-owned components.
+func TestDetachFullRemovesOnboardingArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	writeTestSettings(t, dir, managedSettings)
+	claude := filepath.Join(dir, ".claude")
+	pj := filepath.Join(claude, "project.json")
+	if err := os.WriteFile(pj, []byte(`{"name": "demo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slDir := filepath.Join(claude, "statusline")
+	if err := os.MkdirAll(slDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"statusline.sh", "fetch-fable-usage.sh"} {
+		if err := os.WriteFile(filepath.Join(slDir, name), []byte("#!/bin/bash\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agents := filepath.Join(claude, "agents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agents, "mine.md"), []byte("# mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry run first: plans the artifact removal, touches nothing.
+	res, err := Detach(DetachConfig{ProjectDir: dir, Slug: "demo", WorkspaceRoot: "/ws", Full: true, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detached {
+		t.Fatal("dry run: want Detached=true")
+	}
+	if _, err := os.Stat(pj); err != nil {
+		t.Fatal("dry run must not remove project.json")
+	}
+
+	res, err = Detach(DetachConfig{ProjectDir: dir, Slug: "demo", WorkspaceRoot: "/ws", Full: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detached {
+		t.Fatal("want Detached=true")
+	}
+	if _, err := os.Stat(pj); !os.IsNotExist(err) {
+		t.Error("project.json not removed")
+	}
+	if _, err := os.Stat(pj + ".bak"); err != nil {
+		t.Error("project.json.bak backup not written")
+	}
+	if _, err := os.Stat(slDir); !os.IsNotExist(err) {
+		t.Error("emptied statusline dir not removed")
+	}
+	if _, err := os.Stat(filepath.Join(agents, "mine.md")); err != nil {
+		t.Error("user-owned components must never be touched")
+	}
+}
+
+// Full offboard on an already-clean settings.json still removes the artifacts
+// (settings.json itself is not rewritten — nothing changed in it).
+func TestDetachFullWithCleanSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestSettings(t, dir, `{"permissions": {"deny": ["Read(./.env)"]}}`)
+	pj := filepath.Join(dir, ".claude", "project.json")
+	if err := os.WriteFile(pj, []byte(`{"name": "demo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Detach(DetachConfig{ProjectDir: dir, Slug: "demo", Full: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detached {
+		t.Fatal("want Detached=true (artifacts removed)")
+	}
+	if _, err := os.Stat(pj); !os.IsNotExist(err) {
+		t.Error("project.json not removed")
+	}
+	// settings.json untouched: no backup, same content.
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Error("settings.json must not be backed up when nothing in it changed")
+	}
+}

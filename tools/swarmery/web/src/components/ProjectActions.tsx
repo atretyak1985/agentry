@@ -8,6 +8,7 @@ import type { Project } from '../api/types';
 import { archiveProject, restoreProject } from '../api';
 import { ConfirmDialog } from './ui';
 import { DetachModal } from './DetachModal';
+import { AttachModal } from './AttachModal';
 
 /** Why the Detach action is unavailable for a project, or null when allowed. */
 export function detachBlockReason(project: Project): string | null {
@@ -17,6 +18,16 @@ export function detachBlockReason(project: Project): string | null {
     return 'project is outside SWARMERY_ONBOARD_ROOTS — detach is fenced to the allow-list';
   }
   return null;
+}
+
+/**
+ * Whether the Attach action applies: the project has a .claude/settings.json
+ * (plugin state known) but swarmery is not enabled, and the path is inside the
+ * onboarding allow-list the write endpoints are fenced to.
+ */
+export function canAttach(project: Project): boolean {
+  const p = project.plugin;
+  return p !== null && !p.managed && p.underOnboardRoot;
 }
 
 /** managed / not-enabled / telemetry-only pill from the project's plugin state. */
@@ -53,6 +64,7 @@ export function ProjectActions({
 }): JSX.Element {
   const [confirm, setConfirm] = useState<'archive' | 'restore' | null>(null);
   const [showDetach, setShowDetach] = useState(false);
+  const [showAttach, setShowAttach] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const blocked = detachBlockReason(project);
@@ -85,15 +97,26 @@ export function ProjectActions({
         </button>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setShowDetach(true)}
-            disabled={blocked !== null}
-            title={blocked ?? 'remove swarmery from .claude/settings.json'}
-            className="rounded-lg border border-line bg-surface px-2.5 py-1 font-mono text-[10.5px] text-ink-2 transition-colors hover:bg-surface2 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            detach
-          </button>
+          {canAttach(project) ? (
+            <button
+              type="button"
+              onClick={() => setShowAttach(true)}
+              title="re-enable swarmery in .claude/settings.json"
+              className="rounded-lg border border-green/40 bg-green/10 px-2.5 py-1 font-mono text-[10.5px] text-green transition-colors hover:bg-green/20"
+            >
+              attach
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowDetach(true)}
+              disabled={blocked !== null}
+              title={blocked ?? 'remove swarmery from .claude/settings.json'}
+              className="rounded-lg border border-line bg-surface px-2.5 py-1 font-mono text-[10.5px] text-ink-2 transition-colors hover:bg-surface2 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              detach
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setConfirm('archive')}
@@ -136,6 +159,17 @@ export function ProjectActions({
           onClose={() => setShowDetach(false)}
           onDetached={() => {
             setShowDetach(false);
+            onChanged();
+          }}
+        />
+      )}
+
+      {showAttach && (
+        <AttachModal
+          project={project}
+          onClose={() => setShowAttach(false)}
+          onAttached={() => {
+            setShowAttach(false);
             onChanged();
           }}
         />

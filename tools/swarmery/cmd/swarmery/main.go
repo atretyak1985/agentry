@@ -78,6 +78,8 @@ func main() {
 		err = cmdOnboard(os.Args[2:])
 	case "offboard":
 		err = cmdOffboard(os.Args[2:])
+	case "attach":
+		err = cmdAttach(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -117,6 +119,10 @@ func usage() {
   swarmery offboard [slug] [--dir <path>] [--dry-run]
                                    detach swarmery from a project: prune the swarmery-owned
                                    entries from .claude/settings.json (backs up to .bak; idempotent)
+  swarmery attach   [--dir <path>] [--workspace-root <path>] [--statusline-src <path>] [--dry-run]
+                                   re-enable a detached project: merge the swarmery entries back
+                                   into settings.json, restore project.json from .bak, reinstall
+                                   hooks (idempotent; the inverse of offboard)
   env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT
        SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC`)
 }
@@ -488,6 +494,66 @@ func cmdOffboard(args []string) error {
 	}
 	for _, s := range res.Steps {
 		fmt.Println(s)
+	}
+	return nil
+}
+
+// cmdAttach re-enables swarmery for a detached project — the CLI twin of
+// POST /api/projects/{id}/attach and the inverse of `swarmery offboard`. It
+// delegates to onboard.Attach (merge-only settings surgery, project.json
+// restore from .bak, statusline redeploy) and then reinstalls the approvals
+// hooks. --dry-run prints the plan without writing.
+func cmdAttach(args []string) error {
+	fs := flag.NewFlagSet("attach", flag.ExitOnError)
+	dir := fs.String("dir", "", "project root to attach (default: current directory)")
+	wsRoot := fs.String("workspace-root", defaultWorkspaceRoot(),
+		"shared workspace repo root (env: SWARMERY_WORKSPACE_ROOT)")
+	statuslineSrc := fs.String("statusline-src", os.Getenv("SWARMERY_STATUSLINE_SRC"),
+		"plugins/core/statusline dir to copy statusline scripts from (env: SWARMERY_STATUSLINE_SRC)")
+	dryRun := fs.Bool("dry-run", false, "print what would be restored without writing")
+	fs.Parse(args)
+
+	projectDir := *dir
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+		projectDir = cwd
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project dir: %w", err)
+	}
+
+	res, err := onboard.Attach(onboard.AttachConfig{
+		ProjectDir:    abs,
+		WorkspaceRoot: *wsRoot,
+		StatuslineSrc: *statuslineSrc,
+		DryRun:        *dryRun,
+	})
+	if err != nil {
+		return err
+	}
+	for _, s := range res.Steps {
+		fmt.Println(s)
+	}
+	if *dryRun {
+		return nil
+	}
+
+	// Hooks live in settings.local.json, outside onboard's remit — reinstall
+	// them here like `swarmery hooks install` would.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home dir: %w", err)
+	}
+	if err := (&hookcfg.System{Home: home, Out: os.Stdout}).Install(abs, 0); err != nil {
+		return fmt.Errorf("hooks install: %w", err)
+	}
+	if res.Attached {
+		fmt.Printf("\nNext: open a FRESH Claude Code session in %s\n", abs)
+		fmt.Println("      → accept the 'swarmery' marketplace trust prompt → plugins install.")
 	}
 	return nil
 }
