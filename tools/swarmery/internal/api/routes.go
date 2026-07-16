@@ -9,6 +9,9 @@ import "net/http"
 func Routes(mux *http.ServeMux, h *Handler) {
 	// ── core: vertical slice (this file's owner) ──
 	mux.HandleFunc("GET /api/projects", h.listProjects)
+	// week-over-week health rows (cost/error-rate/duration) — literal segment,
+	// so it wins over the {id} wildcard below.
+	mux.HandleFunc("GET /api/projects/health", h.projectsHealth)
 	mux.HandleFunc("GET /api/projects/{id}", h.getProject)
 	// soft-archive a project from the list (reversible; row + sessions kept).
 	mux.HandleFunc("DELETE /api/projects/{id}", requireLocalOrigin(h.hideProject))
