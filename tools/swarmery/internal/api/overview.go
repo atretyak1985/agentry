@@ -74,7 +74,16 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	start, end := dayBounds(dayStart)
 
-	agg, err := h.windowAggregates(start, end, "", nil)
+	// Global project scope (?project=<slug|id>) — same match rule as
+	// /api/stats/today and /api/sessions.
+	projFilter := ""
+	projArgs := []any{}
+	if project := r.URL.Query().Get("project"); project != "" {
+		projFilter = ` AND (p.slug = ? OR CAST(p.id AS TEXT) = ?)`
+		projArgs = []any{project, project}
+	}
+
+	agg, err := h.windowAggregates(start, end, projFilter, projArgs)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -98,7 +107,7 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 
 	// "active" is a now-property, meaningful only for the current day.
 	if dayStart.Equal(todayStart) {
-		if o.Active, err = h.activeSessions("", nil); err != nil {
+		if o.Active, err = h.activeSessions(projFilter, projArgs); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -109,7 +118,7 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 	for i := 13; i >= 0; i-- {
 		d := dayStart.AddDate(0, 0, -i)
 		ds, de := dayBounds(d)
-		da, err := h.windowAggregates(ds, de, "", nil)
+		da, err := h.windowAggregates(ds, de, projFilter, projArgs)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -129,8 +138,9 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 		FROM events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ? AND p.archived = 0
-		GROUP BY p.id ORDER BY n DESC, p.slug LIMIT 8`, start, end)
+		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+projFilter+`
+		GROUP BY p.id ORDER BY n DESC, p.slug LIMIT 8`,
+		append([]any{start, end}, projArgs...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -156,8 +166,9 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 		FROM turns t
 		JOIN sessions s ON s.id = t.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0
-		GROUP BY mdl ORDER BY c DESC, mdl`, start, end)
+		WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+projFilter+`
+		GROUP BY mdl ORDER BY c DESC, mdl`,
+		append([]any{start, end}, projArgs...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -182,8 +193,9 @@ func (h *Handler) statsOverview(w http.ResponseWriter, r *http.Request) {
 		SELECT p.slug, p.name, COUNT(*) AS n
 		FROM sessions s
 		JOIN projects p ON p.id = s.project_id
-		WHERE s.started_at >= ? AND s.started_at < ? AND p.archived = 0
-		GROUP BY p.id ORDER BY n DESC, p.slug`, start, end)
+		WHERE s.started_at >= ? AND s.started_at < ? AND p.archived = 0`+projFilter+`
+		GROUP BY p.id ORDER BY n DESC, p.slug`,
+		append([]any{start, end}, projArgs...)...)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -117,6 +117,17 @@ func agentKey(agentName sql.NullString) string {
 	return "main"
 }
 
+// scopeFilter resolves ?project=<slug|id> into a SQL predicate appended to an
+// analytics query (every one of them joins projects p) — the same match rule
+// as /api/sessions and /api/stats/today. Empty when unscoped.
+func scopeFilter(r *http.Request) (string, []any) {
+	project := r.URL.Query().Get("project")
+	if project == "" {
+		return "", nil
+	}
+	return ` AND (p.slug = ? OR CAST(p.id AS TEXT) = ?)`, []any{project, project}
+}
+
 // runKind maps an events-based dimension to its event type + payload NAME
 // expression — identical to system.go's systemKind usage attribution so
 // counts agree across pages (folded by normAgentType in Go).
@@ -172,6 +183,7 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	pf, pargs := scopeFilter(r)
 
 	// acc[key] = {name, values aligned to dr.days, total}
 	type acc struct {
@@ -197,7 +209,8 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			   JOIN sessions s ON s.id = e.session_id
 			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+			append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -236,7 +249,8 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+			 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+			append([]any{dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -299,8 +313,9 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			       SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.cost_usd)
 			  FROM daily_rollups r
 			  JOIN projects p ON p.id = r.project_id
-			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0
-			 GROUP BY r.day, p.slug`, dr.days[0], dr.days[len(dr.days)-1])
+			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf+`
+			 GROUP BY r.day, p.slug`,
+			append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -354,8 +369,8 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		if err := h.DB.QueryRow(
 			`SELECT COUNT(*) FROM daily_rollups r
 			  JOIN projects p ON p.id = r.project_id
-			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`,
-			dr.days[0], dr.days[len(dr.days)-1]).Scan(&n); err != nil {
+			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf,
+			append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...).Scan(&n); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -401,14 +416,15 @@ func (h *Handler) statsBreakdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pf, pargs := scopeFilter(r)
 	var out []breakdownRow
 	switch by {
 	case "project", "model":
-		out, err = h.breakdownTurns(by, dr)
+		out, err = h.breakdownTurns(by, dr, pf, pargs)
 	case "agent":
-		out, err = h.breakdownAgent(dr)
+		out, err = h.breakdownAgent(dr, pf, pargs)
 	case "skill":
-		out, err = h.breakdownRuns("skill", dr)
+		out, err = h.breakdownRuns("skill", dr, pf, pargs)
 	default:
 		http.Error(w, `{"error":"invalid by, want project|model|agent|skill"}`, http.StatusBadRequest)
 		return
@@ -426,7 +442,7 @@ func (h *Handler) statsBreakdown(w http.ResponseWriter, r *http.Request) {
 
 // breakdownTurns ranks project|model by cost (turns-based). tokens & sessions
 // travel along; runs/last_used are null (Phase 1).
-func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error) {
+func (h *Handler) breakdownTurns(by string, dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
 	keyExpr, labelIsName := "p.slug", true
 	if by == "model" {
 		keyExpr, labelIsName = "COALESCE(t.model, s.model, 'unknown')", false
@@ -441,9 +457,9 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
-		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf+`
 		 GROUP BY k
-		 ORDER BY cost DESC, k`, dr.start, dr.end)
+		 ORDER BY cost DESC, k`, append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +491,7 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		return nil, err
 	}
 	if by == "project" {
-		if err := h.mergeProjectRollups(dr, &out); err != nil {
+		if err := h.mergeProjectRollups(dr, pf, pargs, &out); err != nil {
 			return nil, err
 		}
 	}
@@ -485,14 +501,14 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 // mergeProjectRollups folds daily_rollups (days pruned by `swarmery prune`)
 // into the by=project breakdown: cost/tokens/sessions accumulate, then the
 // ranking is recomputed (cost desc, key asc — same order as the SQL).
-func (h *Handler) mergeProjectRollups(dr dateRange, out *[]breakdownRow) error {
+func (h *Handler) mergeProjectRollups(dr dateRange, pf string, pargs []any, out *[]breakdownRow) error {
 	rows, err := h.DB.Query(`
 		SELECT p.slug, p.name,
 		       SUM(r.cost_usd), SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.sessions)
 		  FROM daily_rollups r
 		  JOIN projects p ON p.id = r.project_id
-		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0
-		 GROUP BY p.slug`, dr.days[0], dr.days[len(dr.days)-1])
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0`+pf+`
+		 GROUP BY p.slug`, append([]any{dr.days[0], dr.days[len(dr.days)-1]}, pargs...)...)
 	if err != nil {
 		return err
 	}
@@ -553,7 +569,7 @@ func (h *Handler) mergeProjectRollups(dr dateRange, out *[]breakdownRow) error {
 
 // breakdownRuns ranks agent|skill by run count (events-based, name-folded).
 // cost/tokens are null in Phase 1.
-func (h *Handler) breakdownRuns(by string, dr dateRange) ([]breakdownRow, error) {
+func (h *Handler) breakdownRuns(by string, dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
 	rk := runKind[by]
 	rows, err := h.DB.Query(
 		`SELECT `+rk.nameExpr+` AS n, e.ts, e.session_id
@@ -561,7 +577,8 @@ func (h *Handler) breakdownRuns(by string, dr dateRange) ([]breakdownRow, error)
 		   JOIN sessions s ON s.id = e.session_id
 		   JOIN projects p ON p.id = s.project_id
 		  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+		append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -629,13 +646,14 @@ type agentTot struct {
 
 // agentTurnTotals sums subagent (and "main") turn cost/tokens over the range,
 // folded by agentKey — the source of exact per-agent $ (phase 2).
-func (h *Handler) agentTurnTotals(dr dateRange) (map[string]*agentTot, error) {
+func (h *Handler) agentTurnTotals(dr dateRange, pf string, pargs []any) (map[string]*agentTot, error) {
 	rows, err := h.DB.Query(`
 		SELECT t.agent_name, t.tokens_in, t.tokens_out, t.cost_usd
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
-		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -669,14 +687,15 @@ func (h *Handler) agentTurnTotals(dr dateRange) (map[string]*agentTot, error) {
 // range. Attribution uses turns.agent_name folded by agentKey — the same
 // grain as agentTurnTotals, so the rate column lines up with the $ column.
 // 'abandoned' is excluded from the denominator by the WHERE clause.
-func (h *Handler) agentOutcomeRates(dr dateRange) (map[string]float64, error) {
+func (h *Handler) agentOutcomeRates(dr dateRange, pf string, pargs []any) (map[string]float64, error) {
 	rows, err := h.DB.Query(`
 		SELECT DISTINCT t.agent_name, t.session_id, s.outcome
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
 		 WHERE s.outcome IN ('success','fail')
-		   AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+		   AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -718,8 +737,8 @@ func (h *Handler) agentOutcomeRates(dr dateRange) (map[string]float64, error) {
 // breakdownAgent ranks agents with EXACT $ (phase 2): run counts from events
 // (subagents that ran) merged with cost/tokens from their turns, plus the
 // orchestrator ("main") which has turns but no subagent_start event.
-func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
-	rows, err := h.breakdownRuns("agent", dr)
+func (h *Handler) breakdownAgent(dr dateRange, pf string, pargs []any) ([]breakdownRow, error) {
+	rows, err := h.breakdownRuns("agent", dr, pf, pargs)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +746,7 @@ func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
 	for i := range rows {
 		byKey[rows[i].Key] = i
 	}
-	totals, err := h.agentTurnTotals(dr)
+	totals, err := h.agentTurnTotals(dr, pf, pargs)
 	if err != nil {
 		return nil, err
 	}
@@ -746,7 +765,7 @@ func (h *Handler) breakdownAgent(dr dateRange) ([]breakdownRow, error) {
 			rows = append(rows, breakdownRow{Key: key, Name: key, CostUSD: cost, TokensIn: &tin, TokensOut: &tout})
 		}
 	}
-	rates, err := h.agentOutcomeRates(dr)
+	rates, err := h.agentOutcomeRates(dr, pf, pargs)
 	if err != nil {
 		return nil, err
 	}
@@ -831,6 +850,7 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	pf, pargs := scopeFilter(r)
 
 	cells := map[[2]string]float64{}
 	rowTotals := map[string]float64{}
@@ -853,7 +873,8 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			   JOIN sessions s ON s.id = e.session_id
 			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+			append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -877,7 +898,8 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
+			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+pf,
+			append([]any{dr.start, dr.end}, pargs...)...)
 		if err != nil {
 			writeErr(w, err)
 			return
