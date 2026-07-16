@@ -8,15 +8,18 @@ allowed-tools:
 # /statusline-help — Decode the custom statusline
 
 Print a clear reference for the custom statusline rendered at the bottom of the
-terminal. Script: `agents/statusline/agents-statusline.sh` (wired via the
-`statusLine` key in `agents/settings.json`).
+terminal. Script: `.claude/statusline/statusline.sh` in consumer projects
+(deployed there by `scripts/init.sh`, wired via the `statusLine` key in
+`.claude/settings.json`); source of truth lives at `plugins/core/statusline/`.
 
 ## Steps
 
 1. **Render a live sample** so the user sees current colors and values. Run:
 
    ```bash
-   printf '%s' '{"version":"2.1.170","model":{"id":"claude-opus-4-8[1m]","display_name":"Opus 4.8 (1M context)"},"output_style":{"name":"Explanatory"},"workspace":{"current_dir":"'"$CLAUDE_PROJECT_DIR"'","project_dir":"'"$CLAUDE_PROJECT_DIR"'"},"cwd":"'"$CLAUDE_PROJECT_DIR"'","context_window":{"used_percentage":15},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":2000000000},"seven_day":{"used_percentage":20,"resets_at":2000600000}},"cost":{"total_cost_usd":5.04,"total_duration_ms":2792000,"total_lines_added":299,"total_lines_removed":6}}' | bash "$CLAUDE_PROJECT_DIR/agents/statusline/agents-statusline.sh"
+   SL="$CLAUDE_PROJECT_DIR/.claude/statusline/statusline.sh"
+   [ -f "$SL" ] || SL="$CLAUDE_PROJECT_DIR/plugins/core/statusline/statusline.sh"
+   printf '%s' '{"version":"2.1.170","model":{"id":"claude-opus-4-8[1m]","display_name":"Opus 4.8 (1M context)"},"output_style":{"name":"Explanatory"},"workspace":{"current_dir":"'"$CLAUDE_PROJECT_DIR"'","project_dir":"'"$CLAUDE_PROJECT_DIR"'"},"cwd":"'"$CLAUDE_PROJECT_DIR"'","context_window":{"used_percentage":15},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":2000000000},"seven_day":{"used_percentage":20,"resets_at":2000600000}},"cost":{"total_cost_usd":5.04,"total_duration_ms":2792000,"total_lines_added":299,"total_lines_removed":6}}' | bash "$SL"
    ```
 
    (This is a synthetic payload for illustration — the real statusline uses the
@@ -35,16 +38,22 @@ terminal. Script: `agents/statusline/agents-statusline.sh` (wired via the
 | **4 CONTEXT** | `bar + %` | Context window fill | JSON `.context_window.used_percentage` (fallback: transcript). Green <50 · yellow ≥50 · red ≥80 |
 | **5 USAGE** | `5H <pct>% ⟳<reset>` | **Official** 5-hour plan limit used + reset countdown | JSON `.rate_limits.five_hour` (same as `/usage`) |
 | | `WK <pct>% ⟳<reset>` | Weekly plan limit used + reset | JSON `.rate_limits.seven_day` |
+| | `FB <pct>% ⟳<reset>` | Fable-5 weekly window (the "Fable" bar on claude.ai settings→usage). **Opt-in, hidden by default** | `fetch-fable-usage.sh` → `GET /api/oauth/usage` (OAuth token from macOS Keychain), cached, background refresh |
 | **6 SESSION** | `$cost` | This session's spend | JSON `.cost.total_cost_usd` |
 | | `+N/-N` | Lines added / removed | JSON `.cost.total_lines_added/removed` |
 | | `⏱ <dur>` | Session duration | JSON `.cost.total_duration_ms` |
 | **7 PWD** | `dir` | Current folder | JSON `.workspace.current_dir` |
 | | `Branch/Age/Mod/Sync` | Git branch · time since last commit · dirty count · ahead/behind. **Vanishes outside a git repo.** | `git` against cwd |
-| **8 MEMORY** | `Memories/Tasks/Sessions` | Memory files · active task dirs · recorded sessions | filesystem under `memory/`, `.claude-workspace/working/`, the sessions dir |
+| **8 MEMORY** | `Memories/Tasks/Sessions` | Memory files · active task dirs · recorded sessions | filesystem under `memory/`, the workspace `working/` tree (legacy: `.claude-workspace/working/`), the sessions dir |
 
 3. **Mention the knobs:**
    - Change weather city: `export SWARMERY_STATUSLINE_LOC="Kyiv"` (or `""` for auto-by-IP).
-   - Reliability tiers: instant-from-JSON (lines 1, 5, 6) · local compute (3, 4, 8, git) · external+cache (weather only). Nothing blocks the render.
+   - Fable-5 usage segment (`FB`): opt-in with `SWARMERY_STATUSLINE_FABLE=1` (reads the local
+     Claude Code OAuth token from the macOS Keychain; fails silent — the segment simply
+     doesn't render on any error). Cache TTL: `SWARMERY_STATUSLINE_FABLE_TTL` seconds
+     (default 300). The helper `fetch-fable-usage.sh` has its own `SWARMERY_FABLE_*`
+     overrides (keychain service, endpoint URL, timeout) — see its header comment.
+   - Reliability tiers: instant-from-JSON (lines 1, 5, 6) · local compute (3, 4, 8, git) · external+cache (weather + opt-in Fable). Nothing blocks the render.
    - Fresh session shows `CONTEXT 0%` / `SESSION $0` / no git block at workspace root — all expected.
 
 Keep the output tight: the live sample first, then the table, then the knobs.

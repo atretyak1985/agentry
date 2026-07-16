@@ -35,7 +35,8 @@ import {
   fetchTimeseries,
   fetchToolStats,
 } from '../api';
-import { projectColor } from '../lib/colors';
+import { useProjectColor } from '../lib/projectColors';
+import type { ColorForSlug } from '../lib/projectColors';
 import {
   addDays,
   fmtAgo,
@@ -84,10 +85,10 @@ const SERIES_PALETTE = [
 /**
  * Stable color per series key (not per position) so a model/agent keeps its
  * hue across the chart, legend, and breakdown panels. Projects reuse the
- * shared slug palette.
+ * app-wide distinct-color map (`colorFor`), passed in by the caller.
  */
-function seriesColor(group: AnalyticsDimension, key: string): string {
-  if (group === 'project') return projectColor(key);
+function seriesColor(colorFor: ColorForSlug, group: AnalyticsDimension, key: string): string {
+  if (group === 'project') return colorFor(key);
   let hash = 0;
   for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
   return SERIES_PALETTE[hash % SERIES_PALETTE.length] ?? '#8b8f99';
@@ -109,6 +110,7 @@ function HeroInsight({
   series: TimeseriesResp;
   metric: AnalyticsMetric;
 }): JSX.Element {
+  const colorFor = useProjectColor();
   const insight = useMemo(() => {
     const nDays = series.buckets.length;
     const rangeTotal = series.series.reduce((a, s) => a + s.total, 0);
@@ -118,7 +120,7 @@ function HeroInsight({
     const ranked = [...series.series].sort((a, b) => b.total - a.total);
     const top = ranked[0] ?? { name: '—', total: 0, key: '' };
     const topShare = rangeTotal > 0 ? Math.round((top.total / rangeTotal) * 100) : 0;
-    const topColor = seriesColor(series.group, top.key);
+    const topColor = seriesColor(colorFor, series.group, top.key);
     const movers = series.series
       .map((s) => {
         const f = (s.values[0] ?? 0) + (s.values[1] ?? 0) + (s.values[2] ?? 0);
@@ -140,7 +142,7 @@ function HeroInsight({
     });
     const peakLabel = fmtDayShort(series.buckets[peakIdx] ?? '');
     return { nDays, rangeTotal, dailyAvg, deltaPct, top, topShare, topColor, mover, peakLabel };
-  }, [series]);
+  }, [series, colorFor]);
 
   const { nDays, rangeTotal, dailyAvg, deltaPct, top, topShare, topColor, mover, peakLabel } =
     insight;
@@ -425,6 +427,7 @@ function MainChart({
   metric: AnalyticsMetric;
   hidden: ReadonlySet<string>;
 }): JSX.Element {
+  const colorFor = useProjectColor();
   const visible = data.series.filter((s) => !hidden.has(s.key));
   const rows = data.buckets.map((day, i) => {
     const row: Record<string, number | string> = { day: fmtDayShort(day) };
@@ -460,7 +463,7 @@ function MainChart({
           />
           <Tooltip content={<ChartTooltip metric={metric} />} />
           {visible.map((s, idx) => {
-            const color = seriesColor(data.group, s.key);
+            const color = seriesColor(colorFor, data.group, s.key);
             return (
               <Area
                 key={s.key}
@@ -495,11 +498,12 @@ function Legend({
   hidden: ReadonlySet<string>;
   onToggle: (key: string) => void;
 }): JSX.Element {
+  const colorFor = useProjectColor();
   return (
     <div className="mt-3 flex flex-wrap gap-[7px]">
       {data.series.map((s) => {
         const off = hidden.has(s.key);
-        const color = seriesColor(data.group, s.key);
+        const color = seriesColor(colorFor, data.group, s.key);
         return (
           <button
             key={s.key}
@@ -542,6 +546,7 @@ function BreakdownPanel({
   metric: AnalyticsMetric;
 }): JSX.Element {
   const cacheView = metric === 'cache';
+  const colorFor = useProjectColor();
   // Any $ in this pivot? project/model/agent carry cost; skill never does.
   const hasCost = rows.some((r) => r.cost_usd !== null);
   const hasRuns = rows.some((r) => r.runs !== null);
@@ -556,7 +561,7 @@ function BreakdownPanel({
   return (
     <div className="flex flex-col gap-2.5">
       {rows.map((r) => {
-        const color = seriesColor(pivot, r.key);
+        const color = seriesColor(colorFor, pivot, r.key);
         return (
           <div key={r.key}>
             <div className="flex items-baseline gap-2 font-mono text-[11.5px]">

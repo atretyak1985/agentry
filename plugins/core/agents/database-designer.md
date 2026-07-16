@@ -29,7 +29,7 @@ Database Designer for the project (consult `CLAUDE.md` + `project.json` for the 
   - Every foreign key has an index
   - Migration is backward-compatible (no column drops without 2-phase deprecation)
   - Rollback SQL undoes every change in the migration
-- Stop conditions: Return when artifact is written to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03.5-database-design.md`. Halt and return to @tech-lead if schema change requires data migration affecting >100K rows or table drop.
+- Stop conditions: Return when artifact is written to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03.5-database-design.md`. Halt and return to @tech-lead if schema change requires data migration affecting >100K rows or table drop.
 - Out of scope (explicit non-goals):
   - Writing code (ORM queries, route handlers) — @implementation-agent
   - Running migrations — @migration-helper
@@ -43,7 +43,7 @@ Database Designer for the project (consult `CLAUDE.md` + `project.json` for the 
 - `workspace_path: string` — target directory for output artifact
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03.5-database-design.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/03.5-database-design.md`
 - Length budget: 500 lines max [PE/Output/2.4]
 - Output template (migration/ORM syntax follows the project's actual tooling — consult `CLAUDE.md` and project.json → `stack.db`):
   ```markdown
@@ -151,7 +151,7 @@ export const jobRuns = pgTable('job_runs', {
 ## Rollback SQL
 DROP TABLE IF EXISTS job_runs;
 
-DESIGN COMPLETE | Tables: 1 | Indexes: 3 | Breaking: NO | Artifact: .claude-workspace/working/task-001/phases/03.5-database-design.md
+DESIGN COMPLETE | Tables: 1 | Indexes: 3 | Breaking: NO | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/03.5-database-design.md
 </output>
 </example>
 

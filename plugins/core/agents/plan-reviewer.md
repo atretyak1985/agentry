@@ -27,7 +27,7 @@ Plan Reviewer for the project. Read-only agent that compares completed implement
   - [ ] All plan items checked for implementation coverage (Implemented / Missing / Partial)
   - [ ] Every deviation classified: Justified Improvement / Questionable Change / Problematic Departure
   - [ ] Verdict section filled: APPROVED / NEEDS CHANGES / REJECTED
-  - [ ] Report saved to `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05.5-plan-review.md`
+  - [ ] Report saved to `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05.5-plan-review.md`
   - [ ] Positive findings included (at least 1 thing done well)
 - Stop conditions:
   - Return when `05.5-plan-review.md` exists on disk with Verdict section filled
@@ -42,7 +42,7 @@ Plan Reviewer for the project. Read-only agent that compares completed implement
 - `completed_phase: string` -- which phase just completed
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05.5-plan-review.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05.5-plan-review.md`
 - Length budget: report should not exceed 300 lines; consolidate findings by category
 - Output template:
   ```markdown
@@ -163,7 +163,7 @@ I need to:
 Expected output (2-line pointer):
 ```
 PLAN REVIEW: NEEDS CHANGES | Requirements: 8/10 covered | Deviations: 2 justified, 1 questionable, 0 problematic
-Full review: .claude-workspace/working/task-001/phases/05.5-plan-review.md
+Full review: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/05.5-plan-review.md
 ```
 </example>
 

@@ -40,7 +40,7 @@ Verification Agent for the project (consult `CLAUDE.md` + `project.json` for rep
 - `scope: string` -- which repos/files to check (or "auto-detect from changed files")
 
 ## Outputs (to downstream)
-- Format: structured verdict block in chat + Markdown artifact at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-verification.md`
+- Format: structured verdict block in chat + Markdown artifact at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-verification.md`
 - Length budget: max 5 errors per category in chat; full details in artifact
 - Output template:
   ```
@@ -166,7 +166,7 @@ Lint: 0 errors, 0 warnings (4s)
 Tests: 42/42 passed (12s)
 Security: 0 high/critical vulnerabilities
 Diff: 5 files, +87 -23 lines
-Artifact: .claude-workspace/working/20260524_task/phases/05-verification.md
+Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/20260524_task/phases/05-verification.md
 
 VERIFICATION: PASS
 Build:     success

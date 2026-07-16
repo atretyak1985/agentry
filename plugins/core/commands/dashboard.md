@@ -72,7 +72,10 @@ echo "Agents: $agent_count | Commands: $command_count | Skills: $skill_count | H
 
 ```bash
 today=$(date +%Y%m%d)
-metrics_glob=".claude-workspace/metrics/session-${today}-*.jsonl"
+# Resolve the workspace (swarmery model), falling back to legacy project-local .claude-workspace/
+WS="${AGENT_WORKSPACE_ROOT:-$HOME/swarmery-workspace}/${AGENT_PROJECT}/workspace"
+[ -d "$WS" ] || WS="${CLAUDE_PROJECT_DIR:-.}/.claude-workspace"   # legacy layout
+metrics_glob="${WS}/metrics/session-${today}-*.jsonl"
 metrics_files=$(ls $metrics_glob 2>/dev/null)
 if [ -n "$metrics_files" ]; then
   session_count=$(echo "$metrics_files" | wc -l | tr -d ' ')
@@ -89,13 +92,13 @@ else
   echo "No session metrics for today (expected: $metrics_glob)"
 fi
 
-trace_file=".claude-workspace/logs/trace-${today}.jsonl"
+trace_file="${WS}/logs/trace-${today}.jsonl"
 if [ -f "$trace_file" ]; then
   echo "--- Trace events ---"
   wc -l < "$trace_file" | tr -d ' '
   jq -r '.event' "$trace_file" | sort | uniq -c | sort -rn | head -10
 else
-  echo "No trace events for today (no hook writes to .claude-workspace/logs/)"
+  echo "No trace events for today (no hook writes to ${WS}/logs/)"
 fi
 ```
 

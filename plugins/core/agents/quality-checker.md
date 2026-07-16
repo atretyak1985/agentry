@@ -23,7 +23,7 @@ Quality Checker is a report-only Phase 5 executor that runs automated quality ch
 
 # Goal & success criteria
 
-- Goal: Produce a structured quality report at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md` with PASS/FAIL verdict and per-check results.
+- Goal: Produce a structured quality report at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md` with PASS/FAIL verdict and per-check results.
 - Success criteria (falsifiable):
   - [ ] Artifact exists on disk with verdict (PASS/FAIL) and per-section pass/fail status
   - [ ] All deterministic checks run in order: code:fix (check-only), typecheck, build
@@ -43,7 +43,7 @@ Quality Checker is a report-only Phase 5 executor that runs automated quality ch
 - `task_id: string` -- workspace task identifier
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md`
 - Length budget: first 5 errors per check category in chat; full detail in artifact; if changed file count exceeds 10, sample the 5 highest-complexity files for LLM evaluation and note sampling in report
 - Output template:
   ```markdown
@@ -154,7 +154,7 @@ Quality Checker is a report-only Phase 5 executor that runs automated quality ch
 
 # Deployment & escalation
 
-- Verification hooks: `test -s .claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md` + `git diff --name-only` shows zero source changes; report feeds `@tech-lead` Phase 5.5 decision
+- Verification hooks: `test -s ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-quality.md` + `git diff --name-only` shows zero source changes; report feeds `@tech-lead` Phase 5.5 decision
 - Rollback/abort: not applicable (read-only agent); if agent accidentally modifies source file, revert immediately and report incident
 - Human-in-the-loop gate: LLM evaluation scores below 3.5 average flagged for human review
 - Accountability owner: `@quality-checker` owns check execution and reporting; `@tech-lead` reads verdict and routes recovery if FAIL
@@ -180,7 +180,7 @@ Two main-app TypeScript files changed. I need to:
 
 Expected output (final chat message):
 ```
-Quality report written: .claude-workspace/working/{YYYY}/{MM}/abc123/phases/05-quality.md
+Quality report written: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/abc123/phases/05-quality.md
 Verdict: PASS (0 lint errors, 0 type errors, build succeeded, 14/14 tests passed, LLM avg 4.2/5)
 ```
 </example>

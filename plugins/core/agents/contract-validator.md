@@ -42,7 +42,7 @@ Contract Validator for the project (consult `CLAUDE.md` + `project.json` for the
 - `focus: "api" | "db" | "telemetry" | "all"` — which layers to prioritize
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-contracts.md`
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/05-contracts.md`
 - Length budget: 200 lines max [PE/Output/2.4]
 - Output template:
   ```markdown
@@ -100,7 +100,7 @@ Let me read all three changed files in parallel, then trace consumers.
 ## Verdict: FAIL
 P1 mismatch: Zod schema allows null for NOT NULL column — INSERT will crash at runtime.
 
-CONTRACTS: FAIL | Layers: 4/5 checked | Mismatches: P0=0 P1=1 P2=0 P3=1 | Artifact: .claude-workspace/working/task-001/phases/05-contracts.md
+CONTRACTS: FAIL | Layers: 4/5 checked | Mismatches: P0=0 P1=1 P2=0 P3=1 | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/05-contracts.md
 </output>
 </example>
 

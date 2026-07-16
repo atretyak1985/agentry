@@ -318,6 +318,12 @@ func (in *ingester) upsertProjectAndSession(recs []record, mtime time.Time, side
 					return err
 				}
 				in.projectID = projectID
+				// The re-point may have orphaned the '(unknown)' placeholder —
+				// drop it now rather than leaving a ghost projects row until
+				// the next daemon restart (HealStubSessions).
+				if err := DropUnknownProjectIfOrphaned(in.tx); err != nil {
+					return err
+				}
 			}
 			if !curCwd.Valid || curCwd.String == "" || curCwd.String == UnknownProjectPath {
 				if _, err := in.tx.Exec(

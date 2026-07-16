@@ -6,6 +6,7 @@ import type {
   AnalyticsDimension,
   AnalyticsMetric,
   ApprovalRule,
+  AttachResponse,
   BreakdownResp,
   DetachResponse,
   DocDetail,
@@ -110,10 +111,16 @@ export async function patchProject(id: number, patch: ProjectMetaPatch): Promise
 /**
  * POST /api/projects/{id}/detach — remove the swarmery-owned entries from the
  * project's .claude/settings.json. dryRun=true returns the plan without writing
- * (rendered as a preview before the real call). 403 when the endpoint is
- * disabled (no SWARMERY_ONBOARD_ROOTS) or the path is outside the allow-list.
+ * (rendered as a preview before the real call); full=true also removes the
+ * other onboarding artifacts (project.json, statusline scripts). 403 when the
+ * endpoint is disabled (no SWARMERY_ONBOARD_ROOTS) or the path is outside the
+ * allow-list.
  */
-export async function detachProject(id: number, dryRun: boolean): Promise<DetachResponse> {
+export async function detachProject(
+  id: number,
+  dryRun: boolean,
+  full: boolean,
+): Promise<DetachResponse> {
   if (MOCK) {
     return {
       detached: true,
@@ -122,7 +129,11 @@ export async function detachProject(id: number, dryRun: boolean): Promise<Detach
       ...(dryRun ? {} : { backup: '.claude/settings.json.bak' }),
     };
   }
-  const res = await fetch(`/api/projects/${String(id)}/detach${dryRun ? '?dryRun=1' : ''}`, {
+  const params = new URLSearchParams();
+  if (dryRun) params.set('dryRun', '1');
+  if (full) params.set('full', '1');
+  const qs = params.size > 0 ? `?${params.toString()}` : '';
+  const res = await fetch(`/api/projects/${String(id)}/detach${qs}`, {
     method: 'POST',
   });
   if (!res.ok) {
@@ -130,6 +141,33 @@ export async function detachProject(id: number, dryRun: boolean): Promise<Detach
     throw new Error(data.error ?? `detach failed: ${String(res.status)}`);
   }
   return (await res.json()) as DetachResponse;
+}
+
+/**
+ * POST /api/projects/{id}/attach — re-enable swarmery for a detached project:
+ * merge the swarmery entries back into settings.json, restore project.json
+ * from its .bak, reinstall hooks. dryRun=true returns the plan without writing.
+ * 403 when the endpoint is disabled (no SWARMERY_ONBOARD_ROOTS / workspace
+ * root) or the path is outside the allow-list.
+ */
+export async function attachProject(id: number, dryRun: boolean): Promise<AttachResponse> {
+  if (MOCK) {
+    return {
+      attached: true,
+      dryRun,
+      steps: ['+ enabledPlugins.core@swarmery', '+ .claude/project.json restored from project.json.bak'],
+      ...(dryRun ? {} : { backup: '.claude/settings.json.bak' }),
+    };
+  }
+  const qs = dryRun ? '?dryRun=1' : '';
+  const res = await fetch(`/api/projects/${String(id)}/attach${qs}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `attach failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as AttachResponse;
 }
 
 /** GET /api/projects/onboard/config — defaults + enabled state for the modal. */

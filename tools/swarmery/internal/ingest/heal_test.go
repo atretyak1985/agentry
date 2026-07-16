@@ -104,6 +104,11 @@ func TestTailHealsHeaderOnlyStub(t *testing.T) {
 	if slug != SlugForPath(simpleCWD) || name != "example-app" {
 		t.Errorf("project slug/name = %q/%q, want %q/example-app", slug, name, SlugForPath(simpleCWD))
 	}
+	// The re-point orphaned the '(unknown)' placeholder — it must be dropped
+	// in the same batch, not linger as a ghost row until the next restart.
+	if got := count(t, db, `SELECT COUNT(*) FROM projects WHERE path = ?`, UnknownProjectPath); got != 0 {
+		t.Errorf("placeholder projects = %d, want 0 (orphaned by in-batch heal)", got)
+	}
 }
 
 // TestUpsertNeverOverwritesGoodAttribution: a mid-file tail batch must not

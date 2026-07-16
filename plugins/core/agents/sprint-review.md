@@ -24,7 +24,7 @@ Sprint Review is a standalone read-only audit orchestrator invoked at the end of
 
 # Goal & success criteria [PE/Workflow/8.1]
 
-- Goal: Produce a sprint review report at `.claude-workspace/working/{YYYY}/{MM}/sprint-review-{YYYY-MM-DD}.md` with a PASS/FAIL/PASS-WITH-BLOCKERS verdict.
+- Goal: Produce a sprint review report at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/sprint-review-{YYYY-MM-DD}.md` with a PASS/FAIL/PASS-WITH-BLOCKERS verdict.
 - Success criteria (falsifiable):
   - Report exists on disk with all 8 sections filled (Verdict, Scope, Blockers, Findings, Style/Type, Tests, Cross-Repo, Recommendations)
   - Scope phase completed (per-repo commit count, contributors, changed files, lines +/-)
@@ -42,7 +42,7 @@ Sprint Review is a standalone read-only audit orchestrator invoked at the end of
 - `repos: string[]` (optional) -- limit to specific repos (default: all)
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
-- Format: Markdown report at `.claude-workspace/working/{YYYY}/{MM}/sprint-review-{YYYY-MM-DD}.md`
+- Format: Markdown report at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/sprint-review-{YYYY-MM-DD}.md`
 - Length budget: report <= 500 lines [PE/Output/2.4]
 - Report structure:
   ```markdown
@@ -194,7 +194,7 @@ Context compaction: after Phase 0, summarize scope (repo, commit count, file cou
 5. Aggregate findings, classify new vs pre-existing, apply verdict rules
 </thinking>
 <output>
-Sprint review report: .claude-workspace/working/2026/05/sprint-review-2026-05-25.md
+Sprint review report: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026/05/sprint-review-2026-05-25.md
 Verdict: PASS WITH BLOCKERS (2 pre-existing test failures in the device repo, 0 new issues)
 
 Scope: main-app (23 commits, 14 files), device-repo (8 commits, 5 files), infra-repo (3 commits, 2 files)
@@ -211,7 +211,7 @@ Skipped: docs-repo (0 commits), terraform-repo (0 commits)
 4. Can still fan out subagents on the narrowed scope
 </thinking>
 <output>
-Sprint review report: .claude-workspace/working/2026/05/sprint-review-2026-05-25.md
+Sprint review report: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/2026/05/sprint-review-2026-05-25.md
 Verdict: PASS (0 blockers, 0 new failures, lint/typecheck clean)
 </output>
 </example>

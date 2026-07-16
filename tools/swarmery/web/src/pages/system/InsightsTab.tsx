@@ -15,7 +15,7 @@ import type {
 } from '../../api/types';
 import { fetchSystemInsights } from '../../api/system';
 import { Empty, ErrorBox, Loading } from '../../components/ui';
-import { projectColor } from '../../lib/colors';
+import { useProjectColor } from '../../lib/projectColors';
 import { DiffBlock } from './ItemDetail';
 import { ScopeBadge } from './shared';
 
@@ -51,11 +51,13 @@ function SimilarityChip({
 }
 
 function ProjectChip({ slug }: { slug: string | null }): JSX.Element {
+  // App-wide distinct-color map (falls back to the per-slug hash off-list).
+  const colorFor = useProjectColor();
   if (slug === null) {
     return <span className="font-mono text-[10.5px] text-ink-dim">global</span>;
   }
   return (
-    <span className="font-mono text-[10.5px]" style={{ color: projectColor(slug) }}>
+    <span className="font-mono text-[10.5px]" style={{ color: colorFor(slug) }}>
       {slug}
     </span>
   );

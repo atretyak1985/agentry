@@ -181,8 +181,25 @@ func HealStubSessions(db *sql.DB, projectsRoot string, exclude ExcludeList) ([]i
 		}
 	}
 
-	// Drop the '(unknown)' placeholder project once nothing references it.
-	if _, err := db.Exec(
+	if err := DropUnknownProjectIfOrphaned(db); err != nil {
+		return healed, err
+	}
+	return healed, nil
+}
+
+// execer is the subset of *sql.DB / *sql.Tx the placeholder cleanup needs, so
+// the startup heal (plain DB) and the per-batch upsert heal (inside the ingest
+// transaction) share one delete.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// DropUnknownProjectIfOrphaned deletes the '(unknown)' placeholder projects
+// row once nothing references it. Re-pointing the last stub session at its
+// real project orphans the placeholder; without this the ghost row would sit
+// in the projects list until the next daemon restart.
+func DropUnknownProjectIfOrphaned(e execer) error {
+	_, err := e.Exec(
 		`DELETE FROM projects WHERE path = ?
 		 AND NOT EXISTS (SELECT 1 FROM sessions      WHERE project_id = projects.id)
 		 AND NOT EXISTS (SELECT 1 FROM tasks         WHERE project_id = projects.id)
@@ -190,8 +207,6 @@ func HealStubSessions(db *sql.DB, projectsRoot string, exclude ExcludeList) ([]i
 		 AND NOT EXISTS (SELECT 1 FROM skills        WHERE project_id = projects.id)
 		 AND NOT EXISTS (SELECT 1 FROM daily_rollups WHERE project_id = projects.id)
 		 AND NOT EXISTS (SELECT 1 FROM workspaces    WHERE project_id = projects.id)`,
-		UnknownProjectPath); err != nil {
-		return healed, err
-	}
-	return healed, nil
+		UnknownProjectPath)
+	return err
 }

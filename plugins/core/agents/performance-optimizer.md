@@ -45,7 +45,7 @@ Performance Optimizer for the project's platform. Measures baseline metrics, ran
 - `target: string` -- desired performance goal
 
 ## Outputs (to downstream)
-- Format: Markdown at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/perf-analysis.md` + modified source files
+- Format: Markdown at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/perf-analysis.md` + modified source files
 - Length budget: analysis report should not exceed 200 lines; each proposed fix should be self-contained in 30 lines or less
 - Output template:
   ```markdown

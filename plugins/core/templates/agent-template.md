@@ -27,7 +27,7 @@ skills:
 - Goal: <one sentence stating the deliverable>
 - Success criteria (**falsifiable** — every item must be checkable without judgement):
   - [ ] <e.g., `npm run typecheck` exits 0>
-  - [ ] <e.g., artifact saved at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/0X-<name>.md`>
+  - [ ] <e.g., artifact saved at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/phases/0X-<name>.md`>
   - [ ] <e.g., Completion Report contains all 5 fields>
 - Stop conditions:
   - <when the agent must return — typically: artifact written + verdict emitted>

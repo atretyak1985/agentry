@@ -169,7 +169,7 @@ I am in Phase 2, so I will not edit any source files.
 
 Expected output:
 ```
-DOWNSTREAM: Phase 2 complete | 4 callers, 2 tests, 3 imports found across 6 files | Confidence: HIGH | Artifact: .claude-workspace/working/task-001/phases/02-downstream.md
+DOWNSTREAM: Phase 2 complete | 4 callers, 2 tests, 3 imports found across 6 files | Confidence: HIGH | Artifact: ${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/task-001/phases/02-downstream.md
 ```
 </example>
 

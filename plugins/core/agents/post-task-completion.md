@@ -23,7 +23,7 @@ Post-Task Completion Hook for the project. Single responsibility: detect task co
 - Success criteria (falsifiable):
   - Structured payload passed to @task-documenter (not bare string)
   - Payload includes: task_id, phase, trigger, files_modified, files_created, agent
-  - @task-documenter confirms documentation created at `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/`
+  - @task-documenter confirms documentation created at `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/`
   - Hook completes within 5 turns (maxTurns budget)
 - Stop conditions: Return after @task-documenter confirms, or after maxTurns exhausted. If @task-documenter does not confirm within 3 turns: surface warning and exit.
 - Out of scope: Writing documentation directly (always delegate), modifying source code, retrying indefinitely.
@@ -32,7 +32,7 @@ Post-Task Completion Hook for the project. Single responsibility: detect task co
 
 ## Inputs (from upstream) [PE/Chaining/6.1]
 - Session tool-call history (implicit -- read from conversation context)
-- `task_id: string` -- from `.claude-workspace/working/` active task, or from orchestrator context
+- `task_id: string` -- from `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/` active task, or from orchestrator context
 
 ## Outputs (to downstream) [PE/Output/2.1] [PE/Output/2.3]
 - Format: Structured delegation call to @task-documenter
@@ -53,7 +53,7 @@ Post-Task Completion Hook for the project. Single responsibility: detect task co
 
 # Platform
 
-- **Workspace path**: `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/`
+- **Workspace path**: `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/`
 - **Model**: claude-haiku-4-5 -- thin routing trigger, not a reasoning agent
 - **Background mode**: `background: true` -- fires without blocking main agent flow
 - Tools: inherits all available tools (no `tools:`/`disallowedTools:` in frontmatter); actions bounded by `permissionMode: plan`. Primarily uses: Read (check session context), Bash (check git status)
@@ -68,7 +68,7 @@ Post-Task Completion Hook for the project. Single responsibility: detect task co
    - Only answering questions or running exploratory analysis
    - User explicitly says "don't document", "skip docs", or "no documentation"
    - Task was cancelled or failed (no successful outcome)
-   - Previous hook invocation already documented this task ID (idempotency check via `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/`)
+   - Previous hook invocation already documented this task ID (idempotency check via `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/`)
 3. **Gather context** -- collect task ID from workspace, list modified/created files from session tool history, identify current phase.
 4. **Delegate with structured payload** -- invoke @task-documenter with the full context payload. If task ID cannot be determined, pass `task_id: unknown`.
 5. **Confirm or warn** -- if @task-documenter confirms within 3 turns, exit. If not, surface warning and exit.
@@ -104,9 +104,9 @@ Context compaction: not applicable -- this hook completes in <= 5 turns. [PE/Con
 # Deployment & escalation [PE/Tool-Use/4.5]
 
 - Architecture: this is a hook, not a standalone agent. It fires automatically -- each agent does not need its own documentation step.
-- Idempotency: check if `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/` already has documentation before triggering
+- Idempotency: check if `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/` already has documentation before triggering
 - Failure: if @task-documenter is unavailable, documentation gap is surfaced to the user (not silently dropped)
-- Warning format: "Documentation trigger fired but @task-documenter did not confirm. Check `.claude-workspace/working/{YYYY}/{MM}/{DD}/{slug}/` manually."
+- Warning format: "Documentation trigger fired but @task-documenter did not confirm. Check `${AGENT_WORKSPACE_ROOT}/${AGENT_PROJECT}/workspace/working/{YYYY}/{MM}/{DD}/{slug}/` manually."
 
 # Examples
 
