@@ -76,6 +76,8 @@ func main() {
 		err = hookcfg.Cmd(os.Args[2:])
 	case "onboard":
 		err = cmdOnboard(os.Args[2:])
+	case "offboard":
+		err = cmdOffboard(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -112,6 +114,9 @@ func usage() {
   swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]
                                    bootstrap a consumer project: .claude/settings.json +
                                    project.json skeleton + workspace namespace (idempotent)
+  swarmery offboard [slug] [--dir <path>] [--dry-run]
+                                   detach swarmery from a project: prune the swarmery-owned
+                                   entries from .claude/settings.json (backs up to .bak; idempotent)
   env: SWARMERY_PORT, SWARMERY_PROJECTS_ROOT, SWARMERY_PRICING, SWARMERY_EXCLUDE, SWARMERY_WORKSPACE_ROOT
        SWARMERY_ONBOARD_ROOTS (comma-separated allow-list; enables POST /api/projects/onboard), SWARMERY_STATUSLINE_SRC`)
 }
@@ -437,6 +442,53 @@ func cmdOnboard(args []string) error {
 	fmt.Printf("\nNext: open a FRESH Claude Code session in %s\n", abs)
 	fmt.Println("      → accept the 'swarmery' marketplace trust prompt → plugins install.")
 	fmt.Println("      Fill in .claude/project.json TODOs so agents know your repos/stack.")
+	return nil
+}
+
+// cmdOffboard removes the swarmery-owned entries from a project's
+// .claude/settings.json — the CLI twin of POST /api/projects/{id}/detach and
+// the inverse of `swarmery onboard`. It delegates to onboard.Detach so both
+// surfaces prune identically. --dry-run prints the plan without writing.
+func cmdOffboard(args []string) error {
+	fs := flag.NewFlagSet("offboard", flag.ExitOnError)
+	dir := fs.String("dir", "", "project root to detach (default: current directory)")
+	dryRun := fs.Bool("dry-run", false, "print what would be removed without writing")
+
+	positional, flagArgs := splitPositional(args)
+	fs.Parse(flagArgs)
+
+	projectDir := *dir
+	if projectDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+		projectDir = cwd
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return fmt.Errorf("resolve project dir: %w", err)
+	}
+
+	// An optional leading slug guards env.AGENT_PROJECT pruning (removed only
+	// when it matches); omitting it removes the var regardless.
+	slug := ""
+	if len(positional) > 0 {
+		slug = positional[0]
+	}
+
+	res, err := onboard.Detach(onboard.DetachConfig{
+		ProjectDir:    abs,
+		Slug:          slug,
+		WorkspaceRoot: defaultWorkspaceRoot(),
+		DryRun:        *dryRun,
+	})
+	if err != nil {
+		return err
+	}
+	for _, s := range res.Steps {
+		fmt.Println(s)
+	}
 	return nil
 }
 

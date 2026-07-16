@@ -53,6 +53,18 @@ export type EventType =
 // --- Core entities (mirror the Go DTOs, JSON-tag field names) ---------------
 
 /** Go: projectDTO */
+/** Swarmery-plugin view of a project, read from its .claude/settings.json. */
+export interface PluginState {
+  /** enabledPlugins["core@swarmery"] === true. */
+  managed: boolean;
+  /** Other "<pack>@swarmery" entries enabled alongside core (suffix stripped). */
+  packs: string[];
+  /** extraKnownMarketplaces.swarmery.source.repo, "" when absent. */
+  marketplace: string;
+  /** Whether the project path is under a daemon onboarding root (detach-eligible). */
+  underOnboardRoot: boolean;
+}
+
 export interface Project {
   id: number;
   path: string;
@@ -62,6 +74,71 @@ export interface Project {
   lastActivity: string | null;
   archived: boolean;
   sessions: number;
+  /** Lifetime token/cost totals across the project's sessions; null when unpriced. */
+  tokens: number | null;
+  costUsd: number | null;
+  /** Null for telemetry-only projects (no readable .claude/settings.json). */
+  plugin: PluginState | null;
+}
+
+/** One project-local registry entry (agent, skill, command or hook). */
+export interface ProjectComponent {
+  name: string;
+  /** "local" today; plugin-provided components ("core@swarmery", …) land later. */
+  source: string;
+}
+
+export interface ProjectComponentCounts {
+  agents: number;
+  skills: number;
+  commands: number;
+  hooks: number;
+}
+
+export interface ProjectComponents {
+  agents: ProjectComponent[];
+  skills: ProjectComponent[];
+  commands: ProjectComponent[];
+  hooks: ProjectComponent[];
+  counts: ProjectComponentCounts;
+}
+
+/** Thin session projection shown on the project detail page. */
+export interface ProjectRecentSession {
+  id: number;
+  sessionUuid: string;
+  title: string | null;
+  status: string;
+  startedAt: string;
+  model: string | null;
+  tokens: number | null;
+  costUsd: number | null;
+}
+
+export interface ProjectStats {
+  sessions: number;
+  tokens: number | null;
+  costUsd: number | null;
+  firstSeen: string;
+  lastActivity: string | null;
+  recentSessions: ProjectRecentSession[];
+}
+
+/** GET /api/projects/{id} — enriched row + local components + headline stats. */
+export interface ProjectDetail {
+  project: Project;
+  components: ProjectComponents;
+  stats: ProjectStats;
+}
+
+/** POST /api/projects/{id}/detach — the plan (dry run) or the applied result. */
+export interface DetachResponse {
+  detached: boolean;
+  dryRun: boolean;
+  /** One human-readable line per removed entry (or a "nothing to detach" note). */
+  steps: string[];
+  /** Relative backup path, present only on a real write that changed something. */
+  backup?: string;
 }
 
 /** Go: sessionDTO */
@@ -704,11 +781,25 @@ export interface OnboardRequest {
   slug: string;
   path: string;
   packs: string[];
+  /** Optional AGENT_WORKSPACE_ROOT override; empty → server default. */
+  workspaceRoot?: string;
 }
 
 /** Go: onboardResponse — 201 body, one human-readable line per step done. */
 export interface OnboardResponse {
   slug: string;
   path: string;
+  /** The workspace root actually used (default or override). */
+  workspaceRoot: string;
   steps: string[];
+}
+
+/** Go: onboardConfigResponse — GET /api/projects/onboard/config (modal defaults). */
+export interface OnboardConfig {
+  /** false → the endpoint is disabled (no SWARMERY_ONBOARD_ROOTS allow-list). */
+  enabled: boolean;
+  /** Default AGENT_WORKSPACE_ROOT shown as the workspace-root placeholder. */
+  workspaceRoot: string;
+  /** Allowed parent directories a project may be onboarded under. */
+  roots: string[];
 }

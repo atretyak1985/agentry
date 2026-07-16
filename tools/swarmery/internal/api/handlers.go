@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/projectscan"
 )
 
 // Handler bundles the API dependencies.
@@ -31,6 +33,44 @@ type projectDTO struct {
 	LastActivity *string `json:"lastActivity"`
 	Archived     bool    `json:"archived"`
 	Sessions     int64   `json:"sessions"`
+	// Lifetime token/cost totals across all the project's sessions (deduped
+	// turns). Null while the project has no priced turns.
+	Tokens  *int64   `json:"tokens"`
+	CostUSD *float64 `json:"costUsd"`
+	// Plugin is the swarmery-plugin view read from the project's
+	// .claude/settings.json; null when the project ships no readable settings
+	// (telemetry-only — discovered from ~/.claude transcripts but not onboarded).
+	Plugin *projectscan.PluginState `json:"plugin"`
+}
+
+// projectDetailDTO is GET /api/projects/{id}: the enriched row plus its local
+// component inventory and headline stats (recent sessions).
+type projectDetailDTO struct {
+	Project    projectDTO             `json:"project"`
+	Components *projectscan.Components `json:"components"`
+	Stats      projectStatsDTO        `json:"stats"`
+}
+
+type projectStatsDTO struct {
+	Sessions       int64                     `json:"sessions"`
+	Tokens         *int64                    `json:"tokens"`
+	CostUSD        *float64                  `json:"costUsd"`
+	FirstSeen      string                    `json:"firstSeen"`
+	LastActivity   *string                   `json:"lastActivity"`
+	RecentSessions []projectRecentSessionDTO `json:"recentSessions"`
+}
+
+// projectRecentSessionDTO is the thin session projection shown on the project
+// detail page — enough to link to /sessions/{id} without the full sessionDTO.
+type projectRecentSessionDTO struct {
+	ID          int64    `json:"id"`
+	SessionUUID string   `json:"sessionUuid"`
+	Title       *string  `json:"title"`
+	Status      string   `json:"status"`
+	StartedAt   string   `json:"startedAt"`
+	Model       *string  `json:"model"`
+	Tokens      *int64   `json:"tokens"`
+	CostUSD     *float64 `json:"costUsd"`
 }
 
 type sessionDTO struct {
@@ -123,31 +163,173 @@ type sessionDetailDTO struct {
 	Recovered int64 `json:"recovered"`
 }
 
-// GET /api/projects
+// projectSelect projects the registry row plus per-project session/token/cost
+// aggregates in ONE grouped pass (no per-row subqueries). Token totals sum the
+// deduped turns of every session — the same "true cost" contract as the
+// sessions list. {{WHERE}} is replaced by the archived filter, {{EXTRA}} by any
+// additional predicate (e.g. a single-id lookup for the detail endpoint).
+const projectSelect = `
+	SELECT p.id, p.path, p.slug, p.name, p.first_seen, p.last_activity, p.archived,
+	       COUNT(DISTINCT s.id) AS sessions,
+	       SUM(CASE WHEN t.id IS NOT NULL
+	                THEN COALESCE(t.tokens_in, 0) + COALESCE(t.tokens_out, 0) END) AS tokens,
+	       SUM(t.cost_usd) AS cost_usd
+	FROM projects p
+	LEFT JOIN sessions s ON s.project_id = p.id
+	LEFT JOIN turns t ON t.session_id = s.id
+	{{WHERE}}
+	GROUP BY p.id`
+
+// scanProject reads one projectSelect row and folds in the plugin state read
+// live from the project's .claude/settings.json (advisory, never fatal).
+func scanProject(rows *sql.Rows, roots []string) (projectDTO, error) {
+	var p projectDTO
+	var archived int
+	var tokens sql.NullInt64
+	var cost sql.NullFloat64
+	if err := rows.Scan(&p.ID, &p.Path, &p.Slug, &p.Name, &p.FirstSeen,
+		&p.LastActivity, &archived, &p.Sessions, &tokens, &cost); err != nil {
+		return p, err
+	}
+	p.Archived = archived != 0
+	if tokens.Valid {
+		p.Tokens = &tokens.Int64
+	}
+	if cost.Valid {
+		p.CostUSD = &cost.Float64
+	}
+	// A single project's unreadable settings must not fail the list — PluginState
+	// already collapses those cases to (nil, nil).
+	if st, err := projectscan.ReadPluginState(p.Path, roots); err == nil {
+		p.Plugin = st
+	}
+	return p, nil
+}
+
+// GET /api/projects — the registry list. Archived projects are excluded unless
+// ?include=archived, so the default dashboard view hides soft-removed projects.
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(`
-		SELECT p.id, p.path, p.slug, p.name, p.first_seen, p.last_activity, p.archived,
-		       (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS sessions
-		FROM projects p ORDER BY p.last_activity DESC`)
+	where := "WHERE p.archived = 0"
+	if r.URL.Query().Get("include") == "archived" {
+		where = ""
+	}
+	query := strings.Replace(projectSelect, "{{WHERE}}", where, 1) +
+		" ORDER BY p.last_activity DESC"
+
+	rows, err := h.DB.Query(query)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	defer rows.Close()
 
+	roots := onboardCfg.Roots
 	projects := []projectDTO{}
 	for rows.Next() {
-		var p projectDTO
-		var archived int
-		if err := rows.Scan(&p.ID, &p.Path, &p.Slug, &p.Name, &p.FirstSeen,
-			&p.LastActivity, &archived, &p.Sessions); err != nil {
+		p, err := scanProject(rows, roots)
+		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		p.Archived = archived != 0
 		projects = append(projects, p)
 	}
 	writeJSON(w, projects, rows.Err())
+}
+
+// GET /api/projects/{id} — one project enriched with its local component
+// inventory and headline stats (recent sessions).
+func (h *Handler) getProject(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":"invalid project id"}`, http.StatusBadRequest)
+		return
+	}
+
+	// The row: reuse projectSelect with an id predicate. archived rows are
+	// reachable by direct id (the list hides them, detail still resolves them).
+	query := strings.Replace(projectSelect, "{{WHERE}}", "WHERE p.id = ?", 1)
+	rows, err := h.DB.Query(query, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			writeErr(w, err)
+			return
+		}
+		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
+		return
+	}
+	proj, err := scanProject(rows, onboardCfg.Roots)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rows.Close()
+
+	components, _ := projectscan.ReadComponents(proj.Path) // never errors
+	recent, err := h.recentSessions(id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, projectDetailDTO{
+		Project:    proj,
+		Components: components,
+		Stats: projectStatsDTO{
+			Sessions:       proj.Sessions,
+			Tokens:         proj.Tokens,
+			CostUSD:        proj.CostUSD,
+			FirstSeen:      proj.FirstSeen,
+			LastActivity:   proj.LastActivity,
+			RecentSessions: recent,
+		},
+	}, nil)
+}
+
+// recentProjectSessionsLimit caps the detail page's session list.
+const recentProjectSessionsLimit = 10
+
+// recentSessions returns the project's most recent non-hidden sessions with
+// their per-session token/cost totals (one grouped pass, no N+1).
+func (h *Handler) recentSessions(projectID int64) ([]projectRecentSessionDTO, error) {
+	rows, err := h.DB.Query(`
+		SELECT s.id, s.session_uuid, s.title, s.status, s.started_at, s.model,
+		       SUM(CASE WHEN t.id IS NOT NULL
+		                THEN COALESCE(t.tokens_in, 0) + COALESCE(t.tokens_out, 0) END) AS tokens,
+		       SUM(t.cost_usd) AS cost_usd
+		FROM sessions s
+		LEFT JOIN turns t ON t.session_id = s.id
+		WHERE s.project_id = ? AND s.hidden = 0
+		GROUP BY s.id
+		ORDER BY s.started_at DESC
+		LIMIT ?`, projectID, recentProjectSessionsLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []projectRecentSessionDTO{}
+	for rows.Next() {
+		var s projectRecentSessionDTO
+		var tokens sql.NullInt64
+		var cost sql.NullFloat64
+		if err := rows.Scan(&s.ID, &s.SessionUUID, &s.Title, &s.Status,
+			&s.StartedAt, &s.Model, &tokens, &cost); err != nil {
+			return nil, err
+		}
+		if tokens.Valid {
+			s.Tokens = &tokens.Int64
+		}
+		if cost.Valid {
+			s.CostUSD = &cost.Float64
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // sessionSelect is the shared session projection: entity columns plus the
@@ -193,7 +375,12 @@ const sessionSelect = `
 
 // GET /api/sessions?project=<slug|id>&status=<status>
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
-	query := sessionSelect + ` WHERE 1=1`
+	// Soft-hidden sessions (DELETE /api/sessions/{id}) never appear in the list;
+	// they remain reachable by direct id (getSession) so the hide is reversible.
+	// Sessions of ARCHIVED projects are excluded too — archiving a project hides
+	// it everywhere (list/analytics/overview), while its rows stay reachable by
+	// direct id and reappear if the project is restored.
+	query := sessionSelect + ` WHERE s.hidden = 0 AND p.archived = 0`
 	args := []any{}
 	if project := r.URL.Query().Get("project"); project != "" {
 		query += ` AND (p.slug = ? OR CAST(p.id AS TEXT) = ?)`

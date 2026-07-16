@@ -191,8 +191,10 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		rows, err := h.DB.Query(
 			`SELECT e.ts, `+rk.nameExpr+` AS n
 			   FROM events e
+			   JOIN sessions s ON s.id = e.session_id
+			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ?`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -231,7 +233,7 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.started_at >= ? AND t.started_at < ?`, dr.start, dr.end)
+			 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -359,7 +361,7 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		  FROM turns t
 		  JOIN sessions s ON s.id = t.session_id
 		  JOIN projects p ON p.id = s.project_id
-		 WHERE t.started_at >= ? AND t.started_at < ?
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0
 		 GROUP BY k
 		 ORDER BY cost DESC, k`, dr.start, dr.end)
 	if err != nil {
@@ -399,8 +401,10 @@ func (h *Handler) breakdownRuns(by string, dr dateRange) ([]breakdownRow, error)
 	rows, err := h.DB.Query(
 		`SELECT `+rk.nameExpr+` AS n, e.ts, e.session_id
 		   FROM events e
+		   JOIN sessions s ON s.id = e.session_id
+		   JOIN projects p ON p.id = s.project_id
 		  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-		    AND e.ts >= ? AND e.ts < ?`, rk.typ, dr.start, dr.end)
+		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
 	if err != nil {
 		return nil, err
 	}
@@ -470,9 +474,11 @@ type agentTot struct {
 // folded by agentKey — the source of exact per-agent $ (phase 2).
 func (h *Handler) agentTurnTotals(dr dateRange) (map[string]*agentTot, error) {
 	rows, err := h.DB.Query(`
-		SELECT agent_name, tokens_in, tokens_out, cost_usd
-		  FROM turns
-		 WHERE started_at >= ? AND started_at < ?`, dr.start, dr.end)
+		SELECT t.agent_name, t.tokens_in, t.tokens_out, t.cost_usd
+		  FROM turns t
+		  JOIN sessions s ON s.id = t.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
 	if err != nil {
 		return nil, err
 	}
@@ -629,7 +635,7 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			   JOIN sessions s ON s.id = e.session_id
 			   JOIN projects p ON p.id = s.project_id
 			  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
-			    AND e.ts >= ? AND e.ts < ?`, rk.typ, dr.start, dr.end)
+			    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`, rk.typ, dr.start, dr.end)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -653,7 +659,7 @@ func (h *Handler) statsMatrix(w http.ResponseWriter, r *http.Request) {
 			  FROM turns t
 			  JOIN sessions s ON s.id = t.session_id
 			  JOIN projects p ON p.id = s.project_id
-			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ?`, dr.start, dr.end)
+			 WHERE t.cost_usd IS NOT NULL AND t.started_at >= ? AND t.started_at < ? AND p.archived = 0`, dr.start, dr.end)
 		if err != nil {
 			writeErr(w, err)
 			return

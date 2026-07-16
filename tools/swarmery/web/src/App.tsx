@@ -35,6 +35,8 @@ function crumbFor(pathname: string): string {
   if (pathname === '/') return 'control plane';
   if (pathname.startsWith('/sessions/')) return 'session';
   if (pathname.startsWith('/sessions')) return 'sessions';
+  if (pathname.startsWith('/projects/')) return 'project';
+  if (pathname.startsWith('/projects')) return 'projects';
   if (pathname.startsWith('/approvals')) return 'approvals';
   if (pathname.startsWith('/system')) return 'system';
   if (pathname.startsWith('/docs')) return 'docs';
@@ -92,6 +94,7 @@ export function App(): JSX.Element {
   const items: NavItem[] = [
     { to: '/', glyph: '◉', label: 'Command deck' },
     { to: '/sessions', glyph: '❯', label: 'Sessions', ...badgeFor(sessionsToday) },
+    { to: '/projects', glyph: '▤', label: 'Projects' },
     { to: '/analytics', glyph: '▦', label: 'Analytics' },
     {
       to: '/approvals',

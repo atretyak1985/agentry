@@ -89,10 +89,12 @@ func (h *Handler) windowAggregates(start, end, projFilter string, projArgs []any
 	var a windowAgg
 	args := append([]any{start, end}, projArgs...)
 
-	// Sessions started inside the window.
+	// Sessions started inside the window. Archived projects are excluded from
+	// every aggregate here (p.archived = 0) so archiving a project drops it out
+	// of stats/today, the overview totals, and the 14-day series at once.
 	err := h.DB.QueryRow(`
 		SELECT COUNT(*) FROM sessions s JOIN projects p ON p.id = s.project_id
-		WHERE s.started_at >= ? AND s.started_at < ?`+projFilter, args...).Scan(&a.Sessions)
+		WHERE s.started_at >= ? AND s.started_at < ? AND p.archived = 0`+projFilter, args...).Scan(&a.Sessions)
 	if err != nil {
 		return a, err
 	}
@@ -110,7 +112,7 @@ func (h *Handler) windowAggregates(start, end, projFilter string, projArgs []any
 		FROM turns t
 		JOIN sessions s ON s.id = t.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE t.started_at >= ? AND t.started_at < ?`+projFilter, args...).Scan(
+		WHERE t.started_at >= ? AND t.started_at < ? AND p.archived = 0`+projFilter, args...).Scan(
 		&a.TokensIn, &a.TokensOut, &costSum, &a.PricedTurns, &a.UsageTurns)
 	if err != nil {
 		return a, err
@@ -132,7 +134,7 @@ func (h *Handler) windowAggregates(start, end, projFilter string, projArgs []any
 		SELECT COUNT(*) FROM events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ?`+projFilter, args...).Scan(&a.Errors)
+		WHERE e.status = 'error' AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+projFilter, args...).Scan(&a.Errors)
 	if err != nil {
 		return a, err
 	}
@@ -147,7 +149,7 @@ func (h *Handler) windowAggregates(start, end, projFilter string, projArgs []any
 		FROM events e
 		JOIN sessions s ON s.id = e.session_id
 		JOIN projects p ON p.id = s.project_id
-		WHERE e.type = 'test_run' AND e.ts >= ? AND e.ts < ?`+projFilter, args...).Scan(
+		WHERE e.type = 'test_run' AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+projFilter, args...).Scan(
 		&a.TestRuns, &a.TestsPassed, &a.TestsFailed, &a.TestsSkipped)
 	return a, err
 }
@@ -158,7 +160,7 @@ func (h *Handler) activeSessions(projFilter string, projArgs []any) (int64, erro
 	var n int64
 	err := h.DB.QueryRow(`
 		SELECT COUNT(*) FROM sessions s JOIN projects p ON p.id = s.project_id
-		WHERE s.status = 'active'`+projFilter, projArgs...).Scan(&n)
+		WHERE s.status = 'active' AND p.archived = 0`+projFilter, projArgs...).Scan(&n)
 	return n, err
 }
 
