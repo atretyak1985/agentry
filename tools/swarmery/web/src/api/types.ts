@@ -803,3 +803,69 @@ export interface OnboardConfig {
   /** Allowed parent directories a project may be onboarded under. */
   roots: string[];
 }
+
+// --- global search (GET /api/search) + reverse file lookup ------------------
+
+/** Go: searchSessionDTO — a session matched by title or git branch. */
+export interface SearchSession {
+  id: number;
+  title: string | null;
+  gitBranch: string | null;
+  status: SessionStatus;
+  startedAt: string;
+  projectSlug: string;
+  projectName: string | null;
+}
+
+/** Go: searchTurnDTO — snippet carries ⟦…⟧ highlight markers (never HTML). */
+export interface SearchTurn {
+  turnId: number;
+  sessionId: number;
+  sessionTitle: string | null;
+  projectSlug: string;
+  startedAt: string;
+  role: TurnRole;
+  /** Subagent that produced the turn; null = orchestrator. */
+  agentName: string | null;
+  snippet: string;
+}
+
+/** Go: searchFileDTO — a file path matched by substring, with session reach. */
+export interface SearchFile {
+  path: string;
+  sessions: number;
+  lastTouched: string;
+}
+
+/** Go: searchProjectDTO */
+export interface SearchProject {
+  id: number;
+  slug: string;
+  name: string | null;
+}
+
+/** Go: searchResponseDTO — GET /api/search grouped results. */
+export interface SearchResponse {
+  query: string;
+  sessions: SearchSession[];
+  turns: SearchTurn[];
+  files: SearchFile[];
+  projects: SearchProject[];
+}
+
+/** Go: fileSessionDTO — one session that touched a matching file. */
+export interface FileSession {
+  sessionId: number;
+  title: string | null;
+  projectSlug: string;
+  status: SessionStatus;
+  startedAt: string;
+  changes: number;
+  lastTouched: string;
+}
+
+/** Go: fileSessionsResponseDTO — GET /api/files/sessions. */
+export interface FileSessionsResponse {
+  path: string;
+  sessions: FileSession[];
+}

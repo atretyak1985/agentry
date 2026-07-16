@@ -9,6 +9,7 @@ import type {
   DetachResponse,
   DocDetail,
   DocMeta,
+  FileSessionsResponse,
   HealthResponse,
   MatrixResp,
   OnboardConfig,
@@ -18,6 +19,7 @@ import type {
   PermissionRequestStatus,
   ProjectDetail,
   ProjectsResponse,
+  SearchResponse,
   SessionDetailResponse,
   SessionsResponse,
   StatsOverview,
@@ -329,4 +331,28 @@ export async function cancelSessionMessage(id: number): Promise<void> {
     const data = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(data.error ?? `cancel failed: ${String(res.status)}`);
   }
+}
+
+// --- global search (Cmd+K palette) ---------------------------------------------
+
+/**
+ * GET /api/search — grouped global search (sessions / turns / files /
+ * projects). Mock mode returns empty groups so the palette still renders its
+ * static Navigation section offline.
+ */
+export function fetchSearch(q: string, project?: string, limit = 20): Promise<SearchResponse> {
+  if (MOCK) {
+    return Promise.resolve({ query: q, sessions: [], turns: [], files: [], projects: [] });
+  }
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  if (project !== undefined && project !== '') qs.set('project', project);
+  return get(`/api/search?${qs.toString()}`);
+}
+
+/** GET /api/files/sessions — sessions that touched files matching `path`. */
+export function fetchFileSessions(path: string, project?: string): Promise<FileSessionsResponse> {
+  if (MOCK) return Promise.resolve({ path, sessions: [] });
+  const qs = new URLSearchParams({ path });
+  if (project !== undefined && project !== '') qs.set('project', project);
+  return get(`/api/files/sessions?${qs.toString()}`);
 }
