@@ -35,6 +35,7 @@ import {
   isoDay,
 } from '../lib/format';
 import { argSummary } from '../lib/payload';
+import { usePageSearch } from '../lib/pageSearch';
 import { useScope } from '../lib/scope';
 import { applyPermissionMessage, applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { ApproxHint, Empty, ErrorBox, Loading } from '../components/ui';
@@ -385,11 +386,16 @@ function SpineRow({
   );
 }
 
-function Spine({ sessions }: { sessions: Session[] }): JSX.Element {
+function Spine({ sessions, query }: { sessions: Session[]; query: string }): JSX.Element {
   const [openId, setOpenId] = useState<number | null>(null);
   const today = isoDay();
+  const matchesQuery = (s: Session): boolean =>
+    query === '' ||
+    [s.title, s.projectName, s.projectSlug, s.gitBranch].some(
+      (v) => v != null && v.toLowerCase().includes(query),
+    );
   const rows = sessions
-    .filter((s) => LIVE_STATUSES.has(s.status) || sessionDay(s) === today)
+    .filter((s) => (LIVE_STATUSES.has(s.status) || sessionDay(s) === today) && matchesQuery(s))
     .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt))
     .slice(0, MAX_SPINE_ROWS);
 
@@ -405,7 +411,7 @@ function Spine({ sessions }: { sessions: Session[] }): JSX.Element {
         </Link>
       </div>
       {rows.length === 0 ? (
-        <Empty>nothing notable yet today</Empty>
+        <Empty>{query !== '' ? 'no sessions match the filter' : 'nothing notable yet today'}</Empty>
       ) : (
         <div className="relative">
           <div
@@ -657,6 +663,7 @@ function TriageRail({
 export function Overview(): JSX.Element {
   const day = isoDay();
   const { scope } = useScope();
+  const query = usePageSearch();
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<StatsOverview | null>(null);
@@ -756,7 +763,7 @@ export function Overview(): JSX.Element {
         {sessions === null && error === null ? (
           <Loading label="sessions…" />
         ) : (
-          <Spine sessions={sessions ?? []} />
+          <Spine sessions={sessions ?? []} query={query} />
         )}
       </div>
 

@@ -41,6 +41,7 @@ import {
   type ParsedQuestion,
 } from '../lib/approvals';
 import { fmtAgo } from '../lib/format';
+import { usePageSearch } from '../lib/pageSearch';
 import { useScope } from '../lib/scope';
 import { applyPermissionMessage, useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
@@ -563,6 +564,7 @@ export function Approvals(): JSX.Element {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { scope } = useScope();
+  const query = usePageSearch();
 
   // Global scope, applied client-side over the lazy sessions join. A request
   // whose session is not resolvable stays VISIBLE (safety: a pending approval
@@ -665,13 +667,23 @@ export function Approvals(): JSX.Element {
   }, []);
   useLiveUpdates(onMessage, load);
 
+  // Contextual header search: match tool name or the joined session's title.
+  const matchesQuery = (r: PermissionRequest): boolean => {
+    if (query === '') return true;
+    const s = sessions?.find((x) => x.id === r.sessionId);
+    return [r.toolName, s?.title, s?.projectName, s?.projectSlug].some(
+      (v) => v != null && v.toLowerCase().includes(query),
+    );
+  };
   const pending = (requests ?? [])
     .filter((r) => r.status === 'pending')
     .filter(inScope)
+    .filter(matchesQuery)
     .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)); // oldest (most urgent) first
   const history = (requests ?? [])
     .filter((r) => r.status !== 'pending')
     .filter(inScope)
+    .filter(matchesQuery)
     .sort((a, b) =>
       (b.resolvedAt ?? b.requestedAt).localeCompare(a.resolvedAt ?? a.requestedAt),
     )

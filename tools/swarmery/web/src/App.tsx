@@ -21,6 +21,11 @@ import { ProjectDropdown } from './components/ProjectDropdown';
 import { isoDay } from './lib/format';
 import { useHealth, shortVersion } from './lib/health';
 import { loadPrefs, useBrowserNotifications, type NotifyPrefs } from './lib/notifications';
+import {
+  PageSearchProvider,
+  pageSearchPlaceholder,
+  usePageSearchControl,
+} from './lib/pageSearch';
 import { ScopeProvider, useScope } from './lib/scope';
 import { useLiveUpdates } from './lib/ws';
 
@@ -54,8 +59,47 @@ function ScopeSwitcher(): JSX.Element {
 export function App(): JSX.Element {
   return (
     <ScopeProvider>
-      <AppShell />
+      <PageSearchProvider>
+        <AppShell />
+      </PageSearchProvider>
     </ScopeProvider>
+  );
+}
+
+/** Contextual header search — one input, filters the current page's list.
+ * Hidden on pages with no searchable list (placeholder === null). */
+function HeaderSearch(): JSX.Element | null {
+  const { pathname } = useLocation();
+  const { query, setQuery } = usePageSearchControl();
+  const placeholder = pageSearchPlaceholder(pathname);
+  if (placeholder === null) return null;
+  return (
+    <div className="relative hidden w-[220px] sm:block">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-faint"
+      >
+        ⌕
+      </span>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="w-full rounded-[9px] border border-line-strong bg-field py-[6px] pr-8 pl-7 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-ink-dim"
+      />
+      {query !== '' && (
+        <button
+          type="button"
+          onClick={() => setQuery('')}
+          aria-label="clear filter"
+          className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
+        >
+          ×
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -71,11 +115,6 @@ function AppShell(): JSX.Element {
   const [notifyPrefs, setNotifyPrefs] = useState<NotifyPrefs>(loadPrefs);
   useBrowserNotifications(notifyPrefs);
   const { health, unreachable } = useHealth();
-  const { pathname } = useLocation();
-  // Filter pages teleport their own controls into the header (#header-filters
-  // slot via HeaderFilters portal) instead of the centered search pill.
-  const filterPage = pathname === '/sessions' || pathname.startsWith('/system');
-
   useEffect(() => {
     fetchDocs()
       .then((docs) => setHasDocs(docs.length > 0))
@@ -183,36 +222,11 @@ function AppShell(): JSX.Element {
           </span>
         </span>
         <ScopeSwitcher />
-        {filterPage ? (
-          /* Section-specific controls teleported here by the routed page
-             (Sessions: title search + status chips; System: name search +
-             level chips) via the HeaderFilters portal. */
-          <div id="header-filters" className="hidden min-w-0 flex-1 items-center gap-2 xl:flex" />
-        ) : (
-          /* Search trigger right after the scope filter, sized like the other
-             search inputs (Sessions/System filter fields). */
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="hidden w-[200px] items-center gap-2 rounded-[9px] border border-line-strong bg-field px-3 py-[6px] font-mono text-[12px] text-ink-faint transition-colors hover:border-ink-dim hover:text-ink-dim sm:flex"
-          >
-            <span aria-hidden="true" className="text-[13px] leading-none">⌕</span>
-            <span className="min-w-0 flex-1 truncate text-left">search…</span>
-            <span className="rounded-[4px] border border-line-strong px-1 text-[10px]">⌘K</span>
-          </button>
-        )}
+        {/* One contextual search input right after the scope filter — filters
+            the current page's list. Section chips (status/scope/sort) live in
+            the page body. Cmd+K still opens the global search palette. */}
+        <HeaderSearch />
         <span className="ml-auto flex items-center gap-3">
-        {/* Compact search trigger on filter pages — their header center hosts
-            the teleported filter controls instead of the search field. */}
-        {filterPage && (
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="hidden items-center gap-2 rounded-lg border border-line bg-field px-2.5 py-1 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-line-strong hover:text-ink-dim sm:flex"
-          >
-            search <span className="rounded-[4px] border border-line-strong px-1">⌘K</span>
-          </button>
-        )}
         {!MOCK && (
           <span className="flex items-center gap-2">
             <NotifySettings prefs={notifyPrefs} onChange={setNotifyPrefs} />

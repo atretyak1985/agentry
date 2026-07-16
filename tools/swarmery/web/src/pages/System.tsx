@@ -18,9 +18,9 @@ import {
   type SystemListFilters,
 } from '../api/system';
 import { fmtAgo } from '../lib/format';
+import { usePageSearch } from '../lib/pageSearch';
 import { useScope } from '../lib/scope';
 import { useLiveUpdates } from '../lib/ws';
-import { HeaderFilters } from '../components/HeaderFilters';
 import { Empty, ErrorBox, Loading } from '../components/ui';
 import {
   FiltersRow,
@@ -193,8 +193,6 @@ const ITEM_EMPTY: Record<'agents' | 'skills' | 'commands', string> = {
     'no commands on this machine — ~/.claude/commands/ and the scanned projects’ .claude/commands/ are absent or empty',
 };
 
-const SEARCH_DEBOUNCE_MS = 150;
-
 function ItemsTab({
   kind,
   selectable,
@@ -234,12 +232,8 @@ function ItemsTab({
 }): JSX.Element {
   // "+ new agent" (step-12) — the form collapses back into the button.
   const [creating, setCreating] = useState(false);
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim().toLowerCase()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [search]);
+  // Name filter comes from the contextual header search input.
+  const query = usePageSearch();
 
   const fetcher = useCallback(
     (filters: SystemListFilters): Promise<SystemItem[]> =>
@@ -310,29 +304,10 @@ function ItemsTab({
 
   return (
     <div className="flex h-full flex-col">
-      {/* filters (header slot on desk+, in-body below) + new agent — never scroll */}
-      <HeaderFilters>
-        <FiltersRow
-          scope={scope}
-          search={search}
-          onSearch={setSearch}
-          onScope={onScope}
-          sort={sort}
-          onSort={onSort}
-          header
-        />
-      </HeaderFilters>
+      {/* scope chips + sort + new agent — never scroll; name filter is the
+          contextual header search input. */}
       <div className="shrink-0 pt-0 pb-3">
-        <div className="xl:hidden">
-          <FiltersRow
-            scope={scope}
-            search={search}
-            onSearch={setSearch}
-            onScope={onScope}
-            sort={sort}
-            onSort={onSort}
-          />
-        </div>
+        <FiltersRow scope={scope} onScope={onScope} sort={sort} onSort={onSort} />
         {kind === 'agents' && (
           <div className="mt-[14px]">
             {creating ? (

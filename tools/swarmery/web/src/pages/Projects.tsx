@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import type { Project, ProjectHealth } from '../api/types';
 import { fetchProjects, fetchProjectsHealth, patchProject } from '../api';
 import { fmtAgo, fmtCost, fmtTokens } from '../lib/format';
+import { usePageSearch } from '../lib/pageSearch';
 import { ProjectName } from '../components/ProjectName';
 import { PluginBadge, ProjectActions } from '../components/ProjectActions';
 import { Card, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
@@ -234,6 +235,7 @@ export function Projects(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [tag, setTag] = useState<string | null>(null);
+  const query = usePageSearch();
 
   const load = useCallback((): void => {
     fetchProjects(showArchived)
@@ -255,10 +257,15 @@ export function Projects(): JSX.Element {
 
   const managed = (projects ?? []).filter((p) => p.plugin?.managed).length;
   const allTags = [...new Set((projects ?? []).flatMap((p) => p.tags))].sort();
-  // Server order is pinned-first already; the tag filter narrows client-side.
-  const visible = (projects ?? []).filter((p) => tag === null || p.tags.includes(tag));
+  // Server order is pinned-first already; the tag filter + header name search
+  // narrow client-side.
+  const matchesName = (name: string | null, slug: string): boolean =>
+    query === '' || name?.toLowerCase().includes(query) === true || slug.toLowerCase().includes(query);
+  const visible = (projects ?? []).filter(
+    (p) => (tag === null || p.tags.includes(tag)) && matchesName(p.name, p.slug),
+  );
   const visibleHealth = (health ?? []).filter(
-    (h) => tag === null || h.tags.includes(tag),
+    (h) => (tag === null || h.tags.includes(tag)) && matchesName(h.name, h.slug),
   );
 
   return (
@@ -289,7 +296,9 @@ export function Projects(): JSX.Element {
       {projects === null && error === null && <Loading label="projects…" />}
       {projects !== null && visible.length === 0 && (
         <Empty>
-          {tag !== null ? (
+          {query !== '' ? (
+            <>no projects match the current filter — try a different search or clear it</>
+          ) : tag !== null ? (
             <>
               no projects tagged <span className="font-mono text-ink">#{tag}</span>
             </>

@@ -7,7 +7,7 @@
 // contentHash as base_hash (step-10 contract); managed=swarmery entries stay
 // read-only (installer-owned), and a stale hash is resolved ONLY by refetch.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { LintSeverity, Project, SystemHook } from '../../api/types';
 import {
   fetchSystemHooks,
@@ -16,7 +16,7 @@ import {
   SystemWriteError,
   type SystemListFilters,
 } from '../../api/system';
-import { HeaderFilters } from '../../components/HeaderFilters';
+import { usePageSearch } from '../../lib/pageSearch';
 import { ConfirmDialog, Empty, ErrorBox, GroupHeader, Loading } from '../../components/ui';
 import { FiltersRow, ScopeBadge, useSystemList } from './shared';
 
@@ -299,8 +299,6 @@ function HookRow({
   );
 }
 
-const SEARCH_DEBOUNCE_MS = 150;
-
 export function HooksTab({
   scope,
   project,
@@ -320,12 +318,8 @@ export function HooksTab({
   /** A write hit the global readonly kill-switch — page-level banner. */
   onReadonly: () => void;
 }): JSX.Element {
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim().toLowerCase()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [search]);
+  // Name/command filter comes from the contextual header search input.
+  const query = usePageSearch();
 
   const fetcher = useCallback(
     (filters: SystemListFilters) => fetchSystemHooks(filters),
@@ -352,12 +346,9 @@ export function HooksTab({
 
   return (
     <div className="flex h-full flex-col">
-      {/* filters — header slot on desk+, in-body below; never scroll */}
-      <HeaderFilters>
-        <FiltersRow scope={scope} search={search} onSearch={setSearch} onScope={onScope} header />
-      </HeaderFilters>
-      <div className="shrink-0 pt-3 pb-2 xl:hidden">
-        <FiltersRow scope={scope} search={search} onSearch={setSearch} onScope={onScope} />
+      {/* scope chips — name filter is the contextual header search input */}
+      <div className="shrink-0 pt-3 pb-2">
+        <FiltersRow scope={scope} onScope={onScope} />
       </div>
       {/* scrollable hook list */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-4 [-webkit-overflow-scrolling:touch]">

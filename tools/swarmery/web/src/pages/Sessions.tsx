@@ -1,26 +1,25 @@
-// Sessions list (design §3.3): status chip row with live counts, title
-// search (client-side, debounced), live updates over WS. Project filtering
-// comes from the GLOBAL header scope switcher (useScope) — pushed to the API
-// as a query param; status is filtered CLIENT-side so the chip counts always
-// reflect the searched+scoped list.
-// Redesign layout: mono search input + hairline separator + status chips
-// (wrapping row), sessions grouped by day under mono eyebrow rules, each day
-// one navy list card — aligned table columns at ≥900px.
+// Sessions list (design §3.3): status chip row with live counts, live updates
+// over WS. Project filtering comes from the GLOBAL header scope switcher
+// (useScope) — pushed to the API as a query param; text search lives in the
+// header ⌘K palette; status is filtered CLIENT-side so the chip counts always
+// reflect the scoped list.
+// Redesign layout: status chips (wrapping row), sessions grouped by day under
+// mono eyebrow rules, each day one navy list card — aligned table columns at
+// ≥900px.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, SessionStatus, WSMessage } from '../api/types';
 import { fetchSessions } from '../api';
 import { liveActionText } from '../lib/payload';
+import { usePageSearch } from '../lib/pageSearch';
 import { useScope } from '../lib/scope';
 import { applySessionMessage, useLiveUpdates } from '../lib/ws';
-import { HeaderFilters } from '../components/HeaderFilters';
 import { SessionCard } from '../components/SessionCard';
 import { Empty, ErrorBox, GroupHeader, Loading } from '../components/ui';
 
-const SEARCH_DEBOUNCE_MS = 150;
 const PAGE_LIMIT = 100;
 
-/** Case-insensitive substring match over title / project name / slug / branch. */
+/** Case-insensitive substring match over title / project / slug / branch. */
 function matchesQuery(s: Session, q: string): boolean {
   if (q === '') return true;
   return [s.title, s.projectName, s.projectSlug, s.gitBranch].some(
@@ -62,50 +61,18 @@ function FilterChip({
   );
 }
 
-/** Title search + status chips — rendered twice: teleported into the header
- * slot on xl+ (compact variant) and inline in the page body below xl.
- * Both instances share the page's state, so they always agree. */
-function FilterControls({
-  search,
-  onSearch,
+/** Status chip row (page body) — text search lives in the header ⌘K palette. */
+function StatusChips({
   status,
   onStatus,
   counts,
-  header = false,
 }: {
-  search: string;
-  onSearch: (s: string) => void;
   status: SessionStatus | null;
   onStatus: (s: SessionStatus | null) => void;
   counts: Record<SessionStatus, number>;
-  header?: boolean;
 }): JSX.Element {
   return (
     <>
-      <div className={header ? 'relative w-[200px] shrink-0' : 'relative w-full desk:w-[260px]'}>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="filter by title…"
-          aria-label="filter sessions by title"
-          className="w-full rounded-[9px] border border-line-strong bg-field px-3 py-[6px] pr-8 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-ink-dim"
-        />
-        {search !== '' && (
-          <button
-            type="button"
-            onClick={() => onSearch('')}
-            aria-label="clear search"
-            className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <span
-        className={`mx-1 w-px shrink-0 bg-line-strong ${header ? 'h-4' : 'self-stretch'}`}
-        aria-hidden="true"
-      />
       {STATUSES.map((s) => (
         <FilterChip key={s} selected={status === s} onClick={() => onStatus(status === s ? null : s)}>
           {counts[s] > 0 ? `${STATUS_LABELS[s]} · ${String(counts[s])}` : STATUS_LABELS[s]}
@@ -143,9 +110,10 @@ function groupByDay(sorted: Session[]): DayGroup[] {
 }
 
 export function Sessions(): JSX.Element {
-  // Project filtering comes from the global header scope switcher — this page
-  // has no local project dropdown of its own.
+  // Project filtering comes from the global header scope switcher; the title
+  // filter comes from the contextual header search input.
   const { scope } = useScope();
+  const query = usePageSearch();
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -158,14 +126,6 @@ export function Sessions(): JSX.Element {
   // otherwise a slow page-2 fetch would leak old-scope rows and resurrect
   // the old cursor (scope filtering is server-side, not re-checked here).
   const genRef = useRef(0);
-
-  // Title search: raw input + a ~150ms-debounced lowercase query.
-  const [search, setSearch] = useState('');
-  const [query, setQuery] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim().toLowerCase()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [search]);
 
   // First page — also the WS-reconnect refetch: the live socket keeps the
   // loaded window fresh in between, so resetting to page 1 on reconnect is
@@ -262,9 +222,9 @@ export function Sessions(): JSX.Element {
   );
   useLiveUpdates(onMessage, load);
 
-  // Chip counts come from the searched + project-filtered list (pre-status),
-  // over the LOADED pages only — deeper history loads on scroll.
-  const searched = (sessions ?? []).filter((s) => matchesQuery(s, query));
+  // Chip counts come from the scoped + title-filtered list (pre-status), over
+  // the LOADED pages only — deeper history loads on scroll.
+  const loaded = (sessions ?? []).filter((s) => matchesQuery(s, query));
   const counts: Record<SessionStatus, number> = {
     active: 0,
     waiting_approval: 0,
@@ -272,9 +232,9 @@ export function Sessions(): JSX.Element {
     completed: 0,
     killed: 0,
   };
-  for (const s of searched) counts[s.status] += 1;
+  for (const s of loaded) counts[s.status] += 1;
 
-  const sorted = searched
+  const sorted = loaded
     .filter((s) => status === null || s.status === status)
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   const groups = groupByDay(sorted);
@@ -288,28 +248,10 @@ export function Sessions(): JSX.Element {
         {sorted.length} match · newest first
       </div>
 
-      {/* Filters (Canvas §Sessions): search │ status chips — project
-          filtering lives in the header scope switcher. On desk+ the controls
-          teleport into the header slot; below desk they render here (the
-          input takes the first line, wraps cleanly at 390px). */}
-      <HeaderFilters>
-        <FilterControls
-          search={search}
-          onSearch={setSearch}
-          status={status}
-          onStatus={setStatus}
-          counts={counts}
-          header
-        />
-      </HeaderFilters>
-      <div className="mt-5 flex flex-wrap items-center gap-2 xl:hidden">
-        <FilterControls
-          search={search}
-          onSearch={setSearch}
-          status={status}
-          onStatus={setStatus}
-          counts={counts}
-        />
+      {/* Status chips — project filtering lives in the header scope switcher,
+          text search in the header ⌘K palette. */}
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        <StatusChips status={status} onStatus={setStatus} counts={counts} />
       </div>
 
       {error !== null && <ErrorBox message={error} onRetry={load} />}
@@ -317,13 +259,12 @@ export function Sessions(): JSX.Element {
       {sessions !== null && sorted.length === 0 && (
         <Empty>
           {query !== '' ? (
-            <>
-              no sessions match <span className="font-mono text-ink">“{search.trim()}”</span> — try
-              a different search or clear the filters
-            </>
+            <>no sessions match the current filter — try a different search or clear it</>
+          ) : status !== null ? (
+            <>no {STATUS_LABELS[status]} sessions — clear the status filter to see the rest</>
           ) : (
             <>
-              no sessions match — clear filters, or run{' '}
+              no sessions yet — run{' '}
               <span className="font-mono text-ink">swarmery ingest &lt;file.jsonl&gt;</span>
             </>
           )}

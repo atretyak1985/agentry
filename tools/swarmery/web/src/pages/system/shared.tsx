@@ -309,60 +309,24 @@ export function SortDropdown({
   );
 }
 
-/** Search input + scope chips — the top filter bar of every System tab.
- * Search is client-side; scope is pushed to the API. Project filtering comes
- * from the global header scope switcher, not from this row. When onSort is
- * provided the client-side sort dropdown is shown (agents/skills). */
+/** Scope chips (+ optional sort dropdown) — the top filter bar of every System
+ * tab. Scope is pushed to the API; project filtering comes from the global
+ * header scope switcher and text search from the header ⌘K palette, so neither
+ * lives in this row. When onSort is provided the client-side sort dropdown is
+ * shown (agents/skills). */
 export function FiltersRow({
   scope,
-  search,
-  onSearch,
   onScope,
   sort,
   onSort,
-  header = false,
 }: {
   scope: 'global' | 'project' | null;
-  search: string;
-  onSearch: (s: string) => void;
   onScope: (scope: 'global' | 'project' | null) => void;
   sort?: SystemSort;
   onSort?: (sort: SystemSort) => void;
-  /** Compact variant for the app-header slot (no top margin, no wrap). */
-  header?: boolean;
 }): JSX.Element {
   return (
-    <div
-      className={
-        header
-          ? 'flex min-w-0 flex-1 items-center gap-2'
-          : 'mt-4 flex flex-wrap items-center gap-2'
-      }
-    >
-      <div className={header ? 'relative w-[200px] shrink-0' : 'relative w-[240px] max-w-full'}>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="filter by name…"
-          aria-label="filter by name"
-          className="w-full rounded-[9px] border border-line-strong bg-field px-3 py-[6px] pr-8 font-mono text-[12px] text-ink transition-colors outline-none placeholder:text-ink-dim focus:border-ink-dim"
-        />
-        {search !== '' && (
-          <button
-            type="button"
-            onClick={() => onSearch('')}
-            aria-label="clear search"
-            className="absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[13px] leading-none text-ink-dim transition-colors hover:text-ink"
-          >
-            ×
-          </button>
-        )}
-      </div>
-      <span
-        className={`mx-1 w-px shrink-0 bg-line-strong ${header ? 'h-4' : 'self-stretch'}`}
-        aria-hidden="true"
-      />
+    <div className="mt-4 flex flex-wrap items-center gap-2">
       <FilterChip selected={scope === null} onClick={() => onScope(null)}>all scopes</FilterChip>
       <FilterChip selected={scope === 'global'} onClick={() => onScope('global')}>global</FilterChip>
       <FilterChip selected={scope === 'project'} onClick={() => onScope('project')}>project</FilterChip>
