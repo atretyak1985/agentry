@@ -34,7 +34,12 @@ type projectDTO struct {
 	FirstSeen    string  `json:"firstSeen"`
 	LastActivity *string `json:"lastActivity"`
 	Archived     bool    `json:"archived"`
-	Sessions     int64   `json:"sessions"`
+	// Dashboard meta (migration 0015): pinned floats the project to the top of
+	// the list and the global scope switcher; tags is the decoded JSON array —
+	// [] when untagged, never null.
+	Pinned   bool     `json:"pinned"`
+	Tags     []string `json:"tags"`
+	Sessions int64    `json:"sessions"`
 	// Lifetime token/cost totals across all the project's sessions (deduped
 	// turns). Null while the project has no priced turns.
 	Tokens  *int64   `json:"tokens"`
@@ -174,6 +179,7 @@ type sessionDetailDTO struct {
 // additional predicate (e.g. a single-id lookup for the detail endpoint).
 const projectSelect = `
 	SELECT p.id, p.path, p.slug, p.name, p.first_seen, p.last_activity, p.archived,
+	       p.pinned, p.tags,
 	       COUNT(DISTINCT s.id) AS sessions,
 	       SUM(CASE WHEN t.id IS NOT NULL
 	                THEN COALESCE(t.tokens_in, 0) + COALESCE(t.tokens_out, 0) END) AS tokens,
@@ -188,14 +194,22 @@ const projectSelect = `
 // live from the project's .claude/settings.json (advisory, never fatal).
 func scanProject(rows *sql.Rows, roots []string) (projectDTO, error) {
 	var p projectDTO
-	var archived int
+	var archived, pinned int
+	var tagsRaw string
 	var tokens sql.NullInt64
 	var cost sql.NullFloat64
 	if err := rows.Scan(&p.ID, &p.Path, &p.Slug, &p.Name, &p.FirstSeen,
-		&p.LastActivity, &archived, &p.Sessions, &tokens, &cost); err != nil {
+		&p.LastActivity, &archived, &pinned, &tagsRaw, &p.Sessions, &tokens, &cost); err != nil {
 		return p, err
 	}
 	p.Archived = archived != 0
+	p.Pinned = pinned != 0
+	// tags is trusted JSON (only PATCH writes it) but a corrupt row must not
+	// break the list — degrade to [].
+	p.Tags = []string{}
+	if err := json.Unmarshal([]byte(tagsRaw), &p.Tags); err != nil || p.Tags == nil {
+		p.Tags = []string{}
+	}
 	if tokens.Valid {
 		p.Tokens = &tokens.Int64
 	}
@@ -218,7 +232,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		where = ""
 	}
 	query := strings.Replace(projectSelect, "{{WHERE}}", where, 1) +
-		" ORDER BY p.last_activity DESC"
+		" ORDER BY p.pinned DESC, p.last_activity DESC"
 
 	rows, err := h.DB.Query(query)
 	if err != nil {

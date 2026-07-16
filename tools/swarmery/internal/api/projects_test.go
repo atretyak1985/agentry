@@ -201,3 +201,30 @@ func TestGetProjectBadID(t *testing.T) {
 		t.Errorf("bad id = %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestListProjectsPinnedFirstWithTags(t *testing.T) {
+	srv, db := projectsTestServer(t)
+	// Project 2 has the OLDER last_activity but is pinned + tagged — it must lead.
+	execSQL(t, db, `UPDATE projects SET pinned = 1, tags = '["billing","infra"]' WHERE id = 2`)
+
+	list := getProjectsList(t, srv.URL+"/api/projects")
+	if len(list) != 2 {
+		t.Fatalf("list len = %d, want 2", len(list))
+	}
+	if list[0].ID != 2 {
+		t.Errorf("first project = %d, want pinned project 2", list[0].ID)
+	}
+	if !list[0].Pinned {
+		t.Error("project 2 should report pinned=true")
+	}
+	if len(list[0].Tags) != 2 || list[0].Tags[0] != "billing" || list[0].Tags[1] != "infra" {
+		t.Errorf("project 2 tags = %v, want [billing infra]", list[0].Tags)
+	}
+	// Untagged projects must serialize tags as [], never null.
+	if list[1].Tags == nil {
+		t.Error("untagged project must have tags = [], not null")
+	}
+	if list[1].Pinned {
+		t.Error("project 1 should report pinned=false")
+	}
+}
