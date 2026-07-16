@@ -34,6 +34,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // ---- DTOs (mirrored in web/src/api/types.ts, "phase 4+: insights") ---------
@@ -99,6 +100,25 @@ const (
 	staleIdenticalHint = "identical to the plugin copy — the local override is pointless; delete the local file and rely on the plugin"
 	staleDivergedHint  = "diverged from the plugin copy — intentional override or drift; review the diff, then re-sync or delete the local copy"
 	deadHint           = "0 telemetry mentions in 30 days (advisory — events.agent_id is only partially attributed); consider deleting or archiving"
+)
+
+// Shared SQL predicates — spliced into BOTH the full compute queries
+// (projectLocalGroups / staleOverrideList) and the insightCounts summary
+// queries, so the badge counts equal len(promotionCandidates) /
+// len(staleOverrides) BY CONSTRUCTION (byte-identical fragments, not
+// hand-kept copies).
+const (
+	// localProjectPred filters live project-local rows. The item table must
+	// be aliased `t` wherever this is spliced.
+	localProjectPred = `t.deleted = 0 AND t.scope = 'project' AND t.origin = 'local'`
+	// localOverridePred filters live local rows on the override side (any
+	// scope). The local item table must be aliased `l`.
+	localOverridePred = `l.deleted = 0 AND l.origin = 'local'`
+	// pluginCollisionJoin joins a local row (alias `l`) to the plugin row
+	// (alias `g`) it name-collides with — plugin rows carry composite names
+	// ("<plugin>:<name>", sysscan/registry.go §7).
+	pluginCollisionJoin = `g.deleted = 0 AND g.origin = 'plugin'
+	                       AND g.name = g.plugin_name || ':' || l.name`
 )
 
 // insightKind parameterizes the per-kind queries. verTable=="" marks the
@@ -181,19 +201,25 @@ func promotionCandidates(db *sql.DB) ([]promotionCandidateDTO, error) {
 // projectLocalGroups loads every live scope=project origin=local row of one
 // kind, grouped by name (names returned in first-seen = SQL name order).
 func projectLocalGroups(db *sql.DB, k insightKind) (map[string][]insightCopy, []string, error) {
+	// The ≥2-distinct-projects name gate is repeated in SQL so version CONTENT
+	// is only ever joined/loaded for actual candidate names — a lone local
+	// component never drags its full body off disk pages into the result set.
+	nameGate := ` AND t.name IN (SELECT t.name FROM ` + k.table + ` t
+	                             WHERE ` + localProjectPred + `
+	                             GROUP BY t.name HAVING COUNT(DISTINCT t.project_id) >= 2)`
 	var q string
 	if k.verTable != "" {
 		q = `SELECT t.id, t.name, p.slug, t.` + k.pathCol + `, v.content_hash, v.content
 		     FROM ` + k.table + ` t
 		     JOIN projects p ON p.id = t.project_id
 		     LEFT JOIN ` + k.verTable + ` v ON v.id = t.current_version_id
-		     WHERE t.deleted = 0 AND t.scope = 'project' AND t.origin = 'local'
+		     WHERE ` + localProjectPred + nameGate + `
 		     ORDER BY t.name, p.slug, t.id`
 	} else {
 		q = `SELECT t.id, t.name, p.slug, t.file_path, t.content_hash, NULL
 		     FROM commands t
 		     JOIN projects p ON p.id = t.project_id
-		     WHERE t.deleted = 0 AND t.scope = 'project' AND t.origin = 'local'
+		     WHERE ` + localProjectPred + nameGate + `
 		     ORDER BY t.name, p.slug, t.id`
 	}
 	rows, err := db.Query(q)
@@ -241,21 +267,19 @@ func staleOverrideList(db *sql.DB) ([]staleOverrideDTO, error) {
 			q = `SELECT l.id, l.name, l.scope, lp.slug, l.` + k.pathCol + `, lv.content_hash, lv.content,
 			            g.id, g.plugin_name, g.` + k.pathCol + `, gv.content_hash, gv.content
 			     FROM ` + k.table + ` l
-			     JOIN ` + k.table + ` g ON g.deleted = 0 AND g.origin = 'plugin'
-			                            AND g.name = g.plugin_name || ':' || l.name
+			     JOIN ` + k.table + ` g ON ` + pluginCollisionJoin + `
 			     LEFT JOIN projects lp ON lp.id = l.project_id
 			     LEFT JOIN ` + k.verTable + ` lv ON lv.id = l.current_version_id
 			     LEFT JOIN ` + k.verTable + ` gv ON gv.id = g.current_version_id
-			     WHERE l.deleted = 0 AND l.origin = 'local'
+			     WHERE ` + localOverridePred + `
 			     ORDER BY l.name, lp.slug, l.id`
 		} else {
 			q = `SELECT l.id, l.name, l.scope, lp.slug, l.file_path, l.content_hash, NULL,
 			            g.id, g.plugin_name, g.file_path, g.content_hash, NULL
 			     FROM commands l
-			     JOIN commands g ON g.deleted = 0 AND g.origin = 'plugin'
-			                     AND g.name = g.plugin_name || ':' || l.name
+			     JOIN commands g ON ` + pluginCollisionJoin + `
 			     LEFT JOIN projects lp ON lp.id = l.project_id
-			     WHERE l.deleted = 0 AND l.origin = 'local'
+			     WHERE ` + localOverridePred + `
 			     ORDER BY l.name, lp.slug, l.id`
 		}
 		rows, err := db.Query(q)
@@ -385,9 +409,20 @@ func fillDiskContents(copies []insightCopy) {
 	}
 }
 
+// maxInsightDiffBytes caps every diff served by the insights endpoint —
+// advisory cards must never balloon the JSON payload on a pathological
+// divergence (e.g. a generated file registered as a component). The stat is
+// computed on the FULL diff first, so churn numbers stay exact; only the
+// served text is cut, at a line boundary, with an explicit trailing marker.
+const maxInsightDiffBytes = 64 * 1024
+
+// diffTruncatedMarker is appended to a diff cut at maxInsightDiffBytes.
+const diffTruncatedMarker = "\n… (diff truncated)"
+
 // mostDivergedDiff picks the copy pair with the largest line churn and returns
 // its REDACTED unified diff plus the added/removed stat. Copies without
 // available content are skipped; fewer than two available → ("", nil).
+// The returned diff is truncated at maxInsightDiffBytes.
 func mostDivergedDiff(copies []insightCopy) (string, *insightDiffStatDTO) {
 	var bestDiff string
 	var best *insightDiffStatDTO
@@ -409,15 +444,29 @@ func mostDivergedDiff(copies []insightCopy) (string, *insightDiffStatDTO) {
 			}
 		}
 	}
+	if len(bestDiff) > maxInsightDiffBytes {
+		cut := bestDiff[:maxInsightDiffBytes]
+		if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+			cut = cut[:i] // whole lines only — never a torn diff line or rune
+		}
+		bestDiff = cut + diffTruncatedMarker
+	}
 	return bestDiff, best
 }
 
 // statOf counts +/- lines of a unified diff (headers excluded).
+// textdiff.UnifiedDiff emits the ---/+++ header pair ONLY as the first two
+// lines, so headers are skipped by POSITION, never by content — a removed
+// markdown `---` frontmatter fence renders as the content line `----` and
+// must count as a removal.
 func statOf(diff string) insightDiffStatDTO {
 	var st insightDiffStatDTO
-	for _, line := range splitLines(diff) {
+	lines := splitLines(diff)
+	if len(lines) > 2 {
+		lines = lines[2:] // the "--- a\n+++ b" header pair
+	}
+	for _, line := range lines {
 		switch {
-		case len(line) >= 3 && (line[:3] == "+++" || line[:3] == "---"):
 		case len(line) >= 1 && line[0] == '+':
 			st.Added++
 		case len(line) >= 1 && line[0] == '-':
@@ -445,22 +494,22 @@ func splitLines(s string) []string {
 // ---- summary counters ---------------------------------------------------------
 
 // insightCounts serves the summary badge: cheap COUNT queries only — no disk
-// IO, no diffing. Predicates are identical to the full compute, so the counts
-// always equal len(promotionCandidates) / len(staleOverrides).
+// IO, no diffing. Predicates are the SAME spliced constants the full compute
+// uses (localProjectPred / localOverridePred / pluginCollisionJoin), so the
+// counts equal len(promotionCandidates) / len(staleOverrides) by construction.
 func insightCounts(db *sql.DB) (promotions, staleOverrides int64, err error) {
 	for _, k := range insightKinds {
 		var n int64
 		if err = db.QueryRow(`SELECT COUNT(*) FROM (
-			SELECT name FROM ` + k.table + `
-			WHERE deleted = 0 AND scope = 'project' AND origin = 'local'
-			GROUP BY name HAVING COUNT(DISTINCT project_id) >= 2)`).Scan(&n); err != nil {
+			SELECT t.name FROM ` + k.table + ` t
+			WHERE ` + localProjectPred + `
+			GROUP BY t.name HAVING COUNT(DISTINCT t.project_id) >= 2)`).Scan(&n); err != nil {
 			return
 		}
 		promotions += n
 		if err = db.QueryRow(`SELECT COUNT(*) FROM ` + k.table + ` l
-			JOIN ` + k.table + ` g ON g.deleted = 0 AND g.origin = 'plugin'
-			                       AND g.name = g.plugin_name || ':' || l.name
-			WHERE l.deleted = 0 AND l.origin = 'local'`).Scan(&n); err != nil {
+			JOIN ` + k.table + ` g ON ` + pluginCollisionJoin + `
+			WHERE ` + localOverridePred).Scan(&n); err != nil {
 			return
 		}
 		staleOverrides += n

@@ -9,6 +9,7 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -374,14 +375,69 @@ func TestSystemInsightsQuietWorld(t *testing.T) {
 	}
 }
 
+// TestInsightCounts pins the summary counters to the FULL compute at runtime:
+// the shared predicate consts make the SQL identical by construction, and this
+// comparison catches any future drift between the two paths.
 func TestInsightCounts(t *testing.T) {
 	db := insightsDB(t)
 	promos, stales, err := insightCounts(db)
 	if err != nil {
 		t.Fatalf("insightCounts: %v", err)
 	}
+	full, err := computeInsights(db)
+	if err != nil {
+		t.Fatalf("computeInsights: %v", err)
+	}
+	if int(promos) != len(full.PromotionCandidates) || int(stales) != len(full.StaleOverrides) {
+		t.Errorf("insightCounts = %d/%d, want %d/%d (must equal the computeInsights list lengths)",
+			promos, stales, len(full.PromotionCandidates), len(full.StaleOverrides))
+	}
+	// One literal sanity pin on the fixture itself, so a bug that breaks BOTH
+	// paths the same way cannot slip through silently.
 	if promos != 3 || stales != 2 {
-		t.Errorf("insightCounts = %d/%d, want 3/2 (must match len(computeInsights lists))", promos, stales)
+		t.Errorf("insightCounts = %d/%d, want 3/2 on this fixture", promos, stales)
+	}
+}
+
+// TestStatOfFrontmatterFenceRemoval: a removed markdown `---` frontmatter
+// fence renders as the diff line `----` — it must count as a REMOVED line,
+// not be dropped as a file header (headers are only ever lines 0..1).
+func TestStatOfFrontmatterFenceRemoval(t *testing.T) {
+	a := "---\nname: x\n---\nbody\n"
+	b := "name: x\nbody\n"
+	d := UnifiedDiff("a.md", "b.md", a, b)
+	if !strings.Contains(d, "\n----\n") {
+		t.Fatalf("diff = %q, want a removed --- fence line rendered as ----", d)
+	}
+	st := statOf(d)
+	if st.Added != 0 || st.Removed != 2 {
+		t.Errorf("statOf = +%d/-%d, want +0/-2 (both removed --- fences counted)", st.Added, st.Removed)
+	}
+}
+
+// TestMostDivergedDiffTruncation: a pathological divergence is served capped
+// at maxInsightDiffBytes with the explicit marker, cut on a line boundary;
+// the churn stat is still computed over the FULL diff.
+func TestMostDivergedDiffTruncation(t *testing.T) {
+	long := strings.Repeat("x", 2048) // 40 changed 2 KB lines ≈ 160 KB of diff
+	var a, b strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&a, "a%d %s\n", i, long)
+		fmt.Fprintf(&b, "b%d %s\n", i, long)
+	}
+	copies := []insightCopy{
+		{dto: insightCopyDTO{Path: "a.md"}, content: a.String(), hasContent: true},
+		{dto: insightCopyDTO{Path: "b.md"}, content: b.String(), hasContent: true},
+	}
+	diff, stat := mostDivergedDiff(copies)
+	if !strings.HasSuffix(diff, diffTruncatedMarker) {
+		t.Fatalf("truncated diff must end with the marker; got tail %q", diff[max(0, len(diff)-40):])
+	}
+	if len(diff) > maxInsightDiffBytes+len(diffTruncatedMarker) {
+		t.Errorf("diff length = %d, want <= %d", len(diff), maxInsightDiffBytes+len(diffTruncatedMarker))
+	}
+	if stat == nil || stat.Added != 40 || stat.Removed != 40 {
+		t.Errorf("stat = %+v, want +40/-40 (computed on the FULL diff)", stat)
 	}
 }
 

@@ -119,14 +119,16 @@ function AppShell(): JSX.Element {
       .catch(() => setSessionsToday(null));
   }, []);
 
-  // System nav badge: promotion + stale-override insight count, one-shot on
-  // mount (hidden when the summary is unavailable) — pattern: sessions badge.
+  // System nav badge: promotion + stale-override insight count, fetched on
+  // mount and refetched on WS system_item_updated (hidden when the summary is
+  // unavailable) — pattern: sessions badge + approvals resync.
   const [insightCount, setInsightCount] = useState<number | null>(null);
-  useEffect(() => {
+  const syncInsights = useCallback((): void => {
     fetchSystemSummary()
       .then((s) => setInsightCount(s.insights.promotions + s.insights.staleOverrides))
       .catch(() => setInsightCount(null));
   }, []);
+  useEffect(syncInsights, [syncInsights]);
 
   // Approvals badge: REST is the source of truth (mount + reconnect resync);
   // the WS stream is the low-latency hint in between (docs/ws-protocol.md).
@@ -137,19 +139,26 @@ function AppShell(): JSX.Element {
   }, []);
   useEffect(syncPending, [syncPending]);
 
-  const onMessage = useCallback((msg: WSMessage): void => {
-    if (msg.type === 'permission_requested') {
-      setPendingIds((prev) => new Set(prev).add(msg.payload.id));
-    } else if (msg.type === 'permission_resolved') {
-      setPendingIds((prev) => {
-        if (!prev.has(msg.payload.id)) return prev;
-        const next = new Set(prev);
-        next.delete(msg.payload.id);
-        return next;
-      });
-    }
-    // Other message types are the pages' concern — ignore here.
-  }, []);
+  const onMessage = useCallback(
+    (msg: WSMessage): void => {
+      if (msg.type === 'permission_requested') {
+        setPendingIds((prev) => new Set(prev).add(msg.payload.id));
+      } else if (msg.type === 'permission_resolved') {
+        setPendingIds((prev) => {
+          if (!prev.has(msg.payload.id)) return prev;
+          const next = new Set(prev);
+          next.delete(msg.payload.id);
+          return next;
+        });
+      } else if (msg.type === 'system_item_updated') {
+        // Registry change → System nav badge resync. The message is rare
+        // (scanner/edit events), so no debounce is needed.
+        syncInsights();
+      }
+      // Other message types are the pages' concern — ignore here.
+    },
+    [syncInsights],
+  );
   useLiveUpdates(onMessage, syncPending);
 
   const pendingCount = pendingIds.size;

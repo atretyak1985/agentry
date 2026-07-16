@@ -73,10 +73,16 @@ function HintLine({ hint }: { hint: string }): JSX.Element {
         type="button"
         aria-label="copy next-step hint"
         onClick={() => {
-          void navigator.clipboard.writeText(hint).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
+          // navigator.clipboard is undefined on non-secure origins (plain-HTTP
+          // LAN) — optional-chain to a no-op instead of throwing; the hint
+          // text itself stays visible/selectable either way.
+          void navigator.clipboard
+            ?.writeText(hint)
+            .then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => {});
         }}
         className="shrink-0 rounded border border-line-strong px-2 py-0.5 font-mono text-[10px] text-ink-dim transition-colors hover:text-ink"
       >
