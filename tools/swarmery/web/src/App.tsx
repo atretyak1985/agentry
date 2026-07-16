@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import type { Project, WSMessage } from './api/types';
 import { fetchApprovals, fetchDocs, fetchProjects, fetchStatsOverview, MOCK } from './api';
+import { fetchSystemSummary } from './api/system';
 import { CommandPalette } from './components/CommandPalette';
 import { NewProjectButton } from './components/NewProjectButton';
 import { NotifySettings } from './components/NotifySettings';
@@ -118,6 +119,15 @@ function AppShell(): JSX.Element {
       .catch(() => setSessionsToday(null));
   }, []);
 
+  // System nav badge: promotion + stale-override insight count, one-shot on
+  // mount (hidden when the summary is unavailable) — pattern: sessions badge.
+  const [insightCount, setInsightCount] = useState<number | null>(null);
+  useEffect(() => {
+    fetchSystemSummary()
+      .then((s) => setInsightCount(s.insights.promotions + s.insights.staleOverrides))
+      .catch(() => setInsightCount(null));
+  }, []);
+
   // Approvals badge: REST is the source of truth (mount + reconnect resync);
   // the WS stream is the low-latency hint in between (docs/ws-protocol.md).
   const syncPending = useCallback((): void => {
@@ -154,7 +164,7 @@ function AppShell(): JSX.Element {
       label: 'Approvals',
       ...(pendingCount > 0 ? { badge: String(pendingCount), alert: true } : {}),
     },
-    { to: '/system', glyph: '⚙', label: 'System' },
+    { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
     ...(hasDocs ? [DOCS_NAV] : []),
   ];
 
