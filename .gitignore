@@ -16,3 +16,4 @@ temp/
 node_modules/
 .flavor-tokens*
 .idea/
+.claude/worktrees/
