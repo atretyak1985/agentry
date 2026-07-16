@@ -17,6 +17,9 @@ package api
 //
 // Response shapes are FROZEN by web/src/api/types.ts (snake_case, like the
 // other stats endpoints).
+//
+// Retention (ops-hygiene): pruned days are served from daily_rollups for the
+// project grain; other groupings set approx=true over such ranges.
 
 import (
 	"database/sql"
@@ -285,6 +288,55 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Retention union (ops-hygiene): days pruned by `swarmery prune` have no
+	// raw turns — fold their daily_rollups (local-day, per-project, agent_id
+	// NULL) into the same accumulator. Only the project grouping can be
+	// served exactly: rollups carry no model/agent/skill dimension.
+	rolledUp := false
+	if metric != "runs" && group == "project" {
+		rrows, err := h.DB.Query(`
+			SELECT r.day, p.slug, p.name,
+			       SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.cost_usd)
+			  FROM daily_rollups r
+			  JOIN projects p ON p.id = r.project_id
+			 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0
+			 GROUP BY r.day, p.slug`, dr.days[0], dr.days[len(dr.days)-1])
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		defer rrows.Close()
+		for rrows.Next() {
+			var day, slug string
+			var name sql.NullString
+			var tin, tout int64
+			var cost float64
+			if err := rrows.Scan(&day, &slug, &name, &tin, &tout, &cost); err != nil {
+				writeErr(w, err)
+				return
+			}
+			idx, ok := dr.index[day]
+			if !ok {
+				continue
+			}
+			v := cost
+			if metric == "tokens" {
+				v = float64(tin + tout)
+			}
+			if v <= 0 {
+				continue // honesty rule: an unpriced/empty rollup adds no $ point
+			}
+			a := get(slug, projLabel(name, slug))
+			a.values[idx] += v
+			a.total += v
+		}
+		if err := rrows.Err(); err != nil {
+			writeErr(w, err)
+			return
+		}
+		rolledUp = true
+	}
+
 	out := timeseriesDTO{
 		From: dr.days[0], To: dr.days[len(dr.days)-1],
 		Metric: metric, Group: group, Buckets: dr.days,
@@ -292,6 +344,20 @@ func (h *Handler) statsTimeseries(w http.ResponseWriter, r *http.Request) {
 	}
 	for key, a := range series {
 		out.Series = append(out.Series, seriesDTO{Key: key, Name: a.name, Total: a.total, Values: a.values})
+	}
+	// Groupings the rollups cannot reconstruct are flagged approximate when
+	// the range overlaps rolled-up days — the reserved `approx` badge in the
+	// frozen contract is finally honest instead of the series silently
+	// under-reporting pruned history.
+	if !rolledUp {
+		var n int
+		if err := h.DB.QueryRow(
+			`SELECT COUNT(*) FROM daily_rollups WHERE day >= ? AND day <= ?`,
+			dr.days[0], dr.days[len(dr.days)-1]).Scan(&n); err != nil {
+			writeErr(w, err)
+			return
+		}
+		out.Approx = n > 0
 	}
 	// Deterministic order: total desc, then key asc (stable legend).
 	sort.Slice(out.Series, func(i, j int) bool {
@@ -403,7 +469,84 @@ func (h *Handler) breakdownTurns(by string, dr dateRange) ([]breakdownRow, error
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if by == "project" {
+		if err := h.mergeProjectRollups(dr, &out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// mergeProjectRollups folds daily_rollups (days pruned by `swarmery prune`)
+// into the by=project breakdown: cost/tokens/sessions accumulate, then the
+// ranking is recomputed (cost desc, key asc — same order as the SQL).
+func (h *Handler) mergeProjectRollups(dr dateRange, out *[]breakdownRow) error {
+	rows, err := h.DB.Query(`
+		SELECT p.slug, p.name,
+		       SUM(r.cost_usd), SUM(r.tokens_in), SUM(r.tokens_out), SUM(r.sessions)
+		  FROM daily_rollups r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE r.day >= ? AND r.day <= ? AND r.agent_id IS NULL AND p.archived = 0
+		 GROUP BY p.slug`, dr.days[0], dr.days[len(dr.days)-1])
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	idx := map[string]int{}
+	for i := range *out {
+		idx[(*out)[i].Key] = i
+	}
+	for rows.Next() {
+		var slug string
+		var name sql.NullString
+		var cost float64
+		var tin, tout, sess int64
+		if err := rows.Scan(&slug, &name, &cost, &tin, &tout, &sess); err != nil {
+			return err
+		}
+		i, ok := idx[slug]
+		if !ok {
+			zin, zout := int64(0), int64(0)
+			*out = append(*out, breakdownRow{Key: slug, Name: projLabel(name, slug),
+				TokensIn: &zin, TokensOut: &zout})
+			i = len(*out) - 1
+			idx[slug] = i
+		}
+		r := &(*out)[i]
+		*r.TokensIn += tin
+		*r.TokensOut += tout
+		r.Sessions += sess
+		// Honesty rule carried over: rollups store 0 for unpriced days, so
+		// only a positive rollup cost counts as "priced".
+		if cost > 0 {
+			c := cost
+			if r.CostUSD != nil {
+				c += *r.CostUSD
+			}
+			r.CostUSD = &c
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	sort.Slice(*out, func(i, j int) bool {
+		ci, cj := 0.0, 0.0
+		if (*out)[i].CostUSD != nil {
+			ci = *(*out)[i].CostUSD
+		}
+		if (*out)[j].CostUSD != nil {
+			cj = *(*out)[j].CostUSD
+		}
+		if ci != cj {
+			return ci > cj
+		}
+		return (*out)[i].Key < (*out)[j].Key
+	})
+	return nil
 }
 
 // breakdownRuns ranks agent|skill by run count (events-based, name-folded).
