@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { App } from './App';
 import { ProjectColorProvider } from './lib/projectColors';
+import { ThemeProvider } from './lib/theme';
 import { Loading } from './components/ui';
 import { Approvals } from './pages/Approvals';
 import { Overview } from './pages/Overview';
@@ -51,8 +52,10 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <StrictMode>
-    <ProjectColorProvider>
-      <RouterProvider router={router} />
-    </ProjectColorProvider>
+    <ThemeProvider>
+      <ProjectColorProvider>
+        <RouterProvider router={router} />
+      </ProjectColorProvider>
+    </ThemeProvider>
   </StrictMode>,
 );

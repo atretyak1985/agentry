@@ -214,7 +214,7 @@ export function SessionCard({
               </span>
             )}
           </span>
-          <span className="mt-0.5 block truncate text-[12px] text-[#6c7178]">
+          <span className="mt-0.5 block truncate text-[12px] text-ink-dim">
             {liveNow ? `now: ${now}` : (session.why ?? meta(session))}
           </span>
           {(session.taskExternalId != null || session.procPid != null) && (

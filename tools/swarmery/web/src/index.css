@@ -36,6 +36,10 @@
 
   /* ---- brand · amber accent ---- */
   --color-brand: #e8a13a; /* links, active nav/tabs, cost numerals, wordmark mark */
+  --color-brand-mark: #e8a13a; /* fixed brand hue for non-text accents (wordmark
+    dot, header hairline, shell wash) — stays #e8a13a in BOTH themes so the
+    accent color itself never changes; only --color-brand (used as text) is
+    re-tuned per theme for contrast. */
 
   /* ---- status / semantic ---- */
   --color-green: #58c08a; /* running / ok / approve */
@@ -43,6 +47,14 @@
   --color-red: #e5675f; /* error / deny */
   --color-blue: #6fb4f0; /* subagent track / info — kept from stored palette */
   --color-purple: #c58be0; /* a 4th project hue */
+
+  /* ---- chart strokes (Analytics/Sparkline) — theme-aware, read via
+     getComputedStyle at render since Recharts/SVG props can't take CSS vars
+     directly ---- */
+  --color-chart-grid: #ffffff10; /* CartesianGrid dashes */
+  --color-chart-axis: #ffffff18; /* axis line */
+  --color-chart-tick: #7c8da3; /* axis tick labels */
+  --color-chart-empty: #ffffff06; /* matrix heatmap empty cell */
 
   /* ---- type — Canvas triad ---- */
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
@@ -79,9 +91,61 @@
   }
 }
 
+/* Light theme override — same token names, re-defined under a data attribute
+ * set by ThemeProvider (src/lib/theme.tsx) on <html data-theme="light">.
+ * Tailwind v4 @theme vars are real CSS custom properties, so this cascades
+ * to every bg-bg/text-ink/border-line utility with zero component changes.
+ *
+ * Not a naive inversion: a warm off-white page (not pure #fff) with layered
+ * card/field/raised surfaces for real elevation, a dark warm-ink scale
+ * mirroring the cream scale's roles, and status hues darkened/saturated so
+ * they clear WCAG AA on a light ground (the dark-mode green/amber/red are
+ * too light for text on white). Brand-as-text uses a deeper amber than the
+ * dot/accent (#e8a13a stays the recognizable brand mark elsewhere).
+ */
+:root[data-theme='light'] {
+  /* ---- surfaces ---- */
+  --color-bg: #f6f2ea; /* page — warm off-white, not pure white */
+  --color-surface: #ffffff; /* cards, panels, sheets — brightest surface */
+  --color-field: #f0ebe1; /* inputs, idle nav pill, bare buttons */
+  --color-surface2: #ede6d8; /* raised / hover fill, active nav, prompt bubbles, code chips */
+
+  /* ---- hairlines ---- */
+  --color-line: #ded5c4; /* default hairline */
+  --color-line-strong: #cbbfa8; /* stronger — chips, menus, field borders */
+  --color-line-soft: #e6dfd0; /* softer inner row divider */
+
+  /* ---- ink scale (dark warm ink, mirrors the cream scale's roles) ---- */
+  --color-ink: #2a2620; /* primary text */
+  --color-ink-2: #514c44; /* secondary body text */
+  --color-ink-3: #6f6a61; /* tertiary — row why-lines, descriptions */
+  --color-ink-dim: #726d64; /* muted captions, project labels */
+  --color-ink-faint: #787368; /* faint mono micro-labels, timestamps, arrows (4.2:1 on bg) */
+
+  /* ---- brand · amber accent (deeper for text-on-white; dot/accent uses
+     could stay #e8a13a but text roles must clear 4.5:1 on --color-bg) ---- */
+  --color-brand: #93590c;
+
+  /* ---- status / semantic — darkened/saturated to clear AA on light ---- */
+  --color-green: #237a4e;
+  --color-amber: #93590c;
+  --color-red: #b8382f;
+  --color-blue: #1f6bb8;
+  --color-purple: #8a3fac;
+
+  /* ---- chart strokes ---- */
+  --color-chart-grid: #00000012;
+  --color-chart-axis: #00000022;
+  --color-chart-tick: #6f6a61;
+  --color-chart-empty: #00000008;
+}
+
 @layer base {
   :root {
     color-scheme: dark;
+  }
+  :root[data-theme='light'] {
+    color-scheme: light;
   }
   html {
     -webkit-text-size-adjust: 100%;
@@ -101,6 +165,10 @@
   ::selection {
     background: rgb(232 161 58 / 0.25);
   }
+  :root[data-theme='light'] ::selection {
+    /* Same amber tint, lower alpha — 0.25 reads too saturated over white. */
+    background: rgb(147 89 12 / 0.16);
+  }
 }
 
 @layer components {
@@ -113,24 +181,32 @@
     border-image: linear-gradient(
         90deg,
         transparent 0%,
-        color-mix(in srgb, var(--color-amber) 55%, transparent) 30%,
-        var(--color-amber) 50%,
-        color-mix(in srgb, var(--color-amber) 55%, transparent) 70%,
+        color-mix(in srgb, var(--color-brand-mark) 55%, transparent) 30%,
+        var(--color-brand-mark) 50%,
+        color-mix(in srgb, var(--color-brand-mark) 55%, transparent) 70%,
         transparent 100%
       )
       1;
   }
 
-  /* App shell base: warm near-black fill (#0E0F12) with a single soft amber
-     wash anchored off the top-right corner — barely perceptible (~5%), just
-     warming the area near the wordmark, fading to transparent with no hard
-     edge. Set once on the outermost shell so it never scrolls or repeats per
-     route; panels/cards keep their own flat fills over this base. */
+  /* App shell base: page fill with a single soft amber wash anchored off the
+     top-right corner — barely perceptible, just warming the area near the
+     wordmark, fading to transparent with no hard edge. Set once on the
+     outermost shell so it never scrolls or repeats per route; panels/cards
+     keep their own flat fills over this base. Light mode uses a fainter,
+     more desaturated wash (the same tint reads garish on a bright ground). */
   .app-shell {
     background-color: var(--color-bg);
     background-image: radial-gradient(
       circle at 78% -5%,
-      color-mix(in srgb, var(--color-amber) 5%, transparent),
+      color-mix(in srgb, var(--color-brand-mark) 5%, transparent),
+      transparent 45%
+    );
+  }
+  :root[data-theme='light'] .app-shell {
+    background-image: radial-gradient(
+      circle at 78% -5%,
+      color-mix(in srgb, var(--color-brand-mark) 3%, transparent),
       transparent 45%
     );
   }

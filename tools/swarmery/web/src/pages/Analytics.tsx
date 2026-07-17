@@ -47,6 +47,7 @@ import {
   isoDay,
 } from '../lib/format';
 import { useScope } from '../lib/scope';
+import { useTheme } from '../lib/theme';
 import { ApproxHint, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
 
 /* ----- metric / pivot vocabulary ----- */
@@ -150,8 +151,9 @@ function HeroInsight({
   // Delta semantics: for runs, up is good (green); for $/tokens, up is costly (brand).
   const deltaGood = metric === 'runs';
   const deltaColor = (up: boolean): string => {
-    if (up) return deltaGood ? '#58c08a' : '#e8a13a';
-    return deltaGood ? '#8b8f99' : '#58c08a';
+    // CSS vars resolve in inline style (unlike SVG props), so these re-tune per theme.
+    if (up) return deltaGood ? 'var(--color-green)' : 'var(--color-brand)';
+    return deltaGood ? 'var(--color-ink-dim)' : 'var(--color-green)';
   };
   const deltaClass = (up: boolean): string => {
     if (up) return deltaGood ? 'text-green' : 'text-brand';
@@ -418,6 +420,23 @@ function ChartTooltip({
   );
 }
 
+/** Recharts SVG props can't take CSS vars, so read the theme's chart tokens as
+ * resolved color strings — recomputed when the theme flips. */
+function useChartTokens(): { grid: string; axis: string; tick: string; empty: string } {
+  const { theme } = useTheme();
+  return useMemo(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name: string): string => cs.getPropertyValue(name).trim();
+    return {
+      grid: v('--color-chart-grid'),
+      axis: v('--color-chart-axis'),
+      tick: v('--color-chart-tick'),
+      empty: v('--color-chart-empty'),
+    };
+    // theme is the trigger: the vars change value when data-theme flips.
+  }, [theme]);
+}
+
 function MainChart({
   data,
   metric,
@@ -428,6 +447,7 @@ function MainChart({
   hidden: ReadonlySet<string>;
 }): JSX.Element {
   const colorFor = useProjectColor();
+  const chart = useChartTokens();
   const visible = data.series.filter((s) => !hidden.has(s.key));
   const rows = data.buckets.map((day, i) => {
     const row: Record<string, number | string> = { day: fmtDayShort(day) };
@@ -446,16 +466,16 @@ function MainChart({
       <div className="h-[240px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
           <XAxis
             dataKey="day"
-            tick={{ fontSize: 10, fill: '#7c8da3' }}
+            tick={{ fontSize: 10, fill: chart.tick }}
             tickLine={false}
-            axisLine={{ stroke: '#ffffff18' }}
+            axisLine={{ stroke: chart.axis }}
             minTickGap={24}
           />
           <YAxis
-            tick={{ fontSize: 10, fill: '#7c8da3' }}
+            tick={{ fontSize: 10, fill: chart.tick }}
             tickLine={false}
             axisLine={false}
             width={44}
@@ -627,6 +647,7 @@ function MatrixPanel({
   data: MatrixResp;
   transposed: boolean;
 }): JSX.Element {
+  const chart = useChartTokens();
   const isCost = data.metric === 'cost';
   const valueOf = (c: MatrixResp['cells'][number]): number => (isCost ? (c.cost ?? 0) : c.runs);
   const rowMembers = transposed ? data.cols : data.rows;
@@ -678,7 +699,7 @@ function MatrixPanel({
                   <td
                     key={c.key}
                     className={`h-7 rounded-[3px] text-center text-ink-2 ${isCost ? 'w-14' : 'w-9'}`}
-                    style={{ background: n > 0 ? heatShade(max > 0 ? n / max : 0) : '#ffffff06' }}
+                    style={{ background: n > 0 ? heatShade(max > 0 ? n / max : 0) : chart.empty }}
                     title={`${r.name} × ${c.name}: ${fmtCell(n)}${isCost ? '' : ' runs'}`}
                   >
                     {n > 0 ? fmtCell(n) : ''}
@@ -743,7 +764,7 @@ function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
               </span>
               <span className="w-16 text-right text-ink-dim">{fmtDurationMs(t.p95_ms)}</span>
             </div>
-            <Bar pct={max > 0 ? t.calls / max : 0} color="#6fb4f0" />
+            <Bar pct={max > 0 ? t.calls / max : 0} color="var(--color-blue)" />
           </button>
           {open === t.tool && (
             <div className="mt-1.5 mb-1 ml-4 flex flex-col gap-1 border-l border-line pl-3">

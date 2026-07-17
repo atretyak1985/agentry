@@ -5,11 +5,14 @@
 const W = 100;
 const H = 24;
 
-/** Redesign stroke/dot tones per tile. */
+/** Redesign stroke/dot tones per tile. Colors are theme tokens (applied via
+ * the SVG `style` prop, where `stroke`/`fill` resolve CSS vars) so the
+ * sparkline re-tunes for light/dark — the old near-white dim dot was invisible
+ * on a light ground. */
 const TONES = {
-  dim: { stroke: '#7c8da3', opacity: 0.7, dot: '#dce6f2' },
-  amber: { stroke: '#f5b84a', opacity: 0.55, dot: '#f5b84a' },
-  red: { stroke: '#f0716f', opacity: 0.6, dot: '#f0716f' },
+  dim: { stroke: 'var(--color-chart-tick)', opacity: 0.8, dot: 'var(--color-ink)' },
+  amber: { stroke: 'var(--color-amber)', opacity: 0.7, dot: 'var(--color-amber)' },
+  red: { stroke: 'var(--color-red)', opacity: 0.7, dot: 'var(--color-red)' },
 } as const;
 
 export function Sparkline({
@@ -42,8 +45,13 @@ export function Sparkline({
       className="mt-2.5 block h-6 w-full"
       aria-hidden="true"
     >
-      <polyline points={points} fill="none" stroke={stroke} strokeWidth="1.5" opacity={opacity} />
-      <circle cx={x(hi).toFixed(1)} cy={y(hiValue).toFixed(1)} r="2.5" fill={dot} />
+      <polyline
+        points={points}
+        strokeWidth="1.5"
+        opacity={opacity}
+        style={{ fill: 'none', stroke }}
+      />
+      <circle cx={x(hi).toFixed(1)} cy={y(hiValue).toFixed(1)} r="2.5" style={{ fill: dot }} />
     </svg>
   );
 }
