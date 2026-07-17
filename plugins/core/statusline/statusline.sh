@@ -19,6 +19,15 @@
 #
 #  1) HEADER
 #     — AGENTS_STATUSLINE — <Model> · <Style> · ▲<effort> 🧠 ⚡fast  “<session>”
+#       Title        : "AGENTS_STATUSLINE" literal by default. OPT-IN: with
+#                      SWARMERY_STATUSLINE_USER=1 it is replaced by the email of
+#                      the Claude subscription the session runs under —
+#                      .oauthAccount.emailAddress from CC's own local config:
+#                      $CLAUDE_CONFIG_DIR/.claude.json when the var is set
+#                      (multi-account setups switch accounts via that var; the
+#                      $HOME file is deliberately NOT used as a fallback then),
+#                      else $HOME/.claude.json. Pure local read: no network,
+#                      no credentials, no cache needed.
 #       Model        : JSON .model.display_name           (e.g. "Opus 4.8")
 #       Style        : JSON .output_style.name            (e.g. "Explanatory")
 #       ▲<effort>    : JSON .effort.level                 (high / medium / low)
@@ -58,7 +67,9 @@
 #                      NOT in the statusline JSON (CC only pipes five_hour/seven_day), so it
 #                      is fetched from CC's own endpoint GET /api/oauth/usage by the opt-in
 #                      helper fetch-fable-usage.sh (reads CC's OAuth token from the macOS
-#                      Keychain), cached 5m (SWARMERY_STATUSLINE_FABLE_TTL, default 300s)
+#                      Keychain item of THIS session's config dir — CLAUDE_CONFIG_DIR-aware,
+#                      so multi-subscription setups always see their own account), cached 5m
+#                      per account (SWARMERY_STATUSLINE_FABLE_TTL, default 300s)
 #                      + refreshed in the background like weather.
 #                      OPT-IN: shown only when  export SWARMERY_STATUSLINE_FABLE=1 .
 #                      Sourced from .limits[] where .scope.model.display_name=="Fable"
@@ -90,6 +101,10 @@
 #                           refreshed in a detached `&` job so the line never blocks.
 #
 #  KNOBS: export SWARMERY_STATUSLINE_LOC="Kyiv"   (weather city; "" => auto-by-IP)
+#         export SWARMERY_STATUSLINE_USER=1       (header title = active subscription's
+#                                                email from the session's .claude.json
+#                                                — CLAUDE_CONFIG_DIR-aware — instead
+#                                                of the AGENTS_STATUSLINE literal)
 #         export SWARMERY_STATUSLINE_FABLE=1      (show FB Fable-5 usage; opt-in, reads
 #                                                CC's OAuth token from the macOS Keychain)
 #         export SWARMERY_STATUSLINE_FABLE_TTL=300 (FB cache freshness window in seconds;
@@ -236,7 +251,12 @@ UWK_RESET="$(jqr '.rate_limits.seven_day.resets_at // empty')"
 #   Enable with:  export SWARMERY_STATUSLINE_FABLE=1
 FB_PCT=""; FB_RESET=""
 if [ "${SWARMERY_STATUSLINE_FABLE:-0}" = "1" ]; then
-  FB_CACHE="${TMPDIR:-/tmp}/agents-statusline-fable.txt"
+  # Cache is PER ACCOUNT: multi-subscription setups run sessions under different
+  # CLAUDE_CONFIG_DIRs, and one shared file would let accounts overwrite each other's
+  # numbers. Slug = the same sha256(configDir) prefix CC uses to namespace its own
+  # Keychain credential item (and that fetch-fable-usage.sh uses to pick the token).
+  FB_SLUG="$(printf '%s' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" | shasum -a 256 2>/dev/null | cut -c1-8)"
+  FB_CACHE="${TMPDIR:-/tmp}/agents-statusline-fable-${FB_SLUG:-default}.txt"
   FB_TTL="${SWARMERY_STATUSLINE_FABLE_TTL:-300}"   # cache freshness window in seconds (default 5 min)
   fb_fresh() { [ -f "$FB_CACHE" ] && [ "$(( $(date +%s) - $(stat -f %m "$FB_CACHE" 2>/dev/null || echo 0) ))" -lt "$FB_TTL" ]; }
   if ! fb_fresh; then
@@ -244,6 +264,32 @@ if [ "${SWARMERY_STATUSLINE_FABLE:-0}" = "1" ]; then
     [ -x "$FB_HELPER" ] && ( o="$("$FB_HELPER" 2>/dev/null)"; [ -n "$o" ] && printf '%s\n' "$o" > "$FB_CACHE.tmp" && mv "$FB_CACHE.tmp" "$FB_CACHE" ) >/dev/null 2>&1 &
   fi
   [ -f "$FB_CACHE" ] && IFS='|' read -r FB_PCT FB_RESET < "$FB_CACHE"
+fi
+
+# ----- header title: subscription account email (OPT-IN) -------------------
+# With SWARMERY_STATUSLINE_USER=1 the AGENTS_STATUSLINE literal in the header is
+# replaced by the email of the Claude subscription THIS session runs under.
+# Source is CC's own local config (.oauthAccount in .claude.json) — a plain
+# local file read on the render path: no network, no Keychain, no cache.
+#
+# Multi-subscription correctness: users running several accounts launch CC with
+# a different CLAUDE_CONFIG_DIR per account (e.g. ~/.claude-work), and CC then
+# keeps .claude.json INSIDE that dir. The statusline inherits the CC process
+# env, so the var always identifies the active session's account. When it is
+# set we read ONLY $CLAUDE_CONFIG_DIR/.claude.json — never $HOME/.claude.json,
+# which would silently show a DIFFERENT subscription. On any miss (logged out,
+# CI, no oauthAccount) the literal stays — wrong-account is worse than no name.
+HEADER_TITLE="AGENTS_STATUSLINE"
+if [ "${SWARMERY_STATUSLINE_USER:-0}" = "1" ]; then
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    CC_CFG="$CLAUDE_CONFIG_DIR/.claude.json"
+  else
+    CC_CFG="$HOME/.claude.json"
+  fi
+  if [ -f "$CC_CFG" ]; then
+    ACCOUNT_EMAIL="$(jq -r '.oauthAccount.emailAddress // .oauthAccount.displayName // empty' "$CC_CFG" 2>/dev/null)"
+    [ -n "$ACCOUNT_EMAIL" ] && HEADER_TITLE="$ACCOUNT_EMAIL"
+  fi
 fi
 
 # ----- session cost (free from stdin JSON) ---------------------------------
@@ -304,7 +350,7 @@ BADGES=""
 NAME_PART=""
 # shellcheck disable=SC1111  # intentional typographic quotes around the session name
 [ -n "$SESSION_NAME" ] && NAME_PART="  ${GREY}“${SESSION_NAME}”${C_RST}"
-printf '%b\n' "${GREY}—${C_RST} ${BLUE}${C_B}AGENTS_STATUSLINE${C_RST} ${GREY}—${C_RST} ${PURPLE}${MODEL_NAME}${C_RST}${STYLE:+ ${GREY}·${C_RST} ${TEAL}${STYLE}${C_RST}}${BADGES}${NAME_PART}"
+printf '%b\n' "${GREY}—${C_RST} ${BLUE}${C_B}${HEADER_TITLE}${C_RST} ${GREY}—${C_RST} ${PURPLE}${MODEL_NAME}${C_RST}${STYLE:+ ${GREY}·${C_RST} ${TEAL}${STYLE}${C_RST}}${BADGES}${NAME_PART}"
 
 # LOC line only when weather is available
 if [ -n "$WX_LOC" ]; then
@@ -325,7 +371,9 @@ if [ -n "$U5_PCT" ] || [ -n "$UWK_PCT" ]; then
   fb_part=""
   if [ -n "$FB_PCT" ]; then
     cfb="$(pct_color "$FB_PCT")"
-    fb_part="  ${sep}  ${GREY}FB${C_RST} ${cfb}${C_B}${FB_PCT}%${C_RST} ${GREY}⟳$(fmt_reset_any "$FB_RESET")${C_RST}"
+    fb_reset_part=""
+    [ -n "$FB_RESET" ] && fb_reset_part=" ${GREY}⟳$(fmt_reset_any "$FB_RESET")${C_RST}"
+    fb_part="  ${sep}  ${GREY}FB${C_RST} ${cfb}${C_B}${FB_PCT}%${C_RST}${fb_reset_part}"
   fi
   printf '%b\n' "${YELLOW}${C_B}USAGE:${C_RST} ${GREY}5H${C_RST} ${c5}${C_B}${U5_PCT:-?}%${C_RST} ${GREY}⟳$(fmt_reset "$U5_RESET")${C_RST}  ${sep}  ${GREY}WK${C_RST} ${c7}${C_B}${UWK_PCT:-?}%${C_RST} ${GREY}⟳$(fmt_reset "$UWK_RESET")${C_RST}${fb_part}"
 fi

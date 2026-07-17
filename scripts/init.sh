@@ -124,7 +124,7 @@ if [ -d "$SL_SRC" ] && [ ! -f .claude/statusline/statusline.sh ]; then
   mkdir -p .claude/statusline
   cp "$SL_SRC"/statusline.sh "$SL_SRC"/fetch-fable-usage.sh .claude/statusline/ 2>/dev/null || true
   chmod +x .claude/statusline/*.sh 2>/dev/null || true
-  echo "✓ .claude/statusline/ (opt-in Fable usage: export SWARMERY_STATUSLINE_FABLE=1)"
+  echo "✓ .claude/statusline/ (opt-in Fable usage: export SWARMERY_STATUSLINE_FABLE=1; header = account name: export SWARMERY_STATUSLINE_USER=1)"
 fi
 
 # ── workspace namespace ────────────────────────────────────────────

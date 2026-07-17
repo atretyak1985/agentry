@@ -12,8 +12,10 @@
 #
 # OPT-IN + CREDENTIAL ISOLATION
 #   This is the ONLY file in the statusline that touches a credential. It reads Claude
-#   Code's own OAuth access token from the macOS Keychain (item "Claude Code-credentials")
-#   — your token, your machine. The statusline enables it only when SWARMERY_STATUSLINE_FABLE=1
+#   Code's own OAuth access token from the macOS Keychain — your token, your machine —
+#   from the per-config-dir item CC itself writes at login ("Claude Code-credentials-
+#   <sha256(configDir)[0:8]>", see step 1 below), so multi-subscription setups always
+#   get THIS session's account. The statusline enables it only when SWARMERY_STATUSLINE_FABLE=1
 #   and never blocks on it (it reads a cached file; this helper runs detached in the
 #   background, like the weather refresh).
 #
@@ -31,7 +33,6 @@
 
 set -uo pipefail
 
-KEYCHAIN_SERVICE="${SWARMERY_FABLE_KEYCHAIN_SERVICE:-Claude Code-credentials}"
 USAGE_URL="${SWARMERY_FABLE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 OAUTH_BETA="${SWARMERY_FABLE_OAUTH_BETA:-oauth-2025-04-20}"
 TIMEOUT="${SWARMERY_FABLE_TIMEOUT:-6}"
@@ -43,32 +44,58 @@ fail() { printf '\n'; exit 0; }   # emit empty line, never error the caller
 command -v jq   >/dev/null 2>&1 || fail
 command -v curl >/dev/null 2>&1 || fail
 
-# ---- 1) read CC's OAuth access token from the Keychain (stays in this process) -------
-CRED_JSON="$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null)" || fail
-[ -n "$CRED_JSON" ] || fail
-
-# Try the known credential shapes; never print the token.
-TOKEN="$(printf '%s' "$CRED_JSON" | jq -r '
-  .claudeAiOauth.accessToken
-  // .claudeAiOauth.access_token
-  // .accessToken
-  // .access_token
-  // .token
-  // empty
-' 2>/dev/null)"
-# If the blob is not JSON, some installs store the raw token string directly.
-if [ -z "$TOKEN" ]; then
-  case "$CRED_JSON" in
-    sk-ant-oat*|sk-ant-*) TOKEN="$CRED_JSON" ;;
-  esac
+# ---- 1+2) pick the ACCOUNT'S Keychain credential and call the usage endpoint --------
+# MULTI-SUBSCRIPTION SAFE: CC namespaces its Keychain credential per config dir —
+# "Claude Code-credentials-<first 8 hex of sha256(configDir)>" (the CC 2.1.211 binary
+# derives `${service}-${sha256(dir).substring(0,8)}`). Observed live behavior:
+#   - CLAUDE_CONFIG_DIR set (multi-account setups) → CC refreshes the SUFFIXED item.
+#   - default ~/.claude (var unset)                → CC refreshes the PLAIN item;
+#     a suffixed twin may exist as a STALE leftover from a past explicit-var session.
+# So the candidate order is: custom dir → suffixed item ONLY (the plain item may
+# belong to a DIFFERENT subscription — never fall back across accounts); default
+# dir → plain first, suffixed twin second (same account either way). Because a
+# candidate can hold an expired token, each one is validated END-TO-END: extract
+# token → call the endpoint; on auth failure try the next candidate, never print
+# the token. All candidates exhausted → empty output, no FB segment.
+CFG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CFG_SUFFIX="$(printf '%s' "$CFG_DIR" | shasum -a 256 2>/dev/null | cut -c1-8)"
+if [ -n "${SWARMERY_FABLE_KEYCHAIN_SERVICE:-}" ]; then
+  SERVICES=("$SWARMERY_FABLE_KEYCHAIN_SERVICE")
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ "$CLAUDE_CONFIG_DIR" != "$HOME/.claude" ]; then
+  SERVICES=("Claude Code-credentials-${CFG_SUFFIX}")
+else
+  SERVICES=("Claude Code-credentials" "Claude Code-credentials-${CFG_SUFFIX}")
 fi
-[ -n "$TOKEN" ] || fail
 
-# ---- 2) call the usage endpoint the same way CC does --------------------------------
-RESP="$(curl -fsS --max-time "$TIMEOUT" "$USAGE_URL" \
-          -H "Authorization: Bearer $TOKEN" \
-          -H "Content-Type: application/json" \
-          -H "anthropic-beta: $OAUTH_BETA" 2>/dev/null)" || fail
+RESP=""
+for svc in "${SERVICES[@]}"; do
+  CRED_JSON="$(security find-generic-password -s "$svc" -w 2>/dev/null)"
+  [ -n "$CRED_JSON" ] || continue
+
+  # Try the known credential shapes; never print the token.
+  TOKEN="$(printf '%s' "$CRED_JSON" | jq -r '
+    .claudeAiOauth.accessToken
+    // .claudeAiOauth.access_token
+    // .accessToken
+    // .access_token
+    // .token
+    // empty
+  ' 2>/dev/null)"
+  # If the blob is not JSON, some installs store the raw token string directly.
+  if [ -z "$TOKEN" ]; then
+    case "$CRED_JSON" in
+      sk-ant-oat*|sk-ant-*) TOKEN="$CRED_JSON" ;;
+    esac
+  fi
+  [ -n "$TOKEN" ] || continue
+
+  RESP="$(curl -fsS --max-time "$TIMEOUT" "$USAGE_URL" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "anthropic-beta: $OAUTH_BETA" 2>/dev/null)"
+  [ -n "$RESP" ] && break
+  RESP=""
+done
 [ -n "$RESP" ] || fail
 
 if [ "$DEBUG" = "1" ]; then
