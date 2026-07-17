@@ -29,7 +29,8 @@ terminal. Script: `.claude/statusline/statusline.sh` in consumer projects
 
 | Line | Field | Meaning | Source |
 |------|-------|---------|--------|
-| **1 Header** | `Model · Style` | Active model + output style | JSON `.model.display_name`, `.output_style.name` |
+| **1 Header** | `AGENTS_STATUSLINE` | Header title. **Opt-in**: with `SWARMERY_STATUSLINE_USER=1` it's replaced by the email of the subscription this session runs under | `.oauthAccount.emailAddress` from the session's `.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` if set, else `~/.claude.json`) — no network |
+| | `Model · Style` | Active model + output style | JSON `.model.display_name`, `.output_style.name` |
 | **2 LOC** | `City` | Weather location (default from the script) | `SWARMERY_STATUSLINE_LOC` env → wttr.in |
 | | `HH:MM` | Local clock | recomputed each render |
 | | `+28°C Sunny` | Weather | wttr.in, cached 10m, background refresh |
@@ -38,7 +39,7 @@ terminal. Script: `.claude/statusline/statusline.sh` in consumer projects
 | **4 CONTEXT** | `bar + %` | Context window fill | JSON `.context_window.used_percentage` (fallback: transcript). Green <50 · yellow ≥50 · red ≥80 |
 | **5 USAGE** | `5H <pct>% ⟳<reset>` | **Official** 5-hour plan limit used + reset countdown | JSON `.rate_limits.five_hour` (same as `/usage`) |
 | | `WK <pct>% ⟳<reset>` | Weekly plan limit used + reset | JSON `.rate_limits.seven_day` |
-| | `FB <pct>% ⟳<reset>` | Fable-5 weekly window (the "Fable" bar on claude.ai settings→usage). **Opt-in, hidden by default** | `fetch-fable-usage.sh` → `GET /api/oauth/usage` (OAuth token from macOS Keychain), cached, background refresh |
+| | `FB <pct>% ⟳<reset>` | Fable-5 weekly window (the "Fable" bar on claude.ai settings→usage). **Opt-in, hidden by default** | `fetch-fable-usage.sh` → `GET /api/oauth/usage` (OAuth token from the macOS Keychain item of the session's config dir — `CLAUDE_CONFIG_DIR`-aware, multi-subscription-safe), cached per account, background refresh |
 | **6 SESSION** | `$cost` | This session's spend | JSON `.cost.total_cost_usd` |
 | | `+N/-N` | Lines added / removed | JSON `.cost.total_lines_added/removed` |
 | | `⏱ <dur>` | Session duration | JSON `.cost.total_duration_ms` |
@@ -48,9 +49,19 @@ terminal. Script: `.claude/statusline/statusline.sh` in consumer projects
 
 3. **Mention the knobs:**
    - Change weather city: `export SWARMERY_STATUSLINE_LOC="Kyiv"` (or `""` for auto-by-IP).
+   - Header title = active subscription's email: opt-in with `SWARMERY_STATUSLINE_USER=1`.
+     Reads `.oauthAccount.emailAddress` from the session's `.claude.json` —
+     `$CLAUDE_CONFIG_DIR/.claude.json` when that var is set (how multi-account users
+     switch subscriptions per project), else `~/.claude.json`. When `CLAUDE_CONFIG_DIR`
+     is set, the `$HOME` file is deliberately never consulted, so the header can't show
+     another subscription. Falls back to the `AGENTS_STATUSLINE` literal when logged out
+     or the file is missing.
    - Fable-5 usage segment (`FB`): opt-in with `SWARMERY_STATUSLINE_FABLE=1` (reads the local
      Claude Code OAuth token from the macOS Keychain; fails silent — the segment simply
-     doesn't render on any error). Cache TTL: `SWARMERY_STATUSLINE_FABLE_TTL` seconds
+     doesn't render on any error). Multi-subscription-safe: the token comes from the
+     Keychain item CC writes per config dir (`Claude Code-credentials-<sha256(configDir)[0:8]>`),
+     and the cache file is namespaced the same way, so each `CLAUDE_CONFIG_DIR` account sees
+     only its own numbers. Cache TTL: `SWARMERY_STATUSLINE_FABLE_TTL` seconds
      (default 300). The helper `fetch-fable-usage.sh` has its own `SWARMERY_FABLE_*`
      overrides (keychain service, endpoint URL, timeout) — see its header comment.
    - Reliability tiers: instant-from-JSON (lines 1, 5, 6) · local compute (3, 4, 8, git) · external+cache (weather + opt-in Fable). Nothing blocks the render.

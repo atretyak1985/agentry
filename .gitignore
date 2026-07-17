@@ -7,6 +7,9 @@ swarmery-workspace/
 agents-index.json
 skills-index.json
 
+# Local control-plane state (session index), written per machine
+.swarmery/
+
 # Temporary / scratch files
 temp/
 
