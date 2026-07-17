@@ -1241,14 +1241,14 @@ export const mockApi = {
     return mockMatrix(rows, metric, range);
   },
 
-  async toolStats(range: AnalyticsRangeArg = {}): Promise<ToolsResp> {
+  async toolStats(range: AnalyticsRangeArg = {}, agent?: string): Promise<ToolsResp> {
     await delay(120);
-    return mockToolStats(range);
+    return mockToolStats(range, agent);
   },
 
-  async skillStats(range: AnalyticsRangeArg = {}): Promise<SkillsResp> {
+  async skillStats(range: AnalyticsRangeArg = {}, agent?: string): Promise<SkillsResp> {
     await delay(120);
-    return mockSkillStats(range);
+    return mockSkillStats(range, agent);
   },
 
   async durations(range: AnalyticsRangeArg = {}): Promise<DurationsResp> {

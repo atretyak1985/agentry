@@ -133,4 +133,21 @@ func TestStatsSkills(t *testing.T) {
 	if !rolled.Approx {
 		t.Error("approx = false over a range overlapping a rolled-up day, want true")
 	}
+
+	// agent option list + ?agent= filter.
+	if len(out.Agents) == 0 || out.Agents[0] != "main" {
+		t.Errorf("agents[0] = %v, want main first", out.Agents)
+	}
+	var dbg skillsDTO
+	getJSON(t, srv.URL+"/api/stats/skills?agent=debugger", &dbg)
+	bySkillDbg := map[string]skillStatDTO{}
+	for _, s := range dbg.Skills {
+		bySkillDbg[s.Skill] = s
+	}
+	if s := bySkillDbg["brainstorming"]; s.Calls != 1 || s.Errors != 1 {
+		t.Errorf("agent=debugger brainstorming = %+v, want 1 call 1 error", s)
+	}
+	if _, ok := bySkillDbg["systematic-debugging"]; ok {
+		t.Error("agent=debugger should exclude systematic-debugging (main-attributed)")
+	}
 }

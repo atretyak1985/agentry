@@ -465,6 +465,8 @@ export interface ToolsResp {
   from: string;
   to: string;
   tools: ToolStatRow[];
+  /** All attributed agents in range (not narrowed by the agent filter) — the dropdown option set. */
+  agents: string[];
   /** True when the range overlaps pruned (rolled-up) days — counts undercount there. */
   approx: boolean;
 }
@@ -484,6 +486,8 @@ export interface SkillsResp {
   from: string;
   to: string;
   skills: SkillStatRow[];
+  /** All attributed agents in range (not narrowed by the agent filter) — the dropdown option set. */
+  agents: string[];
   /** True when the range overlaps pruned (rolled-up) days — counts undercount there. */
   approx: boolean;
 }

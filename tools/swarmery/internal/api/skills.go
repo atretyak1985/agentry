@@ -33,19 +33,24 @@ type skillsDTO struct {
 	From   string         `json:"from"`
 	To     string         `json:"to"`
 	Skills []skillStatDTO `json:"skills"`
+	// Agents lists every attributed agent in the range (NOT narrowed by the
+	// ?agent= filter) — the option set for the panel's agent dropdown.
+	Agents []string `json:"agents"`
 	// Approx: true when the range overlaps pruned (rolled-up) days — rollups
 	// carry no per-skill events, so the counts silently undercount there.
 	Approx bool `json:"approx"`
 }
 
-// GET /api/stats/skills?from&to&project — project is the optional global scope
-// (slug or id, resolved by scopeFilter).
+// GET /api/stats/skills?from&to&project&agent — project is the optional global
+// scope (slug or id). agent optionally narrows every row + column to a single
+// attributed agent ("main" = orchestrator).
 func (h *Handler) statsSkills(w http.ResponseWriter, r *http.Request) {
 	dr, err := parseRange(r)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	agentFilter := r.URL.Query().Get("agent")
 	pf, pargs := scopeFilter(r)
 	rows, err := h.DB.Query(`
 		SELECT json_extract(e.payload, '$.input.skill'), COALESCE(e.status, ''), e.duration_ms,
@@ -70,6 +75,7 @@ func (h *Handler) statsSkills(w http.ResponseWriter, r *http.Request) {
 		agents                map[string]*toolAgentDTO
 	}
 	acc := map[string]*agg{}
+	seenAgents := map[string]bool{}
 	for rows.Next() {
 		var skill, status, parentType string
 		var durMs sql.NullInt64
@@ -77,6 +83,14 @@ func (h *Handler) statsSkills(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&skill, &status, &durMs, &parentType, &subType); err != nil {
 			writeErr(w, err)
 			return
+		}
+		agent := "main"
+		if parentType == "subagent_start" && subType.Valid && subType.String != "" {
+			agent = normAgentType(subType.String)
+		}
+		seenAgents[agent] = true
+		if agentFilter != "" && agent != agentFilter {
+			continue
 		}
 		a := acc[skill]
 		if a == nil {
@@ -93,10 +107,6 @@ func (h *Handler) statsSkills(w http.ResponseWriter, r *http.Request) {
 		if durMs.Valid {
 			a.durations = append(a.durations, durMs.Int64)
 		}
-		agent := "main"
-		if parentType == "subagent_start" && subType.Valid && subType.String != "" {
-			agent = normAgentType(subType.String)
-		}
 		ag := a.agents[agent]
 		if ag == nil {
 			ag = &toolAgentDTO{Agent: agent}
@@ -112,7 +122,12 @@ func (h *Handler) statsSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := skillsDTO{From: dr.days[0], To: dr.days[len(dr.days)-1], Skills: make([]skillStatDTO, 0, len(acc))}
+	out := skillsDTO{
+		From:   dr.days[0],
+		To:     dr.days[len(dr.days)-1],
+		Skills: make([]skillStatDTO, 0, len(acc)),
+		Agents: sortedAgents(seenAgents),
+	}
 	for skill, a := range acc {
 		ss := skillStatDTO{
 			Skill: skill, Calls: a.calls, Errors: a.errors, Denied: a.denied,

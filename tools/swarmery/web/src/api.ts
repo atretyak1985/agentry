@@ -294,16 +294,18 @@ export function fetchMatrix(
   return get(`/api/stats/matrix?${rangeQuery(range, { rows, cols: 'project', metric })}`);
 }
 
-/** Per-tool call/error/denied counts + duration stats (analytics uplift). */
-export function fetchToolStats(range: AnalyticsRange = {}): Promise<ToolsResp> {
-  if (MOCK) return mockApi.toolStats(range);
-  return get(`/api/stats/tools?${rangeQuery(range, {})}`);
+/** Per-tool call/error/denied counts + duration stats (analytics uplift).
+ * `agent` optionally narrows every row + column to one attributed agent. */
+export function fetchToolStats(range: AnalyticsRange = {}, agent?: string): Promise<ToolsResp> {
+  if (MOCK) return mockApi.toolStats(range, agent);
+  return get(`/api/stats/tools?${rangeQuery(range, agent ? { agent } : {})}`);
 }
 
-/** Per-skill invocation/error/denied counts + duration stats (analytics uplift). */
-export function fetchSkillStats(range: AnalyticsRange = {}): Promise<SkillsResp> {
-  if (MOCK) return mockApi.skillStats(range);
-  return get(`/api/stats/skills?${rangeQuery(range, {})}`);
+/** Per-skill invocation/error/denied counts + duration stats (analytics uplift).
+ * `agent` optionally narrows every row + column to one attributed agent. */
+export function fetchSkillStats(range: AnalyticsRange = {}, agent?: string): Promise<SkillsResp> {
+  if (MOCK) return mockApi.skillStats(range, agent);
+  return get(`/api/stats/skills?${rangeQuery(range, agent ? { agent } : {})}`);
 }
 
 /** Session-duration + approval-wait aggregates (analytics uplift). */

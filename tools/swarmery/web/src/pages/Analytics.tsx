@@ -731,17 +731,21 @@ interface UsageRow {
 }
 
 /** Tools/Skills usage table with per-agent expandable rows. `label` names the
- * first column ("tool" / "skill"); `noun` is used in the empty message. */
+ * first column ("tool" / "skill"); `noun` is used in the empty message.
+ * `showAgents` hides the per-agent expander when an agent filter is already
+ * applied (the split would be a single, redundant row). */
 function UsagePanel({
   rows,
   approx,
   label,
   noun,
+  showAgents,
 }: {
   rows: UsageRow[];
   approx: boolean;
   label: string;
   noun: string;
+  showAgents: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState<string | null>(null);
   const max = rows.reduce((m, r) => Math.max(m, r.calls), 0);
@@ -765,53 +769,96 @@ function UsagePanel({
         <span className="w-16 text-right">avg</span>
         <span className="w-16 text-right">p95</span>
       </div>
-      {rows.map((r) => (
-        <div key={r.name}>
-          <button
-            type="button"
-            onClick={() => setOpen((o) => (o === r.name ? null : r.name))}
-            className="block w-full text-left"
-            aria-expanded={open === r.name}
-          >
-            <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
-              <span className="min-w-0 flex-1 truncate text-ink-3">
-                {open === r.name ? '▾ ' : '▸ '}
-                {r.name}
-              </span>
-              <span className="w-16 text-right text-ink">{r.calls}</span>
-              <span className={`w-14 text-right ${r.errors > 0 ? 'text-red' : 'text-ink-faint'}`}>
-                {r.errors}
-              </span>
-              <span className={`w-14 text-right ${r.denied > 0 ? 'text-brand' : 'text-ink-faint'}`}>
-                {r.denied}
-              </span>
-              <span className="w-16 text-right text-ink-dim">
-                {fmtDurationMs(r.avg_ms !== null ? Math.round(r.avg_ms) : null)}
-              </span>
-              <span className="w-16 text-right text-ink-dim">{fmtDurationMs(r.p95_ms)}</span>
-            </div>
-            <Bar pct={max > 0 ? r.calls / max : 0} color="var(--color-blue)" />
-          </button>
-          {open === r.name && (
-            <div className="mt-1.5 mb-1 ml-4 flex flex-col gap-1 border-l border-line pl-3">
-              {r.agents.map((a) => (
-                <div
-                  key={a.agent}
-                  className="flex items-baseline gap-2 font-mono text-[10.5px] text-ink-dim"
-                >
-                  <span className="min-w-0 flex-1 truncate">{a.agent}</span>
-                  <span className="w-16 text-right">{a.calls} calls</span>
-                  <span className={`w-14 text-right ${a.errors > 0 ? 'text-red' : ''}`}>
-                    {a.errors} err
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+      {rows.map((r) => {
+        const cells = (
+          <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
+            <span className="min-w-0 flex-1 truncate text-ink-3">
+              {showAgents ? (open === r.name ? '▾ ' : '▸ ') : ''}
+              {r.name}
+            </span>
+            <span className="w-16 text-right text-ink">{r.calls}</span>
+            <span className={`w-14 text-right ${r.errors > 0 ? 'text-red' : 'text-ink-faint'}`}>
+              {r.errors}
+            </span>
+            <span className={`w-14 text-right ${r.denied > 0 ? 'text-brand' : 'text-ink-faint'}`}>
+              {r.denied}
+            </span>
+            <span className="w-16 text-right text-ink-dim">
+              {fmtDurationMs(r.avg_ms !== null ? Math.round(r.avg_ms) : null)}
+            </span>
+            <span className="w-16 text-right text-ink-dim">{fmtDurationMs(r.p95_ms)}</span>
+          </div>
+        );
+        return (
+          <div key={r.name}>
+            {showAgents ? (
+              <button
+                type="button"
+                onClick={() => setOpen((o) => (o === r.name ? null : r.name))}
+                className="block w-full text-left"
+                aria-expanded={open === r.name}
+              >
+                {cells}
+                <Bar pct={max > 0 ? r.calls / max : 0} color="var(--color-blue)" />
+              </button>
+            ) : (
+              <div>
+                {cells}
+                <Bar pct={max > 0 ? r.calls / max : 0} color="var(--color-blue)" />
+              </div>
+            )}
+            {showAgents && open === r.name && (
+              <div className="mt-1.5 mb-1 ml-4 flex flex-col gap-1 border-l border-line pl-3">
+                {r.agents.map((a) => (
+                  <div
+                    key={a.agent}
+                    className="flex items-baseline gap-2 font-mono text-[10.5px] text-ink-dim"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{a.agent}</span>
+                    <span className="w-16 text-right">{a.calls} calls</span>
+                    <span className={`w-14 text-right ${a.errors > 0 ? 'text-red' : ''}`}>
+                      {a.errors} err
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
       {approx && <ApproxHint />}
     </div>
+  );
+}
+
+/** Agent-scope dropdown for the Tools/Skills panels — "all agents" clears the
+ * filter. Options come from the panel response's full agent list. */
+function AgentFilter({
+  agents,
+  value,
+  onChange,
+}: {
+  agents: string[];
+  value: string | null;
+  onChange: (agent: string | null) => void;
+}): JSX.Element {
+  return (
+    <label className="flex items-center gap-2 font-mono text-[10.5px] text-ink-dim">
+      <span className="uppercase tracking-[0.1em] text-ink-faint">agent</span>
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
+        aria-label="filter usage by agent"
+        className="max-w-[180px] rounded-[9px] border border-line-strong bg-field px-2.5 py-[5px] font-mono text-[11px] text-ink outline-none focus:border-ink-dim"
+      >
+        <option value="">all agents</option>
+        {agents.map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -841,6 +888,7 @@ export function Analytics(): JSX.Element {
   const [tools, setTools] = useState<ToolsResp | null>(null);
   const [skills, setSkills] = useState<SkillsResp | null>(null);
   const [usageTab, setUsageTab] = useState<'tools' | 'skills'>('tools');
+  const [usageAgent, setUsageAgent] = useState<string | null>(null);
   const [durations, setDurations] = useState<DurationsResp | null>(null);
   // cost is agent-only (skills own no turns); force runs when viewing skills.
   const effMatrixMetric: 'runs' | 'cost' = matrixRows === 'skill' ? 'runs' : matrixMetric;
@@ -886,13 +934,14 @@ export function Analytics(): JSX.Element {
 
   useEffect(() => {
     const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
-    fetchToolStats(range)
+    const agent = usageAgent ?? undefined;
+    fetchToolStats(range, agent)
       .then(setTools)
       .catch(() => setTools(null));
-    fetchSkillStats(range)
+    fetchSkillStats(range, agent)
       .then(setSkills)
       .catch(() => setSkills(null));
-  }, [from, to, scope]);
+  }, [from, to, scope, usageAgent]);
 
   useEffect(() => {
     const range = { from, to, ...(scope !== null ? { project: scope } : {}) };
@@ -1071,7 +1120,7 @@ export function Analytics(): JSX.Element {
       </div>
 
       <section className="mt-6">
-        <div className="mb-2.5 flex items-center gap-3">
+        <div className="mb-2.5 flex flex-wrap items-center gap-3">
           <h2 className="font-mono text-[11px] font-medium tracking-[0.16em] text-ink-dim uppercase">
             {usageTab === 'tools' ? 'Tools' : 'Skills'}
           </h2>
@@ -1083,13 +1132,26 @@ export function Analytics(): JSX.Element {
             value={usageTab}
             onChange={setUsageTab}
           />
+          <div className="ml-auto">
+            <AgentFilter
+              agents={(usageTab === 'tools' ? tools?.agents : skills?.agents) ?? []}
+              value={usageAgent}
+              onChange={setUsageAgent}
+            />
+          </div>
         </div>
         <div className="rounded-[14px] border border-line px-3.5 py-3.5">
           {usageTab === 'tools' ? (
             tools === null ? (
               <Loading label="tools…" />
             ) : (
-              <UsagePanel rows={toolRows(tools)} approx={tools.approx} label="tool" noun="tool calls" />
+              <UsagePanel
+                rows={toolRows(tools)}
+                approx={tools.approx}
+                label="tool"
+                noun="tool calls"
+                showAgents={usageAgent === null}
+              />
             )
           ) : skills === null ? (
             <Loading label="skills…" />
@@ -1099,6 +1161,7 @@ export function Analytics(): JSX.Element {
               approx={skills.approx}
               label="skill"
               noun="skill invocations"
+              showAgents={usageAgent === null}
             />
           )}
         </div>

@@ -198,57 +198,70 @@ export function mockMatrix(
 
 const TOOLS = ['Bash', 'Read', 'Edit', 'Grep', 'Write', 'Agent', 'Skill', 'WebFetch'];
 
-export function mockToolStats(range: Range): ToolsResp {
+const USAGE_AGENTS = ['main', ...AGENTS.slice(0, 3)];
+
+/** Narrow a row to one agent's split (calls/errors from the split; denied
+ * unknown per-agent so 0), mirroring the backend ?agent= behaviour. */
+function narrowToAgent<T extends { calls: number; errors: number; denied: number; agents: { agent: string; calls: number; errors: number }[] }>(
+  row: T,
+  agent: string,
+): T | null {
+  const split = row.agents.find((a) => a.agent === agent);
+  if (split === undefined) return null;
+  return { ...row, calls: split.calls, errors: split.errors, denied: 0, agents: [split] };
+}
+
+export function mockToolStats(range: Range, agent?: string): ToolsResp {
   const days = resolveDays(range);
-  const tools = TOOLS.map((tool) => {
+  let tools = TOOLS.map((tool) => {
     const calls = days.reduce((a, d) => a + Math.round(rand(`${tool}|${d}|c`) * 40), 0);
     const errors = Math.round(calls * rand(`${tool}|err`) * 0.06);
     const denied = tool === 'Bash' ? Math.round(calls * 0.01) : 0;
     const avg = 120 + rand(`${tool}|avg`) * 3000;
-    const agents = ['main', ...AGENTS.slice(0, 3)].map((agent, i) => ({
-      agent,
+    const agents = USAGE_AGENTS.map((a, i) => ({
+      agent: a,
       calls: Math.max(1, Math.round(calls * (i === 0 ? 0.6 : 0.13))),
       errors: i === 1 ? errors : 0,
     }));
-    return {
-      tool,
-      calls,
-      errors,
-      denied,
-      avg_ms: Math.round(avg),
-      p95_ms: Math.round(avg * 3.2),
-      agents,
-    };
-  })
-    .filter((t) => t.calls > 0)
-    .sort((a, b) => b.calls - a.calls);
-  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools, approx: false };
+    return { tool, calls, errors, denied, avg_ms: Math.round(avg), p95_ms: Math.round(avg * 3.2), agents };
+  }).filter((t) => t.calls > 0);
+  if (agent !== undefined) {
+    tools = tools.map((t) => narrowToAgent(t, agent)).filter((t): t is (typeof tools)[number] => t !== null);
+  }
+  tools.sort((a, b) => b.calls - a.calls);
+  return {
+    from: days[0] ?? isoDay(),
+    to: days[days.length - 1] ?? isoDay(),
+    tools,
+    agents: USAGE_AGENTS,
+    approx: false,
+  };
 }
 
-export function mockSkillStats(range: Range): SkillsResp {
+export function mockSkillStats(range: Range, agent?: string): SkillsResp {
   const days = resolveDays(range);
-  const skills = SKILLS.map((skill) => {
+  let skills = SKILLS.map((skill) => {
     const calls = days.reduce((a, d) => a + Math.round(rand(`${skill}|${d}|c`) * 8), 0);
     const errors = Math.round(calls * rand(`${skill}|err`) * 0.05);
     const avg = 800 + rand(`${skill}|avg`) * 9000;
-    const agents = ['main', ...AGENTS.slice(0, 3)].map((agent, i) => ({
-      agent,
+    const agents = USAGE_AGENTS.map((a, i) => ({
+      agent: a,
       calls: Math.max(1, Math.round(calls * (i === 0 ? 0.55 : 0.15))),
       errors: i === 1 ? errors : 0,
     }));
-    return {
-      skill,
-      calls,
-      errors,
-      denied: 0,
-      avg_ms: Math.round(avg),
-      p95_ms: Math.round(avg * 2.6),
-      agents,
-    };
-  })
-    .filter((s) => s.calls > 0)
-    .sort((a, b) => b.calls - a.calls);
-  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), skills, approx: false };
+    return { skill, calls, errors, denied: 0, avg_ms: Math.round(avg), p95_ms: Math.round(avg * 2.6), agents };
+  }).filter((s) => s.calls > 0);
+  if (agent !== undefined) {
+    skills = skills.map((s) => narrowToAgent(s, agent)).filter((s): s is (typeof skills)[number] => s !== null);
+  }
+  skills.sort((a, b) => b.calls - a.calls);
+  return {
+    from: days[0] ?? isoDay(),
+    to: days[days.length - 1] ?? isoDay(),
+    skills,
+    agents: USAGE_AGENTS,
+    approx: false,
+  };
 }
 
 export function mockErrorGroups(range: Range): ErrorsResp {

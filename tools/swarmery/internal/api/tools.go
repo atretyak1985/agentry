@@ -28,6 +28,23 @@ type toolAgentDTO struct {
 	Errors int64  `json:"errors"`
 }
 
+// sortedAgents returns the attributed-agent set as a stable list — "main"
+// (the orchestrator) first, then the rest alphabetically. Shared by the tools
+// and skills panels for their agent-filter dropdown.
+func sortedAgents(seen map[string]bool) []string {
+	out := make([]string, 0, len(seen))
+	for a := range seen {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i] == "main") != (out[j] == "main") {
+			return out[i] == "main"
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
 type toolStatDTO struct {
 	Tool   string         `json:"tool"`
 	Calls  int64          `json:"calls"`
@@ -42,20 +59,26 @@ type toolsDTO struct {
 	From  string        `json:"from"`
 	To    string        `json:"to"`
 	Tools []toolStatDTO `json:"tools"`
+	// Agents lists every attributed agent seen in the range (NOT narrowed by
+	// the ?agent= filter) — the option set for the panel's agent dropdown.
+	Agents []string `json:"agents"`
 	// Approx is true when the range overlaps pruned (rolled-up) days — daily
 	// rollups carry no per-tool events, so the counts silently undercount
 	// there. Same honesty rule as the timeseries `approx` badge.
 	Approx bool `json:"approx"`
 }
 
-// GET /api/stats/tools?from&to&project — project is the optional global scope
-// (slug or id, resolved by scopeFilter).
+// GET /api/stats/tools?from&to&project&agent — project is the optional global
+// scope (slug or id, resolved by scopeFilter). agent optionally narrows every
+// row + column to a single attributed agent ("main" = orchestrator), so the
+// whole table reflects that agent's tool usage.
 func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 	dr, err := parseRange(r)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	agentFilter := r.URL.Query().Get("agent")
 	pf, pargs := scopeFilter(r)
 	rows, err := h.DB.Query(`
 		SELECT e.tool_name, COALESCE(e.status, ''), e.duration_ms,
@@ -80,6 +103,7 @@ func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 		agents                map[string]*toolAgentDTO
 	}
 	acc := map[string]*agg{}
+	seenAgents := map[string]bool{}
 	for rows.Next() {
 		var tool, status, parentType string
 		var durMs sql.NullInt64
@@ -87,6 +111,16 @@ func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&tool, &status, &durMs, &parentType, &subType); err != nil {
 			writeErr(w, err)
 			return
+		}
+		agent := "main"
+		if parentType == "subagent_start" && subType.Valid && subType.String != "" {
+			agent = normAgentType(subType.String)
+		}
+		// The dropdown option set is the FULL agent list, so record it before
+		// the ?agent= filter narrows the rows.
+		seenAgents[agent] = true
+		if agentFilter != "" && agent != agentFilter {
+			continue
 		}
 		a := acc[tool]
 		if a == nil {
@@ -103,10 +137,6 @@ func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 		if durMs.Valid {
 			a.durations = append(a.durations, durMs.Int64)
 		}
-		agent := "main"
-		if parentType == "subagent_start" && subType.Valid && subType.String != "" {
-			agent = normAgentType(subType.String)
-		}
 		ag := a.agents[agent]
 		if ag == nil {
 			ag = &toolAgentDTO{Agent: agent}
@@ -122,7 +152,12 @@ func (h *Handler) statsTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := toolsDTO{From: dr.days[0], To: dr.days[len(dr.days)-1], Tools: make([]toolStatDTO, 0, len(acc))}
+	out := toolsDTO{
+		From:   dr.days[0],
+		To:     dr.days[len(dr.days)-1],
+		Tools:  make([]toolStatDTO, 0, len(acc)),
+		Agents: sortedAgents(seenAgents),
+	}
 	for tool, a := range acc {
 		ts := toolStatDTO{
 			Tool: tool, Calls: a.calls, Errors: a.errors, Denied: a.denied,

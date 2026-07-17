@@ -138,4 +138,38 @@ func TestStatsTools(t *testing.T) {
 	if !rolled.Approx {
 		t.Error("approx = false over a range overlapping a rolled-up day, want true")
 	}
+
+	// agent option list: full attributed set regardless of any filter.
+	wantAgents := map[string]bool{"main": true, "debugger": true}
+	got := map[string]bool{}
+	for _, a := range out.Agents {
+		got[a] = true
+	}
+	for a := range wantAgents {
+		if !got[a] {
+			t.Errorf("agents %v missing %q", out.Agents, a)
+		}
+	}
+	if len(out.Agents) == 0 || out.Agents[0] != "main" {
+		t.Errorf("agents[0] = %v, want main first", out.Agents)
+	}
+
+	// ?agent= narrows every row + column to that agent's events. The debugger
+	// ran exactly one Bash call (the error inside its sidechain).
+	var dbg toolsDTO
+	getJSON(t, srv.URL+"/api/stats/tools?agent=debugger", &dbg)
+	byToolDbg := map[string]toolStatDTO{}
+	for _, tl := range dbg.Tools {
+		byToolDbg[tl.Tool] = tl
+	}
+	if b := byToolDbg["Bash"]; b.Calls != 1 || b.Errors != 1 {
+		t.Errorf("agent=debugger Bash = %+v, want 1 call 1 error", b)
+	}
+	if _, ok := byToolDbg["Read"]; ok {
+		t.Error("agent=debugger should exclude Read (main-attributed)")
+	}
+	// The full agent list is still returned under a filter (dropdown stays populated).
+	if len(dbg.Agents) < 2 {
+		t.Errorf("filtered agents = %v, want the full set", dbg.Agents)
+	}
 }
