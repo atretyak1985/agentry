@@ -33,6 +33,7 @@ import type {
   StatsOverview,
   StatsToday,
   TaskDetail,
+  SkillsResp,
   TasksResponse,
   TimeseriesResp,
   ToolsResp,
@@ -297,6 +298,12 @@ export function fetchMatrix(
 export function fetchToolStats(range: AnalyticsRange = {}): Promise<ToolsResp> {
   if (MOCK) return mockApi.toolStats(range);
   return get(`/api/stats/tools?${rangeQuery(range, {})}`);
+}
+
+/** Per-skill invocation/error/denied counts + duration stats (analytics uplift). */
+export function fetchSkillStats(range: AnalyticsRange = {}): Promise<SkillsResp> {
+  if (MOCK) return mockApi.skillStats(range);
+  return get(`/api/stats/skills?${rangeQuery(range, {})}`);
 }
 
 /** Session-duration + approval-wait aggregates (analytics uplift). */

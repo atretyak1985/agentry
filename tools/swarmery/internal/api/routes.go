@@ -50,8 +50,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/stats/breakdown", h.statsBreakdown)
 	mux.HandleFunc("GET /api/stats/matrix", h.statsMatrix)
 
-	// analytics uplift: tools / durations / errors (tools.go, durations.go, errors.go).
+	// analytics uplift: tools / skills / durations / errors.
 	mux.HandleFunc("GET /api/stats/tools", h.statsTools)
+	mux.HandleFunc("GET /api/stats/skills", h.statsSkills)
 	mux.HandleFunc("GET /api/stats/durations", h.statsDurations)
 	mux.HandleFunc("GET /api/stats/errors", h.statsErrors)
 

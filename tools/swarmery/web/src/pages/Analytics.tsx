@@ -25,13 +25,16 @@ import type {
   BreakdownRow,
   DurationsResp,
   MatrixResp,
+  SkillsResp,
   TimeseriesResp,
+  ToolAgentSplit,
   ToolsResp,
 } from '../api/types';
 import {
   fetchBreakdown,
   fetchDurations,
   fetchMatrix,
+  fetchSkillStats,
   fetchTimeseries,
   fetchToolStats,
 } from '../api';
@@ -716,15 +719,38 @@ function MatrixPanel({
 
 /* ----- tools panel ----- */
 
-function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
-  const [open, setOpen] = useState<string | null>(null);
-  const max = data.tools.reduce((m, t) => Math.max(m, t.calls), 0);
+/** Normalised usage row shared by the Tools and Skills panels. */
+interface UsageRow {
+  name: string;
+  calls: number;
+  errors: number;
+  denied: number;
+  avg_ms: number | null;
+  p95_ms: number | null;
+  agents: ToolAgentSplit[];
+}
 
-  if (data.tools.length === 0) {
+/** Tools/Skills usage table with per-agent expandable rows. `label` names the
+ * first column ("tool" / "skill"); `noun` is used in the empty message. */
+function UsagePanel({
+  rows,
+  approx,
+  label,
+  noun,
+}: {
+  rows: UsageRow[];
+  approx: boolean;
+  label: string;
+  noun: string;
+}): JSX.Element {
+  const [open, setOpen] = useState<string | null>(null);
+  const max = rows.reduce((m, r) => Math.max(m, r.calls), 0);
+
+  if (rows.length === 0) {
     return (
       <>
-        <Empty>no tool calls in this range</Empty>
-        {data.approx && <ApproxHint />}
+        <Empty>no {noun} in this range</Empty>
+        {approx && <ApproxHint />}
       </>
     );
   }
@@ -732,43 +758,43 @@ function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-baseline gap-2 pr-0 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-faint">
-        <span className="min-w-0 flex-1">tool</span>
+        <span className="min-w-0 flex-1">{label}</span>
         <span className="w-16 text-right">calls</span>
         <span className="w-14 text-right">errors</span>
         <span className="w-14 text-right">denied</span>
         <span className="w-16 text-right">avg</span>
         <span className="w-16 text-right">p95</span>
       </div>
-      {data.tools.map((t) => (
-        <div key={t.tool}>
+      {rows.map((r) => (
+        <div key={r.name}>
           <button
             type="button"
-            onClick={() => setOpen((o) => (o === t.tool ? null : t.tool))}
+            onClick={() => setOpen((o) => (o === r.name ? null : r.name))}
             className="block w-full text-left"
-            aria-expanded={open === t.tool}
+            aria-expanded={open === r.name}
           >
             <div className="flex items-baseline gap-2 font-mono text-[11.5px]">
               <span className="min-w-0 flex-1 truncate text-ink-3">
-                {open === t.tool ? '▾ ' : '▸ '}
-                {t.tool}
+                {open === r.name ? '▾ ' : '▸ '}
+                {r.name}
               </span>
-              <span className="w-16 text-right text-ink">{t.calls}</span>
-              <span className={`w-14 text-right ${t.errors > 0 ? 'text-red' : 'text-ink-faint'}`}>
-                {t.errors}
+              <span className="w-16 text-right text-ink">{r.calls}</span>
+              <span className={`w-14 text-right ${r.errors > 0 ? 'text-red' : 'text-ink-faint'}`}>
+                {r.errors}
               </span>
-              <span className={`w-14 text-right ${t.denied > 0 ? 'text-brand' : 'text-ink-faint'}`}>
-                {t.denied}
+              <span className={`w-14 text-right ${r.denied > 0 ? 'text-brand' : 'text-ink-faint'}`}>
+                {r.denied}
               </span>
               <span className="w-16 text-right text-ink-dim">
-                {fmtDurationMs(t.avg_ms !== null ? Math.round(t.avg_ms) : null)}
+                {fmtDurationMs(r.avg_ms !== null ? Math.round(r.avg_ms) : null)}
               </span>
-              <span className="w-16 text-right text-ink-dim">{fmtDurationMs(t.p95_ms)}</span>
+              <span className="w-16 text-right text-ink-dim">{fmtDurationMs(r.p95_ms)}</span>
             </div>
-            <Bar pct={max > 0 ? t.calls / max : 0} color="var(--color-blue)" />
+            <Bar pct={max > 0 ? r.calls / max : 0} color="var(--color-blue)" />
           </button>
-          {open === t.tool && (
+          {open === r.name && (
             <div className="mt-1.5 mb-1 ml-4 flex flex-col gap-1 border-l border-line pl-3">
-              {t.agents.map((a) => (
+              {r.agents.map((a) => (
                 <div
                   key={a.agent}
                   className="flex items-baseline gap-2 font-mono text-[10.5px] text-ink-dim"
@@ -784,10 +810,13 @@ function ToolsPanel({ data }: { data: ToolsResp }): JSX.Element {
           )}
         </div>
       ))}
-      {data.approx && <ApproxHint />}
+      {approx && <ApproxHint />}
     </div>
   );
 }
+
+const toolRows = (d: ToolsResp): UsageRow[] => d.tools.map((t) => ({ ...t, name: t.tool }));
+const skillRows = (d: SkillsResp): UsageRow[] => d.skills.map((s) => ({ ...s, name: s.skill }));
 
 /* ----- screen ----- */
 
@@ -810,6 +839,8 @@ export function Analytics(): JSX.Element {
   const [transposed, setTransposed] = useState(false);
   const [matrix, setMatrix] = useState<MatrixResp | null>(null);
   const [tools, setTools] = useState<ToolsResp | null>(null);
+  const [skills, setSkills] = useState<SkillsResp | null>(null);
+  const [usageTab, setUsageTab] = useState<'tools' | 'skills'>('tools');
   const [durations, setDurations] = useState<DurationsResp | null>(null);
   // cost is agent-only (skills own no turns); force runs when viewing skills.
   const effMatrixMetric: 'runs' | 'cost' = matrixRows === 'skill' ? 'runs' : matrixMetric;
@@ -858,6 +889,9 @@ export function Analytics(): JSX.Element {
     fetchToolStats(range)
       .then(setTools)
       .catch(() => setTools(null));
+    fetchSkillStats(range)
+      .then(setSkills)
+      .catch(() => setSkills(null));
   }, [from, to, scope]);
 
   useEffect(() => {
@@ -1036,10 +1070,37 @@ export function Analytics(): JSX.Element {
         </section>
       </div>
 
-      <section className="mt-5">
-        <SectionTitle>Tools</SectionTitle>
+      <section className="mt-6">
+        <div className="mb-2.5 flex items-center gap-3">
+          <h2 className="font-mono text-[11px] font-medium tracking-[0.16em] text-ink-dim uppercase">
+            {usageTab === 'tools' ? 'Tools' : 'Skills'}
+          </h2>
+          <Segmented
+            options={[
+              { v: 'tools', label: 'Tools' },
+              { v: 'skills', label: 'Skills' },
+            ]}
+            value={usageTab}
+            onChange={setUsageTab}
+          />
+        </div>
         <div className="rounded-[14px] border border-line px-3.5 py-3.5">
-          {tools === null ? <Loading label="tools…" /> : <ToolsPanel data={tools} />}
+          {usageTab === 'tools' ? (
+            tools === null ? (
+              <Loading label="tools…" />
+            ) : (
+              <UsagePanel rows={toolRows(tools)} approx={tools.approx} label="tool" noun="tool calls" />
+            )
+          ) : skills === null ? (
+            <Loading label="skills…" />
+          ) : (
+            <UsagePanel
+              rows={skillRows(skills)}
+              approx={skills.approx}
+              label="skill"
+              noun="skill invocations"
+            />
+          )}
         </div>
       </section>
     </div>

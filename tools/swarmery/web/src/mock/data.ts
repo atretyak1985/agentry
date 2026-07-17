@@ -30,6 +30,7 @@ import type {
   DurationsResp,
   ErrorsResp,
   MatrixResp,
+  SkillsResp,
   TimeseriesResp,
   ToolsResp,
 } from '../api/types';
@@ -40,6 +41,7 @@ import {
   mockDurations,
   mockErrorGroups,
   mockMatrix,
+  mockSkillStats,
   mockTimeseries,
   mockToolStats,
 } from './analytics';
@@ -1242,6 +1244,11 @@ export const mockApi = {
   async toolStats(range: AnalyticsRangeArg = {}): Promise<ToolsResp> {
     await delay(120);
     return mockToolStats(range);
+  },
+
+  async skillStats(range: AnalyticsRangeArg = {}): Promise<SkillsResp> {
+    await delay(120);
+    return mockSkillStats(range);
   },
 
   async durations(range: AnalyticsRangeArg = {}): Promise<DurationsResp> {

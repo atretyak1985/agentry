@@ -469,6 +469,25 @@ export interface ToolsResp {
   approx: boolean;
 }
 
+/** One row of GET /api/stats/skills — mirror of ToolStatRow keyed by skill name. */
+export interface SkillStatRow {
+  skill: string;
+  calls: number;
+  errors: number;
+  denied: number;
+  avg_ms: number | null;
+  p95_ms: number | null;
+  agents: ToolAgentSplit[];
+}
+
+export interface SkillsResp {
+  from: string;
+  to: string;
+  skills: SkillStatRow[];
+  /** True when the range overlaps pruned (rolled-up) days — counts undercount there. */
+  approx: boolean;
+}
+
 /** GET /api/stats/durations — session-length + approval-wait aggregates. */
 export interface DurationsResp {
   from: string;

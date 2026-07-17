@@ -11,6 +11,7 @@ import type {
   DurationsResp,
   ErrorsResp,
   MatrixResp,
+  SkillsResp,
   TimeseriesResp,
   ToolsResp,
 } from '../api/types';
@@ -222,6 +223,32 @@ export function mockToolStats(range: Range): ToolsResp {
     .filter((t) => t.calls > 0)
     .sort((a, b) => b.calls - a.calls);
   return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), tools, approx: false };
+}
+
+export function mockSkillStats(range: Range): SkillsResp {
+  const days = resolveDays(range);
+  const skills = SKILLS.map((skill) => {
+    const calls = days.reduce((a, d) => a + Math.round(rand(`${skill}|${d}|c`) * 8), 0);
+    const errors = Math.round(calls * rand(`${skill}|err`) * 0.05);
+    const avg = 800 + rand(`${skill}|avg`) * 9000;
+    const agents = ['main', ...AGENTS.slice(0, 3)].map((agent, i) => ({
+      agent,
+      calls: Math.max(1, Math.round(calls * (i === 0 ? 0.55 : 0.15))),
+      errors: i === 1 ? errors : 0,
+    }));
+    return {
+      skill,
+      calls,
+      errors,
+      denied: 0,
+      avg_ms: Math.round(avg),
+      p95_ms: Math.round(avg * 2.6),
+      agents,
+    };
+  })
+    .filter((s) => s.calls > 0)
+    .sort((a, b) => b.calls - a.calls);
+  return { from: days[0] ?? isoDay(), to: days[days.length - 1] ?? isoDay(), skills, approx: false };
 }
 
 export function mockErrorGroups(range: Range): ErrorsResp {
