@@ -15,7 +15,6 @@ version: 1.2.0
 owner: platform-team
 skills:
   - deployment
-  - deployment
   - context-optimization
   - summary-templates
   - browser-verification
