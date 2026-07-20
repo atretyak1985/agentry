@@ -115,7 +115,7 @@ On every quality-gate FAIL, BEFORE re-dispatching, append:
 - Why this succeeds now: {1-2 sentences}
 ```
 
-Division of labor: `checkpoint.json` stays the machine-readable resume state, `logs/agents.md` stays the one-line-per-delegation ledger, `ORCHESTRATION.md` is the human-readable plan + loop-decision journal. Do not duplicate ledger rows into it.
+Division of labor: `checkpoint.json` stays the machine-readable resume state, `logs/agents.md` stays the one-line-per-delegation ledger, `ORCHESTRATION.md` is the human-readable plan + loop-decision journal. Do not duplicate ledger rows into it. In Dynamic mode, Loop entries are required only for quality-gate re-dispatches — batch adaptive mid-run re-taskings into a single Loop entry per convergence round instead of one per subagent.
 
 ## Screenshots convention
 
