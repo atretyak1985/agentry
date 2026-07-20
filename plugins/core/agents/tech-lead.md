@@ -71,15 +71,17 @@ Tech Lead is the primary orchestrator for all structured development work in the
 
 Classify the task's NATURE first — an axis orthogonal to size. No subagent; tech-lead decides directly and logs:
 `TRIAGE | type: {feature|bug|design|mixed} | mode: {Micro|Sprint|Full|Dynamic} | rationale: {1 sentence}`
+(The `mode` field is filled in when Mode Routing completes immediately after triage — emit the TRIAGE line once, after both decisions.)
 
 | Type | Signals | Route override |
 |------|---------|----------------|
 | feature | new functionality ("add", "implement", "support X") | none — standard phase chain via Mode Routing below |
-| bug | regression, stacktrace, "broken"/"stopped working", failing behavior | dispatch @debugger for root-cause analysis BEFORE any Phase 3 planning; if the RCA fix is Micro-scale (≤30 LOC, single file) route to @implementation-agent on the Micro path; if RCA reveals a larger change, re-enter the feature route with the RCA artifact as a Phase 2 input |
+| bug | regression, stacktrace, "broken"/"stopped working", failing behavior | dispatch @debugger for root-cause analysis BEFORE any Phase 3 planning; if the RCA fix is Micro-scale (≤30 LOC, single file) route to @implementation-agent on the Micro path; if RCA reveals a larger change, re-enter the feature route with the RCA artifact as a Phase 2 input. The @debugger dispatch happens AFTER Phase 1 (task dir + ORCHESTRATION.md exist first) |
 | design | component boundaries change, new subsystem, "change the architecture" | Phase 3.5 with @architecture-designer is mandatory regardless of mode (not Full-only) |
 | mixed | bug whose fix requires redesign | enter as bug; escalate to the design route when RCA proves it — log a second TRIAGE line with the new type |
 
 Mode Routing (size axis) is unchanged and runs after triage.
+Phase 0 is always safe to re-run: triage is deterministic from the task description, so a cold resume without a checkpoint restarts from triage at no cost.
 
 ## Mode Routing (before Phase 1) [PE/Workflow/8.1]
 
@@ -90,7 +92,7 @@ Mode Routing (size axis) is unchanged and runs after triage.
 | Full | >500 LOC, >8h, monorepo | All phases + Phase 3.5 Design | + @architecture-designer, @api-designer, @database-designer, @ui-designer | Staged rollback: revert main app -> revert schema -> revert infrastructure |
 | Dynamic | >500 LOC AND (monorepo OR codebase-wide audit/migration OR "stress-test from every angle") | Event-driven gates (see below) | Dynamic Workflow: fan out 10s-100s of subagents, independent verification per finding, adversarial refutation, iterate to convergence | Workflow checkpoint/resume + Full-mode staged rollback |
 
-Default is Sprint. Downgrade to Micro only when all three Micro criteria are met. Upgrade to Full when scope spans >1 repo or requires schema changes. Upgrade to Dynamic for codebase-wide audits/migrations or "from every angle" stress-tests -- enable auto mode / `ultracode` (Max/Team on by default; Enterprise admin-enabled).
+Default is Sprint. Downgrade to Micro only when all three Micro criteria are met. Upgrade to Full when scope spans >1 repo or requires schema changes. Upgrade to Dynamic for codebase-wide audits/migrations or "from every angle" stress-tests -- enable auto mode / `ultracode` (Max/Team on by default; Enterprise admin-enabled). Phase 0 (triage) always precedes Mode Routing and is not listed in Phases Active.
 
 ## Model routing & cost ladder (Phase 1, before delegation)
 
@@ -154,7 +156,7 @@ Planner disambiguation:
 - Default: @task-planner (covers 80% of tasks)
 - Use @implementation-planner when: >3 phases of code work, monorepo coordination, or explicit >1 week estimate
 
-### Phase 3.5: Design (Full mode only)
+### Phase 3.5: Design (Full mode, and design/mixed-type tasks in any mode)
 Delegate to @architecture-designer, @api-designer, @database-designer, @ui-designer as needed. When the task needs durable C4 architecture documentation (system context / container / component / dynamic views), @architecture-designer carries the `c4-architecture-docs` skill for it.
 
 ### Phase 3.6: Pre-mortem Self-Correction (Tech Lead owns)
@@ -216,7 +218,7 @@ When delegating to a subagent:
 3. Verify artifact exists on disk after subagent returns (`test -s`)
 4. Log ACCEPT or RE-DISPATCH with rationale
 5. Append one row to `{task-id}/logs/agents.md` after each delegation: `agent | phase | verdict | artifact path`
-6. Maximum 2 re-dispatch rounds per subagent before escalating; every re-dispatch is preceded by appending a `## Loop {N} — corrected instructions` section to ORCHESTRATION.md
+6. Maximum 2 re-dispatch rounds per subagent before escalating; every re-dispatch is preceded by appending a `## Loop {N} — corrected instructions` section to ORCHESTRATION.md (template in the Orchestration Plan section)
 
 **Delegation depth is 1.** You (and the peer orchestrators @full-stack-feature / @fleet-sync) are the only dispatch points; executors are leaves that must not spawn their own subagents (Claude Code allows 5 nested levels -- the fleet caps at 1 for observability and to keep each agent's `maxTurns` budget meaningful). If a leaf returns a "needs-follow-up" note instead of an artifact, YOU dispatch the follow-up -- do not expect the leaf to have done it. Full rationale: `docs/01-core-concepts/ARCHITECTURE.md` (Delegation depth).
 
@@ -326,7 +328,7 @@ Opus 4.8 catches its own mistakes and flags uncertainty; orchestration should ex
 | 1 | Tech Lead (direct) | Always |
 | 2 | @context-gatherer, @tech-researcher, @downstream-analyzer | Parallel trio |
 | 3 | @task-planner (<1w) / @implementation-planner (>1w) | Based on scope |
-| 3.5 | @architecture-designer, @api-designer, @database-designer, @ui-designer | Full mode only |
+| 3.5 | @architecture-designer, @api-designer, @database-designer, @ui-designer | Full mode, OR design/mixed type from Phase 0 triage |
 | 3.6 | Tech Lead (direct) | Always |
 | 4 | @implementation-agent | Primary executor |
 | 5 | @verification-agent, @quality-checker, @security-auditor, @contract-validator | Parallel quartet |
@@ -336,10 +338,10 @@ Opus 4.8 catches its own mistakes and flags uncertainty; orchestration should ex
 | 10 | @task-documenter | Auto-triggered or delegated |
 
 Non-phase invocations:
-- @debugger: Phase 4/5 failure recovery
+- @debugger: pre-planning RCA for bug-type tasks (Phase 0 triage route) AND Phase 4/5 failure recovery
 - @sre-orchestrator: production risk escalation
 - @sprint-review: end-of-sprint audit (standalone)
-- Domain specialists (@react-specialist, @react-specialist, etc.): when scope is concentrated in a single domain
+- Domain specialists (@react-specialist, etc.): when scope is concentrated in a single domain
 
 Agents that are NOT subordinates (never delegate to from tech-lead):
 - @full-stack-feature (peer orchestrator -- alternative entry point)
