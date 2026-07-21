@@ -37,11 +37,11 @@ import {
 import { argSummary } from '../lib/payload';
 import { usePageSearch } from '../lib/pageSearch';
 import { useScope } from '../lib/scope';
+import { sessionState, useNowMs } from '../lib/sessionState';
 import { applyPermissionMessage, applySessionMessage, useLiveUpdates } from '../lib/ws';
 import { ApproxHint, Empty, ErrorBox, Loading } from '../components/ui';
 import { ProjectName } from '../components/ProjectName';
 
-const LIVE_STATUSES = new Set<Session['status']>(['active', 'waiting_approval', 'idle']);
 const MAX_SPINE_ROWS = 8;
 
 function sessionDay(s: Session): string {
@@ -75,10 +75,12 @@ function EyebrowClock(): JSX.Element {
 
 function HeroHeadline({
   active,
+  stuck,
   pending,
   errors,
 }: {
   active: number;
+  stuck: number;
   pending: number;
   errors: number;
 }): JSX.Element {
@@ -93,6 +95,13 @@ function HeroHeadline({
       <>
         {active} agents are <em className="not-italic text-green">still working</em>.
       </>
+    );
+  const stuckPart =
+    stuck === 0 ? null : (
+      <span className="text-amber">
+        {' '}
+        {stuck === 1 ? 'One session looks stuck.' : `${String(stuck)} sessions look stuck.`}
+      </span>
     );
   const pendingPart =
     pending === 0 ? null : (
@@ -111,6 +120,7 @@ function HeroHeadline({
   return (
     <h1 className="mt-3.5 max-w-[20ch] text-balance font-display text-[28px] leading-[1.16] font-medium tracking-[-0.015em] desk:text-[38px]">
       {activePart}
+      {stuckPart}
       {pendingPart}
       {errorsPart}
     </h1>
@@ -227,11 +237,13 @@ function traceOf(detail: SessionDetail): SpineTraceRow[] {
     }));
 }
 
-type SpineKind = 'active' | 'error' | 'done';
+type SpineKind = 'active' | 'stuck' | 'error' | 'done';
 
-function spineKind(s: Session): SpineKind {
+function spineKind(s: Session, nowMs: number): SpineKind {
   if (s.status === 'killed') return 'error';
-  if (LIVE_STATUSES.has(s.status)) return 'active';
+  const st = sessionState(s, nowMs);
+  if (st === 'running') return 'active';
+  if (st === 'stuck') return 'stuck';
   return 'done';
 }
 
@@ -243,9 +255,11 @@ function NodeDot({ kind }: { kind: SpineKind }): JSX.Element {
   const cls =
     kind === 'active'
       ? 'border-green animate-pulse-dot'
-      : kind === 'error'
-        ? 'border-red'
-        : 'border-ink-dim';
+      : kind === 'stuck'
+        ? 'border-amber'
+        : kind === 'error'
+          ? 'border-red'
+          : 'border-ink-dim';
   return (
     <span
       className={`absolute -left-[9px] top-[16px] h-[10px] w-[10px] shrink-0 rounded-full border-2 bg-bg ${cls}`}
@@ -254,31 +268,28 @@ function NodeDot({ kind }: { kind: SpineKind }): JSX.Element {
   );
 }
 
-function statusLabel(s: Session): string {
-  const span =
-    s.status === 'active'
-      ? 'working'
-      : s.status === 'waiting_approval'
-        ? 'waiting'
-        : s.status === 'killed'
-          ? 'error'
-          : 'done';
-  return span;
+function statusLabel(s: Session, nowMs: number): string {
+  if (s.status === 'waiting_approval') return 'waiting';
+  if (s.status === 'killed') return 'error';
+  const st = sessionState(s, nowMs);
+  return st === 'running' ? 'working' : st === 'stuck' ? 'stuck' : 'done';
 }
 
 function SpineRow({
   session,
+  nowMs,
   open,
   onToggle,
 }: {
   session: Session;
+  nowMs: number;
   open: boolean;
   onToggle: () => void;
 }): JSX.Element {
   const navigate = useNavigate();
   const [trace, setTrace] = useState<SpineTraceRow[] | null>(null);
   const [traceError, setTraceError] = useState(false);
-  const kind = spineKind(session);
+  const kind = spineKind(session, nowMs);
 
   useEffect(() => {
     if (!open || trace !== null || traceError) return;
@@ -297,7 +308,13 @@ function SpineRow({
     .join(' · ');
 
   const chipTone =
-    kind === 'active' ? 'border-green/40 text-green' : kind === 'error' ? 'border-red/40 text-red' : 'border-line-strong text-ink-dim';
+    kind === 'active'
+      ? 'border-green/40 text-green'
+      : kind === 'stuck'
+        ? 'border-amber/40 text-amber'
+        : kind === 'error'
+          ? 'border-red/40 text-red'
+          : 'border-line-strong text-ink-dim';
 
   return (
     <div className="relative grid grid-cols-[56px_1fr] desk:grid-cols-[70px_1fr]">
@@ -322,7 +339,7 @@ function SpineRow({
             <span
               className={`rounded-full border px-[9px] py-px font-mono text-[10px] whitespace-nowrap ${chipTone}`}
             >
-              {statusLabel(session)}
+              {statusLabel(session, nowMs)}
             </span>
             {costTokens !== '' && (
               <span className="ml-auto font-mono text-[10.5px] whitespace-nowrap text-ink-faint">
@@ -386,7 +403,15 @@ function SpineRow({
   );
 }
 
-function Spine({ sessions, query }: { sessions: Session[]; query: string }): JSX.Element {
+function Spine({
+  sessions,
+  nowMs,
+  query,
+}: {
+  sessions: Session[];
+  nowMs: number;
+  query: string;
+}): JSX.Element {
   const [openId, setOpenId] = useState<number | null>(null);
   const today = isoDay();
   const matchesQuery = (s: Session): boolean =>
@@ -395,7 +420,9 @@ function Spine({ sessions, query }: { sessions: Session[]; query: string }): JSX
       (v) => v != null && v.toLowerCase().includes(query),
     );
   const rows = sessions
-    .filter((s) => (LIVE_STATUSES.has(s.status) || sessionDay(s) === today) && matchesQuery(s))
+    // Running and stuck rows always show (a stuck overnight session is exactly
+    // what you want to see and kill); done rows only when they belong to today.
+    .filter((s) => (sessionState(s, nowMs) !== 'done' || sessionDay(s) === today) && matchesQuery(s))
     .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt))
     .slice(0, MAX_SPINE_ROWS);
 
@@ -422,6 +449,7 @@ function Spine({ sessions, query }: { sessions: Session[]; query: string }): JSX
             <SpineRow
               key={s.id}
               session={s}
+              nowMs={nowMs}
               open={openId === s.id}
               onToggle={() => setOpenId((prev) => (prev === s.id ? null : s.id))}
             />
@@ -664,6 +692,7 @@ export function Overview(): JSX.Element {
   const day = isoDay();
   const { scope } = useScope();
   const query = usePageSearch();
+  const nowMs = useNowMs();
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<StatsOverview | null>(null);
@@ -736,7 +765,9 @@ export function Overview(): JSX.Element {
   );
   useLiveUpdates(onMessage, reload);
 
-  const activeCount = (sessions ?? []).filter((s) => LIVE_STATUSES.has(s.status)).length;
+  const states = (sessions ?? []).map((s) => sessionState(s, nowMs));
+  const activeCount = states.filter((st) => st === 'running').length;
+  const stuckCount = states.filter((st) => st === 'stuck').length;
   const pendingCount = approvals?.length ?? 0;
 
   return (
@@ -744,7 +775,12 @@ export function Overview(): JSX.Element {
       <div className="min-w-0 px-4 pt-6 pb-10 desk:px-10 desk:pt-[34px] desk:pb-[60px]">
         <EyebrowClock />
         {stats !== null ? (
-          <HeroHeadline active={activeCount} pending={pendingCount} errors={stats.errors} />
+          <HeroHeadline
+            active={activeCount}
+            stuck={stuckCount}
+            pending={pendingCount}
+            errors={stats.errors}
+          />
         ) : (
           <h1 className="mt-3.5 max-w-[20ch] font-display text-[28px] leading-[1.16] font-medium tracking-[-0.015em] text-ink-dim desk:text-[38px]">
             Reading today's activity…
@@ -763,7 +799,7 @@ export function Overview(): JSX.Element {
         {sessions === null && error === null ? (
           <Loading label="sessions…" />
         ) : (
-          <Spine sessions={sessions ?? []} query={query} />
+          <Spine sessions={sessions ?? []} nowMs={nowMs} query={query} />
         )}
       </div>
 
