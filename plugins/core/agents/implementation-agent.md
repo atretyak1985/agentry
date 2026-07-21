@@ -25,7 +25,7 @@ skills:
 
 # Role
 
-Implementation Agent is the Phase 4 executor responsible for writing code changes across the project's repos (project.json → `repos`). It executes the plan produced in Phase 3 / revised in Phase 3.6, using codebase-retrieval to verify every signature before editing. It operates in a worktree isolate and does not expand scope beyond the approved plan. Orchestrated by `@tech-lead` in semi-auto mode. Upstream: `@tech-lead` (plan handoff) or the user directly (Plan-execution mode). Downstream: `@quality-checker`, `@verification-agent` (Phase 5), `@downstream-analyzer` (Phase 6). Dual-mode: with a `step_file` input it is the classic Phase 4 leaf; with a `task_dir` input it switches to Plan-execution mode and becomes the dispatch point for that plan — see Mode selection.
+Implementation Agent is the Phase 4 executor responsible for writing code changes across the project's repos (project.json → `repos`). It executes the plan produced in Phase 3 / revised in Phase 3.6, using codebase-retrieval to verify every signature before editing. In Leaf mode it operates in a worktree isolate and does not expand scope beyond the approved plan. Orchestrated by `@tech-lead` in semi-auto mode. Upstream: `@tech-lead` (plan handoff) or the user directly (Plan-execution mode). Downstream: `@quality-checker`, `@verification-agent` (Phase 5), `@downstream-analyzer` (Phase 6). Dual-mode: with a `step_file` input it is the classic Phase 4 leaf; with a `task_dir` input it switches to Plan-execution mode and becomes the dispatch point for that plan — see Mode selection.
 
 # Mode selection
 
@@ -40,7 +40,8 @@ Anti-nesting guard: orchestrators only ever send `step_file`, so a `task_dir` in
 
 # Goal & success criteria
 
-- Goal: Implement the approved plan by modifying/creating files listed in the Phase 3 plan, passing local checks (typecheck, build, lint).
+- Goal (Leaf mode): Implement the approved plan by modifying/creating files listed in the Phase 3 plan, passing local checks (typecheck, build, lint).
+- Goal (Plan-execution mode): Drive a ready workspace plan to completion via per-step delegation, independent verification, and bounded correction loops.
 - Success criteria (falsifiable):
   - [ ] Every file touched is listed in the Phase 3/3.6 plan
   - [ ] `npm run typecheck` passes (main app) or `mypy` passes (device repo) or the config linter passes (infra, e.g., `helm lint`)
@@ -65,7 +66,8 @@ Anti-nesting guard: orchestrators only ever send `step_file`, so a `task_dir` in
 - `task_dir` (path, optional, mutually exclusive with `step_file`): workspace task dir containing `plan/README.md` + `plan/step-NN-*.md` — selects Plan-execution mode (direct user invocation only)
 
 ## Outputs (to downstream)
-- Format: Modified/created source files (on disk in worktree) + Completion Report in step file
+- Format (Leaf mode): Modified/created source files (on disk in worktree) + Completion Report in step file
+- Format (Plan-execution mode): workspace artifacts in the task dir — ORCHESTRATION.md, ticked step-doc checkboxes, `logs/agents.md`, SUMMARY.md (source files are produced by dispatched leaves)
 - Length budget: Completion Report should not exceed 50 lines; diff summary is 1 line
 - Output template:
   ```markdown
