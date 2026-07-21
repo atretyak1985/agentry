@@ -451,6 +451,17 @@ export async function killSession(id: number, force = false): Promise<void> {
   }
 }
 
+/** POST /api/sessions/{id}/stop — graceful SIGTERM; the session is recorded
+ * as 'completed' (not 'killed'). Works even when no PID is known. */
+export async function stopSession(id: number): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/sessions/${String(id)}/stop`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error ?? `stop failed: ${String(res.status)}`);
+  }
+}
+
 /**
  * POST /api/sessions/{id}/message — resume an idle/completed conversation
  * headlessly (`claude -r <uuid> -p <text>`). Returns 202 immediately; the
