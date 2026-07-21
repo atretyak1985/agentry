@@ -1,0 +1,460 @@
+package api
+
+// Retro improvement loop (phase 1): two endpoints backing the /retro page
+// (web/src/pages/Retro.tsx) — per-agent health scorecards with a
+// previous-window comparison, and a "friction board" (denied tools, error
+// groups, approval waits). Built purely from data already in SQLite; no new
+// tables.
+//
+//   - /api/retro/agents   — per-agent runs/cost/errors/durations + prev window
+//   - /api/retro/friction — denied tools, top error groups, approval waits
+//
+// Aggregation grains deliberately reuse the analytics helpers so numbers agree
+// across pages: runs come from subagent_start events folded by normAgentType
+// (breakdownRuns), $/tokens from turns folded by agentKey (agentTurnTotals),
+// success rates from agentOutcomeRates, error grouping from errorGroups
+// (shared with /api/stats/errors).
+
+import (
+	"database/sql"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+)
+
+// ── /api/retro/agents ─────────────────────────────────────────────────────
+
+type retroMainDTO struct {
+	CostUSD   float64 `json:"cost_usd"`
+	TokensOut int64   `json:"tokens_out"`
+	Runs      int64   `json:"runs"`
+	Errors    int64   `json:"errors"`
+}
+
+type retroPrevDTO struct {
+	Runs      int64   `json:"runs"`
+	ErrorRate float64 `json:"error_rate"`
+	CostUSD   float64 `json:"cost_usd"`
+}
+
+type retroAgentDTO struct {
+	Agent     string  `json:"agent"`
+	Runs      int64   `json:"runs"`
+	Sessions  int64   `json:"sessions"`
+	CostUSD   float64 `json:"cost_usd"`
+	TokensOut int64   `json:"tokens_out"`
+	Errors    int64   `json:"errors"`
+	ErrorRate float64 `json:"error_rate"`
+	// avg/p95 over subagent_start durations; nil when no run carried one.
+	AvgMs *float64 `json:"avg_ms"`
+	P95Ms *int64   `json:"p95_ms"`
+	// success/(success+fail) over judged sessions (agentOutcomeRates grain);
+	// nil when the agent has no judged session in range.
+	SuccessRate *float64     `json:"success_rate"`
+	Prev        retroPrevDTO `json:"prev"`
+}
+
+type retroAgentsDTO struct {
+	From   string          `json:"from"`
+	To     string          `json:"to"`
+	Approx bool            `json:"approx"`
+	Main   retroMainDTO    `json:"main"`
+	Agents []retroAgentDTO `json:"agents"`
+}
+
+// retroAgentWin accumulates one window's per-agent aggregates, keyed by the
+// folded agent name ("main" = orchestrator).
+type retroAgentWin struct {
+	runs      int64
+	sessions  map[int64]struct{}
+	cost      float64
+	tokensOut int64
+	errors    int64
+	durations []int64
+}
+
+// retroAgentWindow computes one [dr.start, dr.end) window's per-agent map:
+// runs/sessions/durations from subagent_start events (breakdownRuns grain),
+// cost/tokens_out from turns (agentTurnTotals), errors from status='error'
+// events attributed through events.turn_id → turns.agent_name.
+func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[string]*retroAgentWin, error) {
+	acc := map[string]*retroAgentWin{}
+	get := func(key string) *retroAgentWin {
+		a := acc[key]
+		if a == nil {
+			a = &retroAgentWin{sessions: map[int64]struct{}{}}
+			acc[key] = a
+		}
+		return a
+	}
+
+	// Runs + sessions + durations: subagent_start events, name-folded — the
+	// same attribution as breakdownRuns/statsTools.
+	rk := runKind["agent"]
+	rows, err := h.DB.Query(
+		`SELECT `+rk.nameExpr+` AS n, e.session_id, e.duration_ms
+		   FROM events e
+		   JOIN sessions s ON s.id = e.session_id
+		   JOIN projects p ON p.id = s.project_id
+		  WHERE e.type = ? AND `+rk.nameExpr+` IS NOT NULL
+		    AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+		append([]any{rk.typ, dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name sql.NullString
+		var sess int64
+		var durMs sql.NullInt64
+		if err := rows.Scan(&name, &sess, &durMs); err != nil {
+			return nil, err
+		}
+		key := normAgentType(name.String)
+		if key == "" {
+			continue
+		}
+		a := get(key)
+		a.runs++
+		a.sessions[sess] = struct{}{}
+		if durMs.Valid {
+			a.durations = append(a.durations, durMs.Int64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Cost + tokens_out: turns folded by agentKey (creates the "main" entry).
+	totals, err := h.agentTurnTotals(dr, pf, pargs)
+	if err != nil {
+		return nil, err
+	}
+	for key, tot := range totals {
+		a := get(key)
+		a.cost = tot.cost
+		a.tokensOut = tot.tout
+	}
+
+	// Errors: status='error' events attributed through events.turn_id →
+	// turns.agent_name, folded by agentKey (NULL agent_name = "main"). The
+	// type IN (…) predicate mirrors statsErrors — the only types ingest ever
+	// marks status='error' — so the query rides idx_events_type.
+	erows, err := h.DB.Query(`
+		SELECT t.agent_name
+		  FROM events e
+		  JOIN turns t ON t.id = e.turn_id
+		  JOIN sessions s ON s.id = e.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE e.status = 'error'
+		   AND e.type IN ('error','tool_call','skill_use','subagent_start','subagent_stop','test_run')
+		   AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer erows.Close()
+	for erows.Next() {
+		var an sql.NullString
+		if err := erows.Scan(&an); err != nil {
+			return nil, err
+		}
+		get(agentKey(an)).errors++
+	}
+	return acc, erows.Err()
+}
+
+// prevWindow derives the preceding window of equal length: for an N-day range
+// [from, to] it is [from-N, from-1] — its UTC end bound is exactly dr.start.
+func prevWindow(dr dateRange) dateRange {
+	n := len(dr.days)
+	fromDay, err := time.ParseInLocation(dayFmt, dr.days[0], time.Local)
+	if err != nil {
+		return dateRange{start: dr.start, end: dr.start} // empty window, defensive
+	}
+	start, _ := dayBounds(fromDay.AddDate(0, 0, -n))
+	return dateRange{start: start, end: dr.start}
+}
+
+// errRate is errors/runs, 0 when the agent had no counted run.
+func errRate(errors, runs int64) float64 {
+	if runs == 0 {
+		return 0
+	}
+	return float64(errors) / float64(runs)
+}
+
+// GET /api/retro/agents?from&to&project — per-agent health scorecards. The
+// "main" fold key (orchestrator) is excluded from agents[] and surfaced as
+// the top-level main object.
+func (h *Handler) retroAgents(w http.ResponseWriter, r *http.Request) {
+	dr, err := parseRange(r)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+	pf, pargs := scopeFilter(r)
+
+	cur, err := h.retroAgentWindow(dr, pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	prev, err := h.retroAgentWindow(prevWindow(dr), pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rates, err := h.agentOutcomeRates(dr, pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := retroAgentsDTO{
+		From: dr.days[0], To: dr.days[len(dr.days)-1],
+		Agents: make([]retroAgentDTO, 0, len(cur)),
+	}
+	for key, a := range cur {
+		if key == "main" {
+			out.Main = retroMainDTO{CostUSD: a.cost, TokensOut: a.tokensOut, Runs: a.runs, Errors: a.errors}
+			continue
+		}
+		row := retroAgentDTO{
+			Agent: key, Runs: a.runs, Sessions: int64(len(a.sessions)),
+			CostUSD: a.cost, TokensOut: a.tokensOut,
+			Errors: a.errors, ErrorRate: errRate(a.errors, a.runs),
+		}
+		if n := len(a.durations); n > 0 {
+			// Same avg/p95 aggregation as statsTools.
+			sort.Slice(a.durations, func(i, j int) bool { return a.durations[i] < a.durations[j] })
+			var sum int64
+			for _, d := range a.durations {
+				sum += d
+			}
+			avg := float64(sum) / float64(n)
+			row.AvgMs = &avg
+			idx := (n*95 + 99) / 100 // ceil(0.95 × n), 1-based
+			p95 := a.durations[idx-1]
+			row.P95Ms = &p95
+		}
+		if rate, ok := rates[key]; ok {
+			rr := rate
+			row.SuccessRate = &rr
+		}
+		if p, ok := prev[key]; ok {
+			row.Prev = retroPrevDTO{Runs: p.runs, ErrorRate: errRate(p.errors, p.runs), CostUSD: p.cost}
+		}
+		out.Agents = append(out.Agents, row)
+	}
+	sort.Slice(out.Agents, func(i, j int) bool {
+		if out.Agents[i].Runs != out.Agents[j].Runs {
+			return out.Agents[i].Runs > out.Agents[j].Runs
+		}
+		return out.Agents[i].Agent < out.Agents[j].Agent
+	})
+	rolled, err := h.hasRolledUpDays(dr.days[0], dr.days[len(dr.days)-1], pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approx = rolled
+	writeJSON(w, out, nil)
+}
+
+// ── /api/retro/friction ───────────────────────────────────────────────────
+
+type frictionDeniedDTO struct {
+	Tool    string `json:"tool"`
+	Denied  int64  `json:"denied"`
+	Calls   int64  `json:"calls"`
+	HasRule bool   `json:"has_rule"`
+}
+
+type frictionErrGroupDTO struct {
+	Key     string `json:"key"`
+	Example string `json:"example"`
+	Count   int64  `json:"count"`
+	LastTs  string `json:"last_ts"`
+	// Up to 3 distinct sample session uuids, newest first.
+	Sessions []string `json:"sessions"`
+}
+
+type frictionApprovalsDTO struct {
+	Resolved      int64    `json:"resolved"`
+	AvgResolveSec *float64 `json:"avg_resolve_sec"` // nil when none resolved
+	WaitTotalMin  float64  `json:"wait_total_min"`
+	Pending       int64    `json:"pending"`
+}
+
+type frictionDTO struct {
+	DeniedTools []frictionDeniedDTO   `json:"denied_tools"`
+	ErrorGroups []frictionErrGroupDTO `json:"error_groups"`
+	Approvals   frictionApprovalsDTO  `json:"approvals"`
+}
+
+const frictionTopN = 10
+
+// ruleCoversTool reports whether an enabled approval-rule pattern already
+// covers a tool: an exact `Tool` pattern or any `Tool(argGlob)` form.
+func ruleCoversTool(patterns []string, tool string) bool {
+	for _, p := range patterns {
+		if p == tool || strings.HasPrefix(p, tool+"(") {
+			return true
+		}
+	}
+	return false
+}
+
+// GET /api/retro/friction?from&to&project — denied tools, top error groups,
+// approval-wait stats.
+func (h *Handler) retroFriction(w http.ResponseWriter, r *http.Request) {
+	dr, err := parseRange(r)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+	pf, pargs := scopeFilter(r)
+	out := frictionDTO{
+		DeniedTools: []frictionDeniedDTO{},
+		ErrorGroups: []frictionErrGroupDTO{},
+	}
+
+	// Denied tools: the statsTools query skeleton, without the per-agent split.
+	rows, err := h.DB.Query(`
+		SELECT e.tool_name, COALESCE(e.status, '')
+		  FROM events e
+		  JOIN sessions s ON s.id = e.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE e.tool_name IS NOT NULL
+		   AND e.type IN ('tool_call', 'skill_use', 'subagent_start')
+		   AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer rows.Close()
+	type toolAgg struct{ calls, denied int64 }
+	tools := map[string]*toolAgg{}
+	for rows.Next() {
+		var tool, status string
+		if err := rows.Scan(&tool, &status); err != nil {
+			writeErr(w, err)
+			return
+		}
+		a := tools[tool]
+		if a == nil {
+			a = &toolAgg{}
+			tools[tool] = a
+		}
+		a.calls++
+		if status == "denied" {
+			a.denied++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, err)
+		return
+	}
+	patterns, err := h.enabledRulePatterns()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	for tool, a := range tools {
+		if a.denied == 0 {
+			continue
+		}
+		out.DeniedTools = append(out.DeniedTools, frictionDeniedDTO{
+			Tool: tool, Denied: a.denied, Calls: a.calls,
+			HasRule: ruleCoversTool(patterns, tool),
+		})
+	}
+	sort.Slice(out.DeniedTools, func(i, j int) bool {
+		if out.DeniedTools[i].Denied != out.DeniedTools[j].Denied {
+			return out.DeniedTools[i].Denied > out.DeniedTools[j].Denied
+		}
+		return out.DeniedTools[i].Tool < out.DeniedTools[j].Tool
+	})
+	if len(out.DeniedTools) > frictionTopN {
+		out.DeniedTools = out.DeniedTools[:frictionTopN]
+	}
+
+	// Error groups: the shared grouping helper (also backing /api/stats/errors).
+	groups, err := h.errorGroups(dr, pf, pargs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if len(groups) > frictionTopN {
+		groups = groups[:frictionTopN]
+	}
+	for _, g := range groups {
+		uuids := make([]string, 0, len(g.Samples))
+		for _, s := range g.Samples {
+			uuids = append(uuids, s.SessionUUID)
+		}
+		out.ErrorGroups = append(out.ErrorGroups, frictionErrGroupDTO{
+			Key: g.Key, Example: g.Example, Count: g.Count, LastTs: g.LastTs,
+			Sessions: uuids,
+		})
+	}
+
+	// Approvals: the permission-request span computation from statsDurations.
+	waits, err := h.querySpans(`
+		SELECT pr.requested_at, pr.resolved_at
+		  FROM permission_requests pr
+		  JOIN sessions s ON s.id = pr.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE pr.resolved_at IS NOT NULL
+		   AND pr.requested_at >= ? AND pr.requested_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.Approvals.Resolved = int64(len(waits))
+	if n := len(waits); n > 0 {
+		var sum float64
+		for _, s := range waits {
+			sum += s
+		}
+		avg := sum / float64(n)
+		out.Approvals.AvgResolveSec = &avg
+		out.Approvals.WaitTotalMin = sum / 60
+	}
+	err = h.DB.QueryRow(`
+		SELECT COUNT(*)
+		  FROM permission_requests pr
+		  JOIN sessions s ON s.id = pr.session_id
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE pr.status = 'pending'
+		   AND pr.requested_at >= ? AND pr.requested_at < ? AND p.archived = 0`+pf,
+		append([]any{dr.start, dr.end}, pargs...)...).Scan(&out.Approvals.Pending)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, out, nil)
+}
+
+// enabledRulePatterns fetches every enabled approval-rule tool_pattern (any
+// project scope) for the friction board's has_rule flag.
+func (h *Handler) enabledRulePatterns() ([]string, error) {
+	rows, err := h.DB.Query(`SELECT tool_pattern FROM approval_rules WHERE enabled = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
