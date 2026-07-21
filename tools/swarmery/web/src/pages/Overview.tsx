@@ -1,6 +1,7 @@
 // Command deck (Canvas restyle): a status-sentence hero derived from live
 // counts, a reliability/cost/quality tri-stat bar, a vertical "spine" of
-// today's notable sessions (expandable to a lazy-fetched tool trace), and a
+// today's notable sessions plus any still-running or stuck ones regardless of
+// start day (expandable to a lazy-fetched tool trace), and a
 // sticky right rail of pending approvals + error triage. Data wiring is 100%
 // the existing hooks (sessions + stats/overview + approvals). The Quality tile
 // reads stats.tests_passed/failed/skipped (test_run aggregates); on days with
@@ -419,12 +420,17 @@ function Spine({
     [s.title, s.projectName, s.projectSlug, s.gitBranch].some(
       (v) => v != null && v.toLowerCase().includes(query),
     );
-  const rows = sessions
+  const matched = sessions
     // Running and stuck rows always show (a stuck overnight session is exactly
     // what you want to see and kill); done rows only when they belong to today.
     .filter((s) => (sessionState(s, nowMs) !== 'done' || sessionDay(s) === today) && matchesQuery(s))
-    .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt))
-    .slice(0, MAX_SPINE_ROWS);
+    .sort((a, b) => (b.endedAt ?? b.startedAt).localeCompare(a.endedAt ?? a.startedAt));
+  // Non-done rows are the page's whole point (a stuck overnight session must
+  // stay visible to be killed) — they always survive the row cap; today's done
+  // rows fill whatever room is left.
+  const live = matched.filter((s) => sessionState(s, nowMs) !== 'done');
+  const done = matched.filter((s) => sessionState(s, nowMs) === 'done');
+  const rows = [...live.slice(0, MAX_SPINE_ROWS), ...done].slice(0, MAX_SPINE_ROWS);
 
   return (
     <>

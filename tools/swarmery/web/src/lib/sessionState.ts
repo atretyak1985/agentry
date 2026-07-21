@@ -10,6 +10,11 @@ export const STUCK_AFTER_MS = 30 * 60_000;
 
 const ALIVE = new Set(['running', 'orphaned']);
 
+/** Milliseconds since the session's last transcript activity. */
+export function quietMs(s: Session, nowMs: number): number {
+  return nowMs - Date.parse(s.endedAt ?? s.startedAt);
+}
+
 /**
  * Collapse status × procState × quiet-time into the tri-state.
  * INVARIANT this leans on: `endedAt` is "last transcript activity" — ingest
@@ -20,8 +25,7 @@ export function sessionState(s: Session, nowMs: number): SessionState {
   if (s.status === 'completed' || s.status === 'killed') return 'done';
   if (s.status === 'active' || s.status === 'waiting_approval') return 'running';
   // idle — decide by quiet time + process liveness
-  const quiet = nowMs - Date.parse(s.endedAt ?? s.startedAt);
-  if (quiet < STUCK_AFTER_MS) return 'running';
+  if (quietMs(s, nowMs) < STUCK_AFTER_MS) return 'running';
   return s.procState != null && ALIVE.has(s.procState) ? 'stuck' : 'done';
 }
 
