@@ -149,8 +149,12 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 	// their OWN payload (agentType), with the parent's subagent_type as
 	// fallback. The if/else chain classifies each error row into exactly ONE
 	// bucket, so the strip total stays Σ(main + agents). The type IN (…)
-	// predicate mirrors errorGroups — the only types ingest ever marks
-	// status='error' — so the query rides idx_events_type.
+	// predicate rides idx_events_type; unlike errorGroups it deliberately
+	// EXCLUDES subagent_start: ingest writes TWO error rows per failed run —
+	// the subagent_stop insert AND a mirrored status='error' UPDATE onto the
+	// parent subagent_start (ingest.go closeToolCall) — and the start row has
+	// no parent, so counting it too would double-count every failed run and
+	// add a phantom "main" error.
 	erows, err := h.DB.Query(`
 		SELECT e.type,
 		       json_extract(e.payload, '$.agentType'),
@@ -161,7 +165,7 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		  JOIN projects p ON p.id = s.project_id
 		  LEFT JOIN events pe ON pe.id = e.parent_event_id
 		 WHERE e.status = 'error'
-		   AND e.type IN ('error','tool_call','skill_use','subagent_start','subagent_stop','test_run')
+		   AND e.type IN ('error','tool_call','skill_use','subagent_stop','test_run')
 		   AND e.ts >= ? AND e.ts < ? AND p.archived = 0`+pf,
 		append([]any{dr.start, dr.end}, pargs...)...)
 	if err != nil {

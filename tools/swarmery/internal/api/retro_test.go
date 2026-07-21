@@ -75,14 +75,18 @@ func retroAgentsServer(t *testing.T) (*httptest.Server, *sql.DB) {
 
 	// Runs: tech-lead ×3 today (both notations), debugger ×1 (no duration),
 	// tech-lead ×2 in the prev window. Event ids are 1…6 in insert order —
-	// the error rows below parent onto them.
-	mustExec(`INSERT INTO events (session_id, ts, type, payload, duration_ms, dedup_key) VALUES
-		(1, ?, 'subagent_start', '{"subagent_type":"core:tech-lead"}', 1000, 'a1'),
-		(1, ?, 'subagent_start', '{"subagent_type":"tech-lead"}',      3000, 'a2'),
-		(2, ?, 'subagent_start', '{"subagent_type":"tech-lead"}',      2000, 'a3'),
-		(2, ?, 'subagent_start', '{"subagent_type":"debugger"}',       NULL, 'a4'),
-		(3, ?, 'subagent_start', '{"subagent_type":"tech-lead"}',      NULL, 'a5'),
-		(3, ?, 'subagent_start', '{"subagent_type":"tech-lead"}',      NULL, 'a6')`,
+	// the error rows below parent onto them. a2 and a5 carry status='error'
+	// exactly like ingest: closeToolCall inserts the failed subagent_stop AND
+	// mirrors status='error' onto the parent subagent_start — those mirrored
+	// start rows must NOT be counted again (they have no parent and would
+	// land on "main").
+	mustExec(`INSERT INTO events (session_id, ts, type, status, payload, duration_ms, dedup_key) VALUES
+		(1, ?, 'subagent_start', 'ok',    '{"subagent_type":"core:tech-lead"}', 1000, 'a1'),
+		(1, ?, 'subagent_start', 'error', '{"subagent_type":"tech-lead"}',      3000, 'a2'),
+		(2, ?, 'subagent_start', 'ok',    '{"subagent_type":"tech-lead"}',      2000, 'a3'),
+		(2, ?, 'subagent_start', 'ok',    '{"subagent_type":"debugger"}',       NULL, 'a4'),
+		(3, ?, 'subagent_start', 'error', '{"subagent_type":"tech-lead"}',      NULL, 'a5'),
+		(3, ?, 'subagent_start', 'ok',    '{"subagent_type":"tech-lead"}',      NULL, 'a6')`,
 		today, today, today, today, day10, day10)
 
 	// Errors the way ingest writes them — every sidechain row has a NULL
@@ -96,7 +100,10 @@ func retroAgentsServer(t *testing.T) (*httptest.Server, *sql.DB) {
 	//       agentType, falling back to a5's subagent_type        → tech-lead
 	// The old events.turn_id → turns.agent_name join counts NONE of these
 	// (turn_id is NULL on every row) — the per-agent error assertions below
-	// pin the parent-event attribution against that regression.
+	// pin the parent-event attribution against that regression. e3/e4 pair
+	// with the mirrored status='error' on their parent starts a2/a5 (see
+	// above): if subagent_start errors were counted too, main would report 2
+	// errors today and the assertions below would fail.
 	mustExec(`INSERT INTO events (session_id, parent_event_id, ts, type, tool_name, status, payload, dedup_key) VALUES
 		(1, 1,    ?, 'tool_call',     'Bash',  'error', '{"result":"boom"}', 'e1'),
 		(2, NULL, ?, 'error',         NULL,    'error', '{"error":"api"}',   'e2'),
