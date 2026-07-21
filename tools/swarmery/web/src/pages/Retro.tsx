@@ -5,7 +5,7 @@
 // approval-wait stats. Data comes from /api/retro/{agents,friction}; range
 // presets and project scope mirror Analytics.tsx.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   RetroAgentRow,
   RetroAgentsResp,
@@ -83,13 +83,25 @@ function RangeControls({
 
 /* ----- health strip ----- */
 
-/** vs-prev arrow: `up` colors follow "up is costly" unless `goodUp`. */
-function DeltaArrow({ cur, prev, goodUp = false }: { cur: number; prev: number; goodUp?: boolean }): JSX.Element | null {
+/** vs-prev arrow: `up` colors follow "up is costly" unless `goodUp`.
+ * `fmt` renders the prev value in the tooltip (defaults to a plain count;
+ * pass `fmtCost` for dollar values). */
+function DeltaArrow({
+  cur,
+  prev,
+  goodUp = false,
+  fmt = String,
+}: {
+  cur: number;
+  prev: number;
+  goodUp?: boolean;
+  fmt?: (n: number) => string;
+}): JSX.Element | null {
   if (prev === cur) return null;
   const up = cur > prev;
   const cls = up ? (goodUp ? 'text-green' : 'text-red') : goodUp ? 'text-ink-dim' : 'text-green';
   return (
-    <span className={`font-mono text-[12px] ${cls}`} title={`prev window: ${String(prev)}`}>
+    <span className={`font-mono text-[12px] ${cls}`} title={`prev window: ${fmt(prev)}`}>
       {up ? '↑' : '↓'}
     </span>
   );
@@ -119,11 +131,11 @@ function StatCard({
 }
 
 function HealthStrip({ data }: { data: RetroAgentsResp }): JSX.Element {
-  const totalRuns = data.main.runs + data.agents.reduce((a, r) => a + r.runs, 0);
+  const totalRuns = data.agents.reduce((a, r) => a + r.runs, 0);
   const totalErrors = data.main.errors + data.agents.reduce((a, r) => a + r.errors, 0);
   // The contract carries no prev for main, so vs-prev totals cover subagents.
   const prevRuns = data.agents.reduce((a, r) => a + r.prev.runs, 0);
-  const prevErrors = data.agents.reduce((a, r) => a + Math.round(r.prev.error_rate * r.prev.runs), 0);
+  const prevErrors = data.agents.reduce((a, r) => a + r.prev.errors, 0);
   const prevCost = data.agents.reduce((a, r) => a + r.prev.cost_usd, 0);
   const agentCost = data.agents.reduce((a, r) => a + r.cost_usd, 0);
   return (
@@ -132,7 +144,7 @@ function HealthStrip({ data }: { data: RetroAgentsResp }): JSX.Element {
         label="Orchestrator cost"
         value={fmtCost(data.main.cost_usd)}
         sub={`${fmtTokens(data.main.tokens_out)} tokens out · agents ${fmtCost(agentCost)}`}
-        arrow={<DeltaArrow cur={agentCost} prev={prevCost} />}
+        arrow={<DeltaArrow cur={agentCost} prev={prevCost} fmt={fmtCost} />}
       />
       <StatCard
         label="Agent runs"
@@ -143,7 +155,7 @@ function HealthStrip({ data }: { data: RetroAgentsResp }): JSX.Element {
       <StatCard
         label="Errors"
         value={String(totalErrors)}
-        sub={`prev window ~${String(prevErrors)} (subagents)`}
+        sub={`prev window ${String(prevErrors)} (subagents)`}
         arrow={<DeltaArrow cur={totalErrors} prev={prevErrors} />}
       />
     </div>
@@ -211,11 +223,16 @@ function DeniedToolsPanel({ data }: { data: RetroFrictionResp }): JSX.Element {
   // Rows whose rule was just created from this board flip to "covered"
   // without a refetch.
   const [added, setAdded] = useState<ReadonlySet<string>>(new Set());
-  const [busy, setBusy] = useState<string | null>(null);
+  // In-flight tools: the ref is the synchronous double-submit guard (state
+  // updates lag rapid clicks), the state mirror drives rendering.
+  const inflight = useRef<Set<string>>(new Set());
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [failed, setFailed] = useState<string | null>(null);
 
   const addRule = useCallback((tool: string): void => {
-    setBusy(tool);
+    if (inflight.current.has(tool)) return;
+    inflight.current.add(tool);
+    setBusy(new Set(inflight.current));
     setFailed(null);
     createApprovalRule({
       projectId: null,
@@ -224,11 +241,13 @@ function DeniedToolsPanel({ data }: { data: RetroFrictionResp }): JSX.Element {
     })
       .then(() => {
         setAdded((prev) => new Set(prev).add(tool));
-        setBusy(null);
       })
       .catch((e: unknown) => {
         setFailed(String(e));
-        setBusy(null);
+      })
+      .finally(() => {
+        inflight.current.delete(tool);
+        setBusy(new Set(inflight.current));
       });
   }, []);
 
@@ -258,12 +277,12 @@ function DeniedToolsPanel({ data }: { data: RetroFrictionResp }): JSX.Element {
               ) : (
                 <button
                   type="button"
-                  disabled={busy === d.tool}
+                  disabled={busy.has(d.tool)}
                   onClick={() => addRule(d.tool)}
                   title={`auto-approve every ${d.tool} request`}
                   className="rounded-[7px] border border-line-strong px-2 py-[3px] text-[10.5px] text-ink-dim transition-colors hover:border-green/40 hover:text-green disabled:opacity-50"
                 >
-                  {busy === d.tool ? '…' : '+ rule'}
+                  {busy.has(d.tool) ? '…' : '+ rule'}
                 </button>
               )}
             </span>
@@ -403,11 +422,9 @@ export function Retro(): JSX.Element {
             <Empty>no subagent activity in this range</Empty>
           ) : (
             <div className="grid gap-3.5 sm:grid-cols-2 wide:grid-cols-3">
-              {[...agents.agents]
-                .sort((a, b) => b.runs - a.runs)
-                .map((row) => (
-                  <Scorecard key={row.agent} row={row} />
-                ))}
+              {agents.agents.map((row) => (
+                <Scorecard key={row.agent} row={row} />
+              ))}
             </div>
           )}
         </>

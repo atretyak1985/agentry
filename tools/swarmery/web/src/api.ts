@@ -326,27 +326,13 @@ export function fetchErrorGroups(range: AnalyticsRange = {}): Promise<ErrorsResp
 
 /** Per-agent health scorecards + previous-window comparison (retro loop). */
 export function fetchRetroAgents(range: AnalyticsRange = {}): Promise<RetroAgentsResp> {
-  if (MOCK) {
-    return Promise.resolve({
-      from: '',
-      to: '',
-      approx: false,
-      main: { cost_usd: 0, tokens_out: 0, runs: 0, errors: 0 },
-      agents: [],
-    });
-  }
+  if (MOCK) return mockApi.retroAgents();
   return get(`/api/retro/agents?${rangeQuery(range, {})}`);
 }
 
 /** Friction board: denied tools, top error groups, approval waits (retro loop). */
 export function fetchRetroFriction(range: AnalyticsRange = {}): Promise<RetroFrictionResp> {
-  if (MOCK) {
-    return Promise.resolve({
-      denied_tools: [],
-      error_groups: [],
-      approvals: { resolved: 0, avg_resolve_sec: null, wait_total_min: 0, pending: 0 },
-    });
-  }
+  if (MOCK) return mockApi.retroFriction();
   return get(`/api/retro/friction?${rangeQuery(range, {})}`);
 }
 

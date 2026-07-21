@@ -532,6 +532,7 @@ export interface ErrorsResp {
 /** Same aggregates over the preceding window of equal length. */
 export interface RetroPrev {
   runs: number;
+  errors: number;
   error_rate: number;
   cost_usd: number;
 }
@@ -558,7 +559,6 @@ export interface RetroAgentRow {
 export interface RetroMain {
   cost_usd: number;
   tokens_out: number;
-  runs: number;
   errors: number;
 }
 
@@ -600,6 +600,8 @@ export interface RetroFrictionResp {
   denied_tools: RetroDeniedTool[];
   error_groups: RetroErrorGroup[];
   approvals: RetroApprovals;
+  /** True when the range overlaps pruned (rolled-up) days — the board undercounts there. */
+  approx: boolean;
 }
 
 // --- Phase 2 — approvals + hooks (frozen at gate 2.2) ------------------------
