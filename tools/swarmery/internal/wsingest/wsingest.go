@@ -73,16 +73,19 @@ func (c Config) withDefaults() Config {
 // Stats counts the state after one scan pass (totals, not deltas — the scan
 // is a converging upsert, so re-runs report the same numbers).
 type Stats struct {
-	Workspaces int // workspace dirs indexed
-	Tasks      int // workspace-sourced tasks rows
-	Explicit   int // task_sessions rows with link_source='explicit'
-	Heuristic  int // task_sessions rows with link_source='heuristic'
-	Warnings   int // tolerated parse/mapping stumbles this pass
+	Workspaces  int // workspace dirs indexed
+	Tasks       int // workspace-sourced tasks rows
+	Explicit    int // task_sessions rows with link_source='explicit'
+	Heuristic   int // task_sessions rows with link_source='heuristic'
+	Retros      int // task_retros rows (parsed 09-retrospective.md docs)
+	Loops       int // task_loops rows (ORCHESTRATION.md re-dispatch journal)
+	Delegations int // task_delegations rows (logs/agents.md ledger)
+	Warnings    int // tolerated parse/mapping stumbles this pass
 }
 
 func (s Stats) String() string {
-	return fmt.Sprintf("workspaces=%d tasks=%d links(explicit=%d heuristic=%d) warnings=%d",
-		s.Workspaces, s.Tasks, s.Explicit, s.Heuristic, s.Warnings)
+	return fmt.Sprintf("workspaces=%d tasks=%d links(explicit=%d heuristic=%d) artifacts(retros=%d loops=%d delegations=%d) warnings=%d",
+		s.Workspaces, s.Tasks, s.Explicit, s.Heuristic, s.Retros, s.Loops, s.Delegations, s.Warnings)
 }
 
 // Scanner runs idempotent scan passes against one DB.
@@ -418,6 +421,9 @@ func (s *Scanner) Scan() (Stats, error) {
 					continue
 				}
 				cards = append(cards, taskCard{taskID: taskID, card: c, wsIdx: wsIdx})
+				// phase 2: retro artifacts (09-retrospective / ORCHESTRATION /
+				// agents.md ledger) — hash-gated, tolerant, never fails the scan.
+				s.scanArtifacts(taskID, dir, warn)
 			}
 		}
 	}
@@ -488,6 +494,15 @@ func (s *Scanner) Scan() (Stats, error) {
 		return stats, err
 	}
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM task_sessions WHERE link_source = 'heuristic'`).Scan(&stats.Heuristic); err != nil {
+		return stats, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM task_retros`).Scan(&stats.Retros); err != nil {
+		return stats, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM task_loops`).Scan(&stats.Loops); err != nil {
+		return stats, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM task_delegations`).Scan(&stats.Delegations); err != nil {
 		return stats, err
 	}
 	return stats, nil
