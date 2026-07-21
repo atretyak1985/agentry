@@ -1,4 +1,4 @@
--- 0017: retro artifact ingestion (retro improvement loop, phase 2).
+-- 0018: retro artifact ingestion (retro improvement loop, phase 2).
 --
 -- wsingest parses three per-task workspace artifacts into structured rows:
 --   phases/09-retrospective.md → task_retros + retro_lessons + retro_improvements
