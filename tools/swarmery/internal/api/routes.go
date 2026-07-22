@@ -62,6 +62,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/retro/friction", h.retroFriction)
 	mux.HandleFunc("GET /api/retro/lessons", h.retroLessons)
 	mux.HandleFunc("GET /api/retro/tasks", h.retroTasks)
+	// phase 3: internal/advisor recommendations. The writes carry the same D4
+	// origin hardening as every other mutating endpoint.
+	mux.HandleFunc("GET /api/retro/recommendations", h.retroRecommendations)
+	mux.HandleFunc("PATCH /api/retro/recommendations/{id}", requireLocalOrigin(h.patchRecommendation))
+	mux.HandleFunc("POST /api/retro/advise", requireLocalOrigin(h.retroAdvise))
 
 	// phase 3.5: workspaces
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
@@ -78,6 +83,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// process liveness + kill (phase 4 step-07+)
 	mux.HandleFunc("POST /api/hooks/session-start", requireLocalOrigin(h.hookSessionStart))
 	mux.HandleFunc("POST /api/sessions/{id}/kill", requireLocalOrigin(h.KillSession))
+	// graceful stop — ends the session as 'completed', not 'killed'; also the
+	// only way to close a zombie row with no known PID.
+	mux.HandleFunc("POST /api/sessions/{id}/stop", requireLocalOrigin(h.StopSession))
 	// soft-hide a session from the list (reversible; row + transcript kept).
 	mux.HandleFunc("DELETE /api/sessions/{id}", requireLocalOrigin(h.hideSession))
 	// partial update (ops-hygiene): today only {outcome} — see session_patch.go.

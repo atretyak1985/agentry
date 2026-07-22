@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import type { Session } from '../api/types';
 import { fmtSpan, fmtTime } from '../lib/format';
-import { KillButton } from './KillButton';
+import { sessionState, useNowMs, type SessionState } from '../lib/sessionState';
+import { KillButton, killSlotKind } from './KillButton';
 import { OUTCOME_GLYPH } from './OutcomePicker';
 import { ProjectName } from './ProjectName';
 import { ProcBadge } from './ProcBadge';
+import { StopButton } from './StopButton';
 import { TaskChip } from './TaskChip';
-import { LiveDot, StatusChip } from './ui';
 
 function meta(session: Session): string {
   const parts: string[] = [];
@@ -20,49 +21,57 @@ function meta(session: Session): string {
   return parts.join(' · ');
 }
 
-function chipSuffix(session: Session): string {
-  return fmtSpan(session.startedAt, session.endedAt);
+/* ----- Canvas visual bucket — the UI speaks the tri-state (running/stuck/
+ * done, lib/sessionState.ts) plus two display nuances kept from the existing
+ * product surface: "waiting" (a session mid-approval must stay visible) and
+ * "error" (killed rows keep their red accent). ----- */
+type CanvasTone = 'active' | 'waiting' | 'stuck' | 'error' | 'done';
+
+/** Tri-state → tone; waiting_approval and killed stay visible as nuances. */
+function toneOf(s: Session, nowMs: number): CanvasTone {
+  if (s.status === 'waiting_approval') return 'waiting';
+  const state: SessionState = sessionState(s, nowMs);
+  if (state === 'running') return 'active';
+  if (state === 'stuck') return 'stuck';
+  return s.status === 'killed' ? 'error' : 'done';
 }
 
-const NOW_STATUSES = new Set<Session['status']>(['active', 'waiting_approval', 'idle']);
-
 /* Live sessions get a status-tinted hairline (Redesign "Active now" card). */
-const CARD_BORDERS: Partial<Record<Session['status'], string>> = {
+const CARD_BORDERS: Partial<Record<CanvasTone, string>> = {
   active: 'border-green/25 hover:border-green/55',
-  waiting_approval: 'border-amber/35 hover:border-amber/70',
-};
-
-/* ----- Canvas visual bucket (Canvas.dc.html §Sessions: active/done/error) —
- * the real SessionStatus keeps 5 values; the flat-row dot/chip only draw from
- * 3 tones (+ a 4th "waiting" amber kept from the existing product surface,
- * since collapsing it into "done" would hide a session mid-approval). ----- */
-type CanvasTone = 'active' | 'waiting' | 'error' | 'done';
-
-const CANVAS_TONE: Record<Session['status'], CanvasTone> = {
-  active: 'active',
-  waiting_approval: 'waiting',
-  killed: 'error',
-  idle: 'done',
-  completed: 'done',
+  waiting: 'border-amber/35 hover:border-amber/70',
+  stuck: 'border-amber/35 hover:border-amber/70',
 };
 
 const CANVAS_LABEL: Record<CanvasTone, string> = {
   active: 'working',
   waiting: 'waiting',
-  error: 'error',
+  stuck: 'stuck',
+  error: 'killed',
   done: 'done',
 };
 
 const CANVAS_CHIP_STYLE: Record<CanvasTone, string> = {
   active: 'border-green/40 text-green',
   waiting: 'border-amber/40 text-amber',
+  stuck: 'border-amber/40 text-amber',
   error: 'border-red/40 text-red',
   done: 'border-line-strong text-ink-dim',
 };
 
+/** Chip suffix: stuck shows QUIET TIME (silence since last transcript
+ * activity), not session age — `working · 17 h 32 min` was the lie this
+ * replaces. Everything else keeps the session span. */
+function chipSuffix(session: Session, tone: CanvasTone): string {
+  if (tone === 'stuck') {
+    return `quiet ${fmtSpan(session.endedAt ?? session.startedAt, null)}`;
+  }
+  return fmtSpan(session.startedAt, session.endedAt);
+}
+
 /** Row status dot (Canvas §3a): only LIVE sessions carry a marker — a hollow
- * colour ring for active/error/waiting. done/idle render an empty span so the
- * grid column stays aligned without a resting-state dot. */
+ * colour ring for active/error/waiting/stuck. done renders an empty span so
+ * the grid column stays aligned without a resting-state dot. */
 function RowDot({ tone }: { tone: CanvasTone }): JSX.Element {
   if (tone === 'active') {
     return <span className="inline-block h-2 w-2 shrink-0 animate-pulse-dot rounded-full border-2 border-green" />;
@@ -70,19 +79,21 @@ function RowDot({ tone }: { tone: CanvasTone }): JSX.Element {
   if (tone === 'error') {
     return <span className="inline-block h-2 w-2 shrink-0 rounded-full border-2 border-red" />;
   }
-  if (tone === 'waiting') {
+  if (tone === 'waiting' || tone === 'stuck') {
     return <span className="inline-block h-2 w-2 shrink-0 rounded-full border-2 border-amber" />;
   }
   return <span className="inline-block h-2 w-2 shrink-0" />;
 }
 
-/** Right-justified status chip (Canvas §3e): "working · 3h43m" / "error · 31s" / plain span. */
+/** Right-justified status chip (Canvas §3e): "working · 3h43m" / "stuck · quiet 42 min" / plain span. */
 function RowChip({ tone, suffix }: { tone: CanvasTone; suffix: string }): JSX.Element {
   return (
     <span
       className={`justify-self-end rounded-full border px-[9px] py-0.5 font-mono text-[10.5px] whitespace-nowrap ${CANVAS_CHIP_STYLE[tone]}`}
     >
-      {tone === 'active' || tone === 'error' ? `${CANVAS_LABEL[tone]} · ${suffix}` : suffix}
+      {tone === 'active' || tone === 'stuck' || tone === 'error'
+        ? `${CANVAS_LABEL[tone]} · ${suffix}`
+        : suffix}
     </span>
   );
 }
@@ -99,14 +110,28 @@ export function SessionCard({
   flat?: boolean;
 }): JSX.Element {
   const navigate = useNavigate();
-  const liveNow = now !== null && NOW_STATUSES.has(session.status);
+  const nowMs = useNowMs();
+  const tone = toneOf(session, nowMs);
+  const liveNow = now !== null && (tone === 'active' || tone === 'waiting');
   const goToDetail = (): void => { navigate(`/sessions/${session.id}`); };
+
+  /* Action slot: stuck rows with a confirmed-alive process keep the hard
+   * Kill; any other live tone offers the graceful Stop (no PID needed);
+   * done rows keep KillButton's existing 'exited' tag when a PID is known. */
+  const action: JSX.Element | null =
+    tone === 'stuck' && killSlotKind(session) === 'killable' ? (
+      <KillButton session={session} />
+    ) : tone === 'active' || tone === 'waiting' || tone === 'stuck' ? (
+      <StopButton session={session} />
+    ) : session.procPid != null ? (
+      <KillButton session={session} />
+    ) : null;
 
   /* Stacked card — standalone cards and the <900px rows inside day groups. */
   const card = (
     <>
       <div className="flex items-center gap-2">
-        <LiveDot status={session.status} />
+        <RowDot tone={tone} />
         <ProjectName
           name={session.projectName}
           slug={session.projectSlug}
@@ -123,7 +148,7 @@ export function SessionCard({
             {OUTCOME_GLYPH[session.outcome].glyph}
           </span>
         )}
-        <StatusChip status={session.status} suffix={chipSuffix(session)} />
+        <RowChip tone={tone} suffix={chipSuffix(session, tone)} />
       </div>
       <div className="mt-px mb-[3px] truncate text-[13.5px] font-semibold">
         {session.title ?? session.sessionUuid}
@@ -141,17 +166,18 @@ export function SessionCard({
       {liveNow && (
         <div className="mt-[3px] truncate font-mono text-[10.5px] text-green">now: {now}</div>
       )}
-      {session.procPid != null && (
+      {action !== null && (
         <div className="mt-[3px] flex" onClick={(e) => e.stopPropagation()}>
-          <KillButton session={session} />
+          {action}
         </div>
       )}
     </>
   );
 
-  /* Navigation via div+useNavigate instead of <Link> so that KillButton's
-   * stopPropagation reliably blocks navigation — <a> tags intercept clicks at
-   * the browser level before React's synthetic event system can stop them. */
+  /* Navigation via div+useNavigate instead of <Link> so that the action
+   * buttons' stopPropagation reliably blocks navigation — <a> tags intercept
+   * clicks at the browser level before React's synthetic event system can
+   * stop them. */
   if (!flat) {
     return (
       <div
@@ -160,7 +186,7 @@ export function SessionCard({
         onClick={goToDetail}
         onKeyDown={(e) => { if (e.key === 'Enter') goToDetail(); }}
         className={`mb-2.5 block cursor-pointer rounded-xl border bg-surface px-3.5 py-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-brand ${
-          CARD_BORDERS[session.status] ?? 'border-line hover:border-ink-dim/50'
+          CARD_BORDERS[tone] ?? 'border-line hover:border-ink-dim/50'
         }`}
       >
         {card}
@@ -173,7 +199,6 @@ export function SessionCard({
    * model / status chip). Branch + start-time drop from their own columns
    * on desktop — they fold into the meta line under the title, same as the
    * stacked mobile card, so no data is lost, only re-laid-out. */
-  const tone = CANVAS_TONE[session.status];
   return (
     <div
       role="link"
@@ -217,7 +242,7 @@ export function SessionCard({
           <span className="mt-0.5 block truncate text-[12px] text-ink-dim">
             {liveNow ? `now: ${now}` : (session.why ?? meta(session))}
           </span>
-          {(session.taskExternalId != null || session.procPid != null) && (
+          {(session.taskExternalId != null || action !== null) && (
             <span className="mt-[3px] flex min-w-0 items-center gap-1.5">
               {session.taskExternalId != null && (
                 <TaskChip
@@ -227,10 +252,8 @@ export function SessionCard({
                 />
               )}
               <ProcBadge session={session} />
-              {session.procPid != null && (
-                <span onClick={(e) => e.stopPropagation()}>
-                  <KillButton session={session} />
-                </span>
+              {action !== null && (
+                <span onClick={(e) => e.stopPropagation()}>{action}</span>
               )}
             </span>
           )}
@@ -238,7 +261,7 @@ export function SessionCard({
         <span className="truncate font-mono text-[11px] text-ink-faint">
           {session.model ?? '—'}
         </span>
-        <RowChip tone={tone} suffix={chipSuffix(session)} />
+        <RowChip tone={tone} suffix={chipSuffix(session, tone)} />
       </div>
     </div>
   );

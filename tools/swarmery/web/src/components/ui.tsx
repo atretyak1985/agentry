@@ -89,56 +89,6 @@ export function DurationPill({
   );
 }
 
-/* ----- status chip — Redesign pill: hairline border + status ink ----- */
-
-const CHIP_STYLES: Record<SessionStatus, string> = {
-  active: 'border-green/40 text-green',
-  waiting_approval: 'border-amber/40 text-amber',
-  idle: 'border-line text-ink-dim',
-  completed: 'border-line text-ink-dim',
-  killed: 'border-red/40 text-red',
-};
-
-const CHIP_LABELS: Record<SessionStatus, string> = {
-  active: 'active',
-  waiting_approval: 'waiting',
-  idle: 'idle',
-  completed: 'done',
-  killed: 'killed',
-};
-
-export function StatusChip({
-  status,
-  suffix,
-}: {
-  status: SessionStatus;
-  suffix?: string;
-}): JSX.Element {
-  return (
-    <span
-      className={`rounded-full border px-2 py-0.5 font-mono text-[10.5px] whitespace-nowrap ${CHIP_STYLES[status]}`}
-    >
-      {CHIP_LABELS[status]}
-      {suffix !== undefined ? ` · ${suffix}` : ''}
-    </span>
-  );
-}
-
-/* ----- live dot ----- */
-
-export function LiveDot({ status }: { status: SessionStatus }): JSX.Element | null {
-  if (status === 'active') {
-    return <span className="inline-block h-[7px] w-[7px] shrink-0 animate-pulse-dot rounded-full bg-green" />;
-  }
-  if (status === 'waiting_approval') {
-    return <span className="inline-block h-[7px] w-[7px] shrink-0 rounded-full bg-amber" />;
-  }
-  if (status === 'idle') {
-    return <span className="inline-block h-[7px] w-[7px] shrink-0 rounded-full bg-ink-dim/50" />;
-  }
-  return null;
-}
-
 /* ----- card shell — raised navy on page bg, 12px radius, hairline ----- */
 
 export function Card({
