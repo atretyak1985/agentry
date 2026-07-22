@@ -551,8 +551,9 @@ export interface RetroAgentRow {
   sessions: number;
   cost_usd: number;
   tokens_out: number;
+  /** Raw error-event count (a single run can carry many). */
   errors: number;
-  /** errors/runs; 0 when the agent had no counted run. */
+  /** Failed-run share: runs with ≥1 error / runs (≤ 1); 0 when no counted run. */
   error_rate: number;
   /** avg/p95 over subagent run durations; null when no run carried one. */
   avg_ms: number | null;
