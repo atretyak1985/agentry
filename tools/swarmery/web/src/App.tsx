@@ -48,8 +48,8 @@ interface NavItem {
 }
 
 const DOCS_NAV: NavItem = { to: '/docs', glyph: '❐', label: 'Docs' };
-const SERENA_NAV: NavItem = { to: '/serena', glyph: '◎', label: 'serena' };
-const GRAPHIFY_NAV: NavItem = { to: '/graphify', glyph: '⬡', label: 'graphify' };
+const SERENA_NAV: NavItem = { to: '/serena', glyph: '◎', label: 'Serena' };
+const GRAPHIFY_NAV: NavItem = { to: '/graphify', glyph: '⬡', label: 'Graphify' };
 
 /** Global project scope switcher (header) — GitHub-org-switcher pattern.
  * Projects come from the ScopeProvider's shared fetch. */

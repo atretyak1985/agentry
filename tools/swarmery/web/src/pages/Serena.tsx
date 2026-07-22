@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ToolsResponse, ToolsSerenaProject } from '../api/types';
 import { fetchTools, serenaStart, serenaStop } from '../api';
-import { Card, ErrorBox, Loading, SectionTitle } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
 import { fmtAgo } from '../lib/format';
 
 const SETTLE_POLL_MS = 2_000;
@@ -28,15 +28,6 @@ function StatePill({ state }: { state: ToolsSerenaProject['state'] }): JSX.Eleme
     >
       {state}
     </span>
-  );
-}
-
-/** Dashed-box empty state (matches the plugins-card idiom). */
-function EmptyBox({ children }: { children: string }): JSX.Element {
-  return (
-    <div className="rounded-xl border border-dashed border-line px-3.5 py-4 font-mono text-[11.5px] text-ink-dim">
-      {children}
-    </div>
   );
 }
 
@@ -145,11 +136,11 @@ export function Serena(): JSX.Element {
         <Loading label="serena…" />
       ) : data !== null ? (
         !data.serena.available ? (
-          <EmptyBox>serena binary not found on this machine</EmptyBox>
+          <Empty>serena binary not found on this machine</Empty>
         ) : project === undefined ? (
-          <EmptyBox>
+          <Empty>
             no projects with lsp-pack enabled — enable it in a project&apos;s plugins card
-          </EmptyBox>
+          </Empty>
         ) : (
           <>
             <Card>
@@ -175,6 +166,13 @@ export function Serena(): JSX.Element {
                 <button
                   type="button"
                   disabled={busy}
+                  aria-label={
+                    busy
+                      ? 'busy'
+                      : project.state === 'running' || project.state === 'starting'
+                        ? 'stop serena'
+                        : 'start serena'
+                  }
                   onClick={() => toggle(project)}
                   className="ml-auto rounded-lg border border-line bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-surface2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -210,6 +208,7 @@ export function Serena(): JSX.Element {
             {project.state === 'running' && (
               <div className="mt-3">
                 <iframe
+                  key={project.id}
                   src={project.dashboardPath}
                   title="Serena dashboard"
                   className="h-[calc(100vh-220px)] w-full rounded-xl border border-line bg-surface"
