@@ -25,6 +25,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// attach: the inverse — re-enable swarmery for a detached project (merge
 	// settings, restore project.json from .bak, reinstall hooks). Same fence.
 	mux.HandleFunc("POST /api/projects/{id}/attach", requireLocalOrigin(h.attachProject))
+	// plugins: the marketplace catalog × this project's enabledPlugins, plus
+	// a fenced per-pack toggle (PUT added in step 03).
+	mux.HandleFunc("GET /api/projects/{id}/plugins", h.projectPlugins)
 	// onboarding: bootstrap a new consumer project from the dashboard. Fenced
 	// by requireLocalOrigin + an explicit root allow-list (disabled when unset).
 	// The GET exposes defaults (workspace root, enabled state) to the modal.
