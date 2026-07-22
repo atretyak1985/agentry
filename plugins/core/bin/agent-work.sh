@@ -192,6 +192,12 @@ EOF
         log_info "SUMMARY.md skeleton created — заповни перед фінальним звітом"
     fi
 
+    # Phase 9 nudge (non-blocking): the retrospective feeds the control plane's
+    # lessons pipeline — a completed task without one is a lost feedback loop.
+    if [ ! -f "${task_dir}/phases/09-retrospective.md" ]; then
+        log_info "phases/09-retrospective.md відсутній — lessons з цієї таски не потраплять у ретро-аналітику (@retrospective-agent, фаза 9)"
+    fi
+
     # Archive mirrors working: group by the task's own start date (from its id), not today.
     local dest_dir
     dest_dir="${ARCHIVE_DIR}/${task_id:0:4}/${task_id:5:2}/${task_id:8:2}"
