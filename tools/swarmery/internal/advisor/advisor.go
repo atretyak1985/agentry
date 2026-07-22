@@ -15,6 +15,9 @@
 //	agent       R2 R4  the target agent's CURRENT       metric ≥ VerifyImprovement
 //	                   registry version was created     better over [adopted_at, now),
 //	                   after accepted_at                ≥ VerifyAfterDays after adoption
+//	                   (a target ABSENT from the registry — e.g. an ad-hoc ledger
+//	                   label — has no adoption signal and verifies directly from
+//	                   accepted, like error_group/config)
 //	tool        R1     an enabled approval_rules row    same, anchored on adopted_at
 //	                   covering the tool was created
 //	                   after accepted_at
@@ -531,7 +534,7 @@ func verify(db *sql.DB, now time.Time, stats *Stats) error {
 		SELECT id, rule, target_kind, target, baseline, evidence, status
 		  FROM recommendations
 		 WHERE (status = 'adopted' AND target_kind IN ('agent', 'tool', 'process'))
-		    OR (status = 'accepted' AND target_kind IN ('error_group', 'config'))`)
+		    OR (status = 'accepted' AND target_kind IN ('agent', 'error_group', 'config'))`)
 	if err != nil {
 		return err
 	}
@@ -558,8 +561,26 @@ func verify(db *sql.DB, now time.Time, stats *Stats) error {
 		return err
 	}
 
+	// Registry-known agent names (folded): accepted agent-kind recs for these
+	// wait for adoption; a target ABSENT from the registry (e.g. an ad-hoc
+	// delegation-ledger label that never had an agent file) has no adoption
+	// signal, so it verifies directly from accepted like error_group/config.
+	registryAgents := map[string]bool{}
+	if arows, aerr := db.Query(`SELECT name FROM agents WHERE deleted = 0`); aerr == nil {
+		for arows.Next() {
+			var name string
+			if err := arows.Scan(&name); err == nil {
+				registryAgents[normAgent(name)] = true
+			}
+		}
+		arows.Close()
+	}
+
 	nowS := fmtTS(now)
 	for _, r := range recs {
+		if r.status == "accepted" && r.targetKind == "agent" && registryAgents[r.target] {
+			continue // registry agent — adoption (a version bump) is the signal to wait for
+		}
 		var b baseline
 		if err := json.Unmarshal([]byte(r.baseline), &b); err != nil {
 			log.Printf("warn: advisor: rec %d: malformed baseline json: %v", r.id, err)

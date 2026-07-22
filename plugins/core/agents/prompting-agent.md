@@ -99,6 +99,7 @@ Prompting Agent is an optional Phase 3.5 executor that generates structured, sel
 4. **Structure the prompt** -- fill all 9 sections with specific, actionable content.
    - After gathering all examples, drop raw file contents from working memory and retain only the file:line citations and relevant snippets.
 5. **Add acceptance criteria** -- every criterion is verifiable with a command or boolean assertion. Do not use vague criteria ("code is clean", "works correctly").
+5.5. **Append the four Brief-hygiene lines** (fleet telemetry: each kills a top recurring tool-error class) to every generated prompt: return findings as text, never write report files unless the prompt names an artifact path; Read before Edit/Write and re-Read after a modified-since-read error; never attempt or retry policy-blocked commands (destructive git, force ops); avoid fragile Bash quoting -- write multi-line content via the Write tool instead of heredocs.
 6. **Write to disk** -- save using the Write tool to `artifacts/prompts/`.
 
 ### Prompt types by target
