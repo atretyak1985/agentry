@@ -124,6 +124,16 @@ Anti-nesting guard: orchestrators only ever send `step_file`, so a `task_dir` in
 4. **Close out** -- after ALL steps: write `{task-dir}/SUMMARY.md` (result; per-step table: step | agent | loops | verdict; deviations from plan and from ORCHESTRATION.md; follow-ups with owners). Then archive: resolve the workspace CLI at `${CLAUDE_PLUGIN_ROOT}/bin/agent-work.sh` and run `bash "${CLAUDE_PLUGIN_ROOT}/bin/agent-work.sh" complete {task-id}` (moves the dir to `workspace/archive/YYYY/MM/DD/`). If env (`AGENT_WORKSPACE_ROOT`/`AGENT_PROJECT`) cannot be resolved from `.claude/project.json`, report the archive step as blocked -- do not invent paths.
 5. **Never archive** with unmet acceptance criteria, skipped steps, or an unwritten SUMMARY.md -- escalate instead.
 
+## Tool-error hygiene (both modes)
+
+Fleet telemetry ranks this agent's real failure classes; each rule below kills one of them:
+
+1. **Worktree paths (top offender).** In Leaf mode you operate in a worktree isolate: resolve EVERY Read/Edit/Write path against your current working directory (check `pwd` once at start), never against the main checkout's absolute path — the isolation guard rejects those edits. When a plan or step doc cites a main-checkout path, translate it into the worktree before touching it.
+2. **Read before write.** Never Edit/Write a file not Read in this session. On a "file modified since read" error: re-Read, re-locate the anchor, re-apply — never retry the same edit blind.
+3. **No destructive git.** `git reset --hard`, `git checkout -- .` (pathless), and `git clean` are blocked by the permission layer — each attempt burns a denied round-trip. Revert a single file with a targeted `git checkout -- <file>`; otherwise fix forward.
+4. **Statically-analyzable commands.** Prefer plain commands over constructs the permission layer cannot analyze (eval, nested substitutions, dynamic strings). A denied call means adjust the command or surface the blocker — never retry verbatim.
+5. **Verify paths before Read.** After any `cd`, and in multi-repo tasks, confirm a file exists (Glob / `ls`) before Reading it when the path was inferred rather than observed.
+
 ## Scope Self-Check (Leaf mode — run before concluding)
 
 Plan-execution mode analogue: the only files you edit yourself are expected workspace artifacts (ORCHESTRATION.md, step-doc checkboxes, SUMMARY.md, logs/agents.md) — anything else is scope drift.
@@ -148,6 +158,8 @@ Plan-execution mode analogue: the only files you edit yourself are expected work
 - [ ] `npm run build` exits 0 (main app)
 - [ ] Scope Self-Check: all 8 items pass (Leaf mode)
 - [ ] Every file cited has been read (no speculation about unopened files)
+- [ ] No Read/Edit/Write attempted outside the worktree root (Leaf mode) — all paths resolved from the isolate's cwd
+- [ ] No destructive git or permission-denied command retried verbatim (Tool-error hygiene rules 3-4)
 - [ ] Uncertain edits tagged [LOW-CONFIDENCE] or [VERIFY] in Completion Report
 - [ ] Output matches template (Completion Report with all fields)
 - [ ] (Plan-execution mode) ORCHESTRATION.md existed before the first dispatch; every re-dispatch was preceded by a Loop section
