@@ -707,12 +707,14 @@ func metricValue(db *sql.DB, rule, target string, win window) (name string, valu
 		}
 		return "denied_per_day", float64(denied) / wd, true, nil
 	case "R2":
+		// error_rate is the failed-run share (distinct runs with ≥1 error /
+		// runs) — the same grain as r2AgentErrorRate and the Retro scorecards.
 		acc, aerr := agentErrorWindow(db, win)
 		if aerr != nil {
 			return "error_rate", 0, false, aerr
 		}
 		if a, hit := acc[target]; hit && a.runs >= R2MinRuns {
-			return "error_rate", float64(a.errors) / float64(a.runs), true, nil
+			return "error_rate", float64(a.failedRuns()) / float64(a.runs), true, nil
 		}
 		return "error_rate", 0, false, nil
 	case "R3":
