@@ -12,7 +12,8 @@ cloud, no account, no telemetry.
 - **Analytics** — cost/tokens/runs over time by project or model, with a per-project breakdown and an agent × project cross-tab.
 - **Approvals** — pending `AskUserQuestion` and permission requests with inline approve/deny and expiry timers.
 - **System** — the full Claude config graph (agents · skills · hooks · commands · overlays) across global and project scopes, with lint badges and version history.
-- **Docs** — the framework docs (onboarding · extending · neutrality) rendered in-app.
+- **Retro** — agent-system retrospectives: per-agent health scorecards, a friction board, a lessons feed parsed from workspace retrospectives, and a heuristics-only advisor with a tracked recommendation lifecycle (`proposed → accepted → adopted → verified`). Full guide: [docs/retro.md](docs/retro.md).
+- **Docs** — the framework docs (onboarding · extending · neutrality · retro) rendered in-app.
 
 Design reference: [swarmery-design.md](swarmery-design.md) ·
 [UI mockup](docs/design/swarmery-ui-mockup.html).
