@@ -29,8 +29,10 @@ package api
 // success rates from agentOutcomeRates, per-agent errors from the
 // parent_event_id attribution (statsTools grain — see tools.go), error
 // grouping from errorGroups (shared with /api/stats/errors). error_rate is
-// the FAILED-RUN share (distinct runs with ≥1 error / runs, always ≤ 1), not
-// raw error events per run — one run spraying many tool errors counts once.
+// the FAILED-RUN share (distinct runs with ≥1 error / runs, clamped to ≤1 — a
+// run spanning the window start can contribute a failed run without
+// contributing to the run count), not raw error events per run — one run
+// spraying many tool errors counts once.
 
 import (
 	"database/sql"
@@ -123,8 +125,9 @@ func (a *retroAgentWin) failedRuns() int64 { return int64(len(a.failedRunKeys)) 
 // cost/tokens_out from turns (agentTurnTotals), errors from status='error'
 // events attributed through parent_event_id (the statsTools grain). Errors
 // are additionally folded into failedRunKeys — the DISTINCT runs with ≥1
-// error — which backs error_rate as a failed-run share (≤ 1 by construction)
-// instead of raw error events per run.
+// error — which backs error_rate as a failed-run share (clamped to ≤1 — a run
+// spanning the window start can contribute a failed run without contributing
+// to the run count) instead of raw error events per run.
 func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[string]*retroAgentWin, error) {
 	acc := map[string]*retroAgentWin{}
 	get := func(key string) *retroAgentWin {
@@ -268,12 +271,14 @@ func prevWindow(dr dateRange) dateRange {
 }
 
 // errRate is failedRuns/runs — the failed-run share — 0 when the agent had no
-// counted run.
+// counted run. Clamped to ≤1: an error inside the window whose parent run
+// STARTED before the window adds a failed-run key absent from the in-window
+// run count.
 func errRate(failedRuns, runs int64) float64 {
 	if runs == 0 {
 		return 0
 	}
-	return float64(failedRuns) / float64(runs)
+	return min(1, float64(failedRuns)/float64(runs))
 }
 
 // redispatchRe classifies a ledger verdict as a re-dispatch (vs an accept).

@@ -449,7 +449,10 @@ func r2AgentErrorRate(db *sql.DB, win window) ([]finding, error) {
 		if a.runs < R2MinRuns {
 			continue
 		}
-		rate := float64(a.failedRuns()) / float64(a.runs)
+		// Clamped to ≤1 — a run spanning the window start can contribute a
+		// failed run without contributing to the run count (twin of the
+		// internal/api errRate clamp and the R2 metricValue clamp).
+		rate := min(1, float64(a.failedRuns())/float64(a.runs))
 		cands = append(cands, cand{agent, a, rate})
 		rates = append(rates, rate)
 	}
