@@ -655,10 +655,15 @@ func retroRecServer(t *testing.T) (*httptest.Server, *sql.DB) {
 		(1, '/work/alpha', '-work-alpha', 'Alpha', ?)`, today)
 	mustExec(`INSERT INTO sessions (id, project_id, session_uuid, status, started_at) VALUES
 		(1, 1, 'uuid-one', 'completed', ?)`, today)
+	// Stamp the denied events yesterday, not today: retroDay(0) is noon today,
+	// which is in the FUTURE when tests run in the morning — and the advise
+	// endpoint's window ends at time.Now(), so future events silently fall out
+	// (date-flaky: green after noon, red before).
+	yesterday := retroDay(t, 1)
 	for i := 0; i < 6; i++ {
 		mustExec(`INSERT INTO events (session_id, ts, type, tool_name, status, payload, dedup_key)
 			VALUES (1, ?, 'tool_call', 'Bash', 'denied', '{}', ?)`,
-			today, "den-"+string(rune('a'+i)))
+			yesterday, "den-"+string(rune('a'+i)))
 	}
 	for i, st := range []string{"proposed", "accepted", "dismissed", "adopted", "verified"} {
 		mustExec(`INSERT INTO recommendations
