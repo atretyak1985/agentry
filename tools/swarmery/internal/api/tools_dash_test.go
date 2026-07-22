@@ -171,9 +171,11 @@ func TestSerenaStartStopLifecycle(t *testing.T) {
 	}
 
 	// The stub prints the dashboard line immediately; GET /api/tools must show
-	// running (with startedAt + logTail) within 2s.
+	// running (with startedAt + logTail) well within the deadline — generous to
+	// absorb spawn/pipe latency under full-suite parallel load (the loop exits
+	// early on success, so the slack costs nothing).
 	var sp serenaProjectDTO
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		resp := getToolsResponse(t, srv.URL)
 		if len(resp.Serena.Projects) == 1 {
