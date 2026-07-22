@@ -12,6 +12,7 @@ import { ProjectDetail } from './pages/ProjectDetail';
 import { Sessions } from './pages/Sessions';
 import { SessionDetailPage } from './pages/SessionDetail';
 import { Docs } from './pages/Docs';
+import { Serena } from './pages/Serena';
 import { System } from './pages/System';
 import './index.css';
 
@@ -50,6 +51,10 @@ const router = createBrowserRouter([
         ),
       },
       { path: 'system', element: <System /> },
+      { path: 'serena', element: <Serena /> },
+      // Placeholder — the graphify nav item is gated on graphify.projects, so
+      // the path must resolve; step 05 replaces this with the Graphify page.
+      { path: 'graphify', element: <></> },
       { path: 'docs', element: <Docs /> },
       { path: 'docs/:slug', element: <Docs /> },
     ],
