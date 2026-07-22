@@ -106,6 +106,25 @@ func TestStartParsesDashboardURL(t *testing.T) {
 	}
 }
 
+// TestStartParsesDashboardURLHostname pins that the URL regex accepts hostname
+// hosts, not just numeric IPv4 — serena may print "http://localhost:…".
+func TestStartParsesDashboardURLHostname(t *testing.T) {
+	shrinkKnobs(t)
+	const want = "http://localhost:24282/dashboard/index.html"
+	stub := writeStub(t, fmt.Sprintf("echo 'Serena web dashboard started at %s'\nsleep 60\n", want))
+	m := stubManager(t, stub)
+
+	if err := m.Start(1, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "state=running via localhost URL parse", func() bool {
+		return m.Status(1).State == StateRunning
+	})
+	if got := m.Status(1).DashboardURL; got != want {
+		t.Errorf("DashboardURL = %q, want %q", got, want)
+	}
+}
+
 func TestStartFallbackProbe(t *testing.T) {
 	shrinkKnobs(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +203,57 @@ func TestStopTerminatesGroup(t *testing.T) {
 
 	if err := m.Stop(1); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("second Stop = %v, want ErrNotRunning", err)
+	}
+}
+
+// TestRestartAfterStop pins that a stopped entry is replaceable: Start → Stop
+// → Start again succeeds with a fresh process.
+func TestRestartAfterStop(t *testing.T) {
+	shrinkKnobs(t)
+	stub := writeStub(t, "sleep 60\n")
+	m := stubManager(t, stub)
+
+	if err := m.Start(1, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	pid1 := pidOf(t, m, 1)
+	if err := m.Stop(1); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if err := m.Start(1, t.TempDir()); err != nil {
+		t.Fatalf("restart after Stop: %v", err)
+	}
+	pid2 := pidOf(t, m, 1)
+	if pid1 == pid2 {
+		t.Errorf("restart reused pid %d, want a fresh process", pid1)
+	}
+	if got := m.Status(1).State; got != StateStarting && got != StateRunning {
+		t.Errorf("state after restart = %q, want starting or running", got)
+	}
+}
+
+// TestLogTailCap pins the ring buffer: 60 printed lines keep only the LAST 40.
+func TestLogTailCap(t *testing.T) {
+	shrinkKnobs(t)
+	stub := writeStub(t, "for i in $(seq 1 60); do echo \"line $i\"; done\nsleep 60\n")
+	m := stubManager(t, stub)
+
+	if err := m.Start(1, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, "all 60 lines to be scanned", func() bool {
+		tail := m.Status(1).LogTail
+		return len(tail) > 0 && tail[len(tail)-1] == "line 60"
+	})
+	tail := m.Status(1).LogTail
+	if len(tail) != logTailCap {
+		t.Fatalf("LogTail length = %d, want %d", len(tail), logTailCap)
+	}
+	for i, line := range tail {
+		if want := fmt.Sprintf("line %d", 21+i); line != want {
+			t.Errorf("LogTail[%d] = %q, want %q", i, line, want)
+		}
 	}
 }
 

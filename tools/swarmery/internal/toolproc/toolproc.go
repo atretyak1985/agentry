@@ -59,7 +59,9 @@ var (
 const logTailCap = 40
 
 // dashboardURLRe extracts the URL from serena's "dashboard started at …" line.
-var dashboardURLRe = regexp.MustCompile(`https?://[0-9.]+:[0-9]+[^\s]*`)
+// The host part accepts hostnames as well as IPv4 (serena may print
+// "http://localhost:24282/…").
+var dashboardURLRe = regexp.MustCompile(`https?://[0-9A-Za-z.-]+:[0-9]+[^\s]*`)
 
 // Status is a point-in-time snapshot safe to hand to API handlers.
 type Status struct {
@@ -105,6 +107,7 @@ type proc struct {
 
 	// Knob copies captured at Start so later knob mutation cannot race.
 	urlWait      time.Duration
+	killWait     time.Duration
 	probePorts   []int
 	probeTimeout time.Duration
 }
@@ -169,6 +172,7 @@ func (m *Manager) Start(projectID int64, projectDir string) error {
 		startedAt:    time.Now(),
 		done:         make(chan struct{}),
 		urlWait:      urlWait,
+		killWait:     killWait,
 		probePorts:   append([]int(nil), probePorts...),
 		probeTimeout: probeTimeout,
 	}
@@ -185,6 +189,7 @@ func (m *Manager) Start(projectID int64, projectDir string) error {
 // tail (incl. the last line quoted in Err) is complete when state flips.
 func (m *Manager) readAndReap(p *proc, pr *os.File) {
 	sc := bufio.NewScanner(pr)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
 		m.mu.Lock()
@@ -200,7 +205,22 @@ func (m *Manager) readAndReap(p *proc, pr *os.File) {
 		}
 		m.mu.Unlock()
 	}
-	pr.Close()
+	if scanErr := sc.Err(); scanErr != nil {
+		// The scan loop ended without EOF (e.g. a line beyond the buffer cap).
+		// Record it, drop the read end, and SIGKILL the whole group before
+		// Wait — otherwise a live child writing to the broken pipe could keep
+		// Wait blocked forever and the reaper (and Stop) would hang.
+		m.mu.Lock()
+		p.logTail = append(p.logTail, "log scanner error: "+scanErr.Error())
+		if len(p.logTail) > logTailCap {
+			p.logTail = p.logTail[len(p.logTail)-logTailCap:]
+		}
+		m.mu.Unlock()
+		pr.Close()
+		syscall.Kill(-p.pgid, syscall.SIGKILL) //nolint:errcheck // group may already be gone
+	} else {
+		pr.Close()
+	}
 
 	waitErr := p.cmd.Wait()
 
@@ -253,7 +273,9 @@ func (m *Manager) probeFallback(p *proc) {
 			continue
 		}
 		m.mu.Lock()
-		if p.state == StateStarting {
+		// The stopping guard keeps a late probe hit from flipping
+		// starting→running while a Stop is already in flight.
+		if p.state == StateStarting && !p.stopping {
 			p.dashboardURL = url
 			p.state = StateRunning
 		}
@@ -272,12 +294,11 @@ func (m *Manager) Stop(projectID int64) error {
 		return ErrNotRunning
 	}
 	p.stopping = true
-	pgid, done := p.pgid, p.done
+	pgid, done, grace := p.pgid, p.done, p.killWait
 	m.mu.Unlock()
 
 	syscall.Kill(-pgid, syscall.SIGTERM) //nolint:errcheck // group may already be gone
 
-	grace := killWait
 	select {
 	case <-done:
 	case <-time.After(grace):
@@ -285,9 +306,7 @@ func (m *Manager) Stop(projectID int64) error {
 		<-done                               // SIGKILL is not ignorable; the reaper will close done
 	}
 
-	m.mu.Lock()
-	p.state = StateStopped
-	m.mu.Unlock()
+	// readAndReap committed StateStopped (stopping was set) before closing done.
 	return nil
 }
 
