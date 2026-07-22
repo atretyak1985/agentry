@@ -147,6 +147,13 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/tools", h.toolsDash)
 	mux.HandleFunc("POST /api/projects/{id}/serena/start", requireLocalOrigin(h.serenaStart))
 	mux.HandleFunc("POST /api/projects/{id}/serena/stop", requireLocalOrigin(h.serenaStop))
+	// tool dashboards (step 03): same-origin embedding surfaces (tools_embed.go)
+	// — serena reverse proxy (incl. ws upgrade; start/stop above stay more
+	// specific and win) + graphify static jail. graphify registers method-less
+	// so its handler can 405 non-GET/HEAD itself: a "GET …" pattern would let
+	// other methods fall through to the "/" SPA catch-all instead.
+	mux.HandleFunc("/api/projects/{id}/serena/{rest...}", h.serenaProxy)
+	mux.HandleFunc("/api/projects/{id}/graphify/{rest...}", h.graphifyStatic)
 
 	// control-plane v2: notifications & auto-approve rules. Writes carry the
 	// same D4 origin hardening as every other mutating endpoint; evaluation
