@@ -1,17 +1,18 @@
 {
-  "extraKnownMarketplaces": {
-    "swarmery": {
-      "source": {
-        "source": "github",
-        "repo": "atretyak1985/swarmery"
-      }
-    }
-  },
   "enabledPlugins": {
-    "core@swarmery": true
+    "core@swarmery": true,
+    "graphify-pack@swarmery": true
   },
   "env": {
     "AGENT_PROJECT": "swarmery"
+  },
+  "extraKnownMarketplaces": {
+    "swarmery": {
+      "source": {
+        "repo": "atretyak1985/swarmery",
+        "source": "github"
+      }
+    }
   },
   "permissions": {
     "deny": [
@@ -23,7 +24,7 @@
     ]
   },
   "statusLine": {
-    "type": "command",
-    "command": "bash $CLAUDE_PROJECT_DIR/plugins/core/statusline/statusline.sh"
+    "command": "bash $CLAUDE_PROJECT_DIR/plugins/core/statusline/statusline.sh",
+    "type": "command"
   }
 }

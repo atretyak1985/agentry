@@ -20,3 +20,4 @@ node_modules/
 .flavor-tokens*
 .idea/
 .claude/worktrees/
+.claude/settings.json.bak
