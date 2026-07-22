@@ -93,7 +93,9 @@ proposed ──Accept──▶ accepted ──(auto)──▶ adopted ──(aut
   The button changes nothing else — the actual fix is yours.
 - **Adopted** is detected automatically, per target kind:
   - *agent* — the agent's prompt file changed (a new `agent_versions` row after
-    acceptance; the system registry versions every agent by content hash);
+    acceptance; the system registry versions every agent by content hash). A target
+    absent from the registry (an ad-hoc delegation-ledger label) has no adoption
+    signal and verifies directly from `accepted`;
   - *tool* — an enabled approval rule covering the tool was created after acceptance;
   - *process* — the referenced improvement row's status flipped to done/closed/виконано;
   - *error_group* / *config* — no detectable adoption; they go straight from `accepted`

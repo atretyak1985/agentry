@@ -1019,3 +1019,43 @@ func TestGuardedTransitionsRespectDismissed(t *testing.T) {
 		t.Errorf("status = %q, want dismissed untouched", status)
 	}
 }
+
+// A rec targeting an agent ABSENT from the registry (an ad-hoc delegation
+// ledger label, e.g. a hand-named reviewer) has no adoption signal — it must
+// verify directly from accepted instead of waiting forever, while a
+// registry-known agent in the same state keeps waiting for its version bump.
+func TestUnknownRegistryAgentVerifiesFromAccepted(t *testing.T) {
+	db := testDB(t)
+	// Post-acceptance window truth: one in-window task, 4 clean ledger rows
+	// each → redispatch_share 0 (≥ R4MinRows, so the activity floor passes).
+	mustExec(t, db, `INSERT INTO tasks (id, project_id, title, prompt, status, created_at, started_at, source, external_id)
+		VALUES (1, 1, 'In-range', 'goal', 'done', ?, ?, 'workspace', 'task-a')`, ago(3), ago(3))
+	seedDelegations(t, db, 1, "ghost-reviewer", 0, 4)
+	seedDelegations(t, db, 1, "known-reviewer", 0, 4)
+	// known-reviewer exists in the registry; ghost-reviewer does not.
+	mustExec(t, db, `INSERT INTO agents (id, name, scope, file_path) VALUES (1, 'known-reviewer', 'global', '/x/known-reviewer.md')`)
+
+	base := func(target string) string {
+		return fmt.Sprintf(`{"metric":"redispatch_share","value":0.67,"per_day":false,"window_days":14,"accepted_at":%q}`, ago(8))
+	}
+	for i, target := range []string{"ghost-reviewer", "known-reviewer"} {
+		mustExec(t, db, `INSERT INTO recommendations
+			(id, rule, target_kind, target, title, detail, evidence, status, dedup_key, baseline, created_at, updated_at)
+			VALUES (?, 'R4', 'agent', ?, 't', 'd', '{}', 'accepted', ?, ?, ?, ?)`,
+			i+1, target, "R4:"+target, base(target), ago(8), ago(8))
+	}
+
+	s, err := Run(db, testNow)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if s.Verified != 1 {
+		t.Fatalf("stats = %+v, want exactly the ghost verified", s)
+	}
+	if _, status, _, _ := recRow(t, db, "ghost-reviewer"); status != "verified" {
+		t.Errorf("ghost status = %q, want verified (0.67 -> 0 redispatch share)", status)
+	}
+	if _, status, _, _ := recRow(t, db, "known-reviewer"); status != "accepted" {
+		t.Errorf("known status = %q, want still accepted (waits for a registry version bump)", status)
+	}
+}
