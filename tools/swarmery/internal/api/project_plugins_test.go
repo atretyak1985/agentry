@@ -145,3 +145,125 @@ func TestProjectPluginsUnknownProject(t *testing.T) {
 		t.Errorf("error = %q, want \"project not found\"", msg)
 	}
 }
+
+// ── PUT /api/projects/{id}/plugins/{name} ────────────────────────────────────
+
+func TestPutPluginNoFence(t *testing.T) {
+	srv, _ := projectsTestServer(t)
+	seedPluginCatalog(t, threePackManifest)
+	// Drop the onboarding roots the harness wired: the fence must reject.
+	AttachOnboard(OnboardConfig{})
+	t.Cleanup(func() { AttachOnboard(OnboardConfig{}) })
+
+	out := doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/lsp-pack",
+		map[string]any{"enabled": true}, 403)
+	msg, _ := out["error"].(string)
+	if !strings.Contains(msg, "SWARMERY_ONBOARD_ROOTS") {
+		t.Errorf("error = %q, want the SWARMERY_ONBOARD_ROOTS fence message", msg)
+	}
+}
+
+func TestPutPluginCoreLocked(t *testing.T) {
+	srv, _ := projectsTestServer(t) // roots are wired by the harness
+	seedPluginCatalog(t, threePackManifest)
+
+	out := doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/core",
+		map[string]any{"enabled": false}, 400)
+	if msg, _ := out["error"].(string); msg != "core is managed via attach/detach" {
+		t.Errorf("error = %q, want \"core is managed via attach/detach\"", msg)
+	}
+}
+
+func TestPutPluginUnknownName(t *testing.T) {
+	srv, _ := projectsTestServer(t)
+	// Catalog knows core only: enabling anything else is a 404.
+	seedPluginCatalog(t, `{
+		"name": "swarmery",
+		"metadata": {"version": "1.13.0"},
+		"plugins": [{"name": "core", "source": "./plugins/core", "description": "the core plugin"}]
+	}`)
+
+	out := doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/nope",
+		map[string]any{"enabled": true}, 404)
+	if msg, _ := out["error"].(string); msg != "unknown plugin: nope" {
+		t.Errorf("error = %q, want \"unknown plugin: nope\"", msg)
+	}
+}
+
+func TestPutPluginEnableDisable(t *testing.T) {
+	srv, _ := projectsTestServer(t)
+	seedPluginCatalog(t, threePackManifest)
+	path := projectPath(t, srv.URL, "1")
+	settings := filepath.Join(path, ".claude", "settings.json")
+
+	// Enable: a real write with a backup.
+	out := doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/lsp-pack",
+		map[string]any{"enabled": true}, 200)
+	if out["name"] != "lsp-pack" || out["enabled"] != true || out["changed"] != true {
+		t.Errorf("enable body = %v, want name=lsp-pack enabled=true changed=true", out)
+	}
+	if out["backup"] != ".claude/settings.json.bak" {
+		t.Errorf("backup = %v, want .claude/settings.json.bak", out["backup"])
+	}
+	if body := readDisk(t, settings); !strings.Contains(body, `"lsp-pack@swarmery": true`) {
+		t.Errorf("settings.json missing lsp-pack@swarmery after enable:\n%s", body)
+	}
+	if _, err := os.Stat(settings + ".bak"); err != nil {
+		t.Errorf("backup not written: %v", err)
+	}
+
+	// The GET view reflects the new state.
+	resp := getPluginsResponse(t, srv.URL, "1")
+	found := false
+	for _, p := range resp.Plugins {
+		if p.Name == "lsp-pack" {
+			found = true
+			if !p.Enabled {
+				t.Error("GET shows lsp-pack disabled after a successful enable")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("lsp-pack missing from GET response: %+v", resp.Plugins)
+	}
+
+	// Idempotent second enable: no write, no backup field.
+	out = doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/lsp-pack",
+		map[string]any{"enabled": true}, 200)
+	if out["changed"] != false {
+		t.Errorf("second enable changed = %v, want false", out["changed"])
+	}
+	if bak, ok := out["backup"]; ok && bak != "" {
+		t.Errorf("no-op enable must omit backup, got %v", bak)
+	}
+
+	// Disable: the key is deleted, not set to false.
+	out = doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/lsp-pack",
+		map[string]any{"enabled": false}, 200)
+	if out["enabled"] != false || out["changed"] != true {
+		t.Errorf("disable body = %v, want enabled=false changed=true", out)
+	}
+	if body := readDisk(t, settings); strings.Contains(body, "lsp-pack@swarmery") {
+		t.Errorf("settings.json still mentions lsp-pack@swarmery after disable:\n%s", body)
+	}
+}
+
+func TestPutPluginMalformedSettings(t *testing.T) {
+	srv, _ := projectsTestServer(t)
+	seedPluginCatalog(t, threePackManifest)
+	path := projectPath(t, srv.URL, "1")
+	settings := filepath.Join(path, ".claude", "settings.json")
+	if err := os.WriteFile(settings, []byte(`{oops`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := doJSON(t, "PUT", srv.URL+"/api/projects/1/plugins/lsp-pack",
+		map[string]any{"enabled": true}, 409)
+	msg, _ := out["error"].(string)
+	if !strings.Contains(msg, "malformed") {
+		t.Errorf("error = %q, want a malformed-settings message", msg)
+	}
+	if body := readDisk(t, settings); body != `{oops` {
+		t.Errorf("malformed settings.json must never be overwritten, got %q", body)
+	}
+}
