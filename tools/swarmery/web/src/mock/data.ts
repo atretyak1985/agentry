@@ -1343,6 +1343,7 @@ export const mockApi = {
       title: 'Add auto-approve rule for Bash',
       detail: 'mock recommendation',
       evidence: {},
+      baseline: null,
       status,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
