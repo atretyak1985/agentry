@@ -95,6 +95,8 @@ func (h *Handler) projectPlugins(w http.ResponseWriter, r *http.Request) {
 
 	// Enabled state: Managed covers core, Packs the domain packs. A nil state
 	// (telemetry-only project, unreadable settings) renders everything off.
+	// roots=nil: UnderOnboardRoot is unused here — canWrite is derived
+	// separately below via resolveUnderRoots.
 	enabledCore, enabledPacks := false, []string{}
 	if st, serr := projectscan.ReadPluginState(path, nil); serr == nil && st != nil {
 		enabledCore = st.Managed
@@ -114,7 +116,7 @@ func (h *Handler) projectPlugins(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	for _, p := range cat.Plugins {
 		seen[p.Name] = true
-		enabled := p.Name == "core" && enabledCore || slices.Contains(enabledPacks, p.Name)
+		enabled := (p.Name == "core" && enabledCore) || slices.Contains(enabledPacks, p.Name)
 		resp.Plugins = append(resp.Plugins, projectPluginDTO{
 			Name: p.Name, Description: p.Description,
 			Enabled: enabled, Locked: p.Name == "core",

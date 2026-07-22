@@ -126,6 +126,16 @@ func TestProjectPluginsNoMarketplace(t *testing.T) {
 	}
 }
 
+func TestProjectPluginsBadID(t *testing.T) {
+	srv, _ := projectsTestServer(t)
+	seedPluginCatalog(t, threePackManifest)
+
+	out := doJSON(t, "GET", srv.URL+"/api/projects/bad/plugins", nil, 400)
+	if msg, _ := out["error"].(string); msg != "invalid project id" {
+		t.Errorf("error = %q, want \"invalid project id\"", msg)
+	}
+}
+
 func TestProjectPluginsUnknownProject(t *testing.T) {
 	srv, _ := projectsTestServer(t)
 	seedPluginCatalog(t, threePackManifest)
