@@ -29,10 +29,11 @@ package api
 // success rates from agentOutcomeRates, per-agent errors from the
 // parent_event_id attribution (statsTools grain — see tools.go), error
 // grouping from errorGroups (shared with /api/stats/errors). error_rate is
-// the FAILED-RUN share (distinct runs with ≥1 error / runs, clamped to ≤1 — a
-// run spanning the window start can contribute a failed run without
-// contributing to the run count), not raw error events per run — one run
-// spraying many tool errors counts once.
+// the BEHAVIOR-failed-run share (distinct runs with ≥1 behavior-fixable error
+// / runs, at the advisor.Classify grain, clamped to ≤1 — a run spanning the
+// window start can contribute a failed run without contributing to the run
+// count), not raw error events per run — one run spraying many tool errors
+// counts once, and harness/infra noise doesn't count at all.
 
 import (
 	"database/sql"

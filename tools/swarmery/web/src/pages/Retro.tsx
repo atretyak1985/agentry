@@ -533,7 +533,7 @@ function Scorecard({ row }: { row: RetroAgentRow }): JSX.Element {
           {(row.error_rate * 100).toFixed(1)}% err
         </span>
       </div>
-      {row.errors > 0 && (
+      {row.errors > 0 && row.errors_by_class && (
         <div
           className="mt-1 font-mono text-[10px] text-ink-faint"
           title="error events by class — behavior: prompt-fixable agent behavior · harness: harness rule hit, self-recovered · infra: network/API noise (not the agent's fault)"

@@ -1,6 +1,9 @@
 package advisor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestClassify pins EVERY prefix of the classPrefixes table to its class —
 // the table is normative (phase-1-error-classification plan doc). Keys are
@@ -47,4 +50,17 @@ func TestClassify(t *testing.T) {
 			t.Errorf("Classify(%q) = %q, want %q", c.key, got, c.want)
 		}
 	}
+
+	// Table invariant: a later prefix must not be shadowed by an earlier,
+	// shorter prefix mapped to a different class — first match wins, so the
+	// later entry would be unreachable.
+	t.Run("no prefix shadowing", func(t *testing.T) {
+		for i, a := range classPrefixes {
+			for _, b := range classPrefixes[i+1:] {
+				if strings.HasPrefix(b.prefix, a.prefix) && b.class != a.class {
+					t.Errorf("%q is shadowed by earlier %q with a different class", b.prefix, a.prefix)
+				}
+			}
+		}
+	})
 }

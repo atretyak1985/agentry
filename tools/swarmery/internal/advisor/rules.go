@@ -508,7 +508,7 @@ func r2AgentErrorRate(db *sql.DB, win window) ([]finding, error) {
 			evidence: map[string]any{
 				"window": win,
 				"counts": map[string]any{
-					"runs": c.stats.runs, "failed_runs": c.stats.behaviorFailedRuns(),
+					"runs": c.stats.runs, "behavior_failed_runs": c.stats.behaviorFailedRuns(),
 					"errors":     c.stats.errors,
 					"error_rate": c.rate, "median_error_rate": median,
 				},
