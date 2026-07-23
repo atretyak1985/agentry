@@ -277,8 +277,8 @@ func TestApplyShaMismatch(t *testing.T) {
 
 func TestApplyGuardrailFailures(t *testing.T) {
 	cases := []struct {
-		name    string
-		mutate  func(*fakeExec)
+		name     string
+		mutate   func(*fakeExec)
 		wantGate string
 	}{
 		{
