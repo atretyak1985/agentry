@@ -154,6 +154,7 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// other methods fall through to the "/" SPA catch-all instead.
 	mux.HandleFunc("/api/projects/{id}/serena/{rest...}", h.serenaProxy)
 	mux.HandleFunc("/api/projects/{id}/graphify/{rest...}", h.graphifyStatic)
+	mux.HandleFunc("/api/projects/{id}/architecture/{rest...}", h.architectureStatic)
 
 	// control-plane v2: notifications & auto-approve rules. Writes carry the
 	// same D4 origin hardening as every other mutating endpoint; evaluation
