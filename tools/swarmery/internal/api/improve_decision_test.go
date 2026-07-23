@@ -145,6 +145,18 @@ func TestPatchProposalMatrix(t *testing.T) {
 	patchProposalReq(t, url(999), "approved", http.StatusNotFound)
 }
 
+// A panic inside the async pipeline must be recovered, not propagate out of
+// spawnImprove and crash the daemon.
+func TestSpawnImproveRecoversPanic(t *testing.T) {
+	h := &Handler{improveGo: func(fn func()) { fn() }}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("spawnImprove let a panic escape: %v", r)
+		}
+	}()
+	h.spawnImprove(func() { panic("boom in generate") })
+}
+
 func TestApplyProposalManualRerun(t *testing.T) {
 	srv, db := decisionServer(t)
 	url := func(id int64) string {

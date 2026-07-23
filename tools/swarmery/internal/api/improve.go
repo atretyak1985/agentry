@@ -43,11 +43,22 @@ func AttachImproveRepo(claudeDir string) {
 // spawnImprove runs one generation pipeline asynchronously; the improveGo
 // seam (nil in production) lets tests run it inline for determinism.
 func (h *Handler) spawnImprove(fn func()) {
+	// A panic in the long-running Generate/Apply pipeline must never take the
+	// daemon down — recover, log, and let the row stay in whatever state it
+	// reached (a stuck 'approved'/'proposed' is re-runnable from the dashboard).
+	wrapped := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("error: improve: async pipeline panic recovered: %v", r)
+			}
+		}()
+		fn()
+	}
 	if h.improveGo != nil {
-		h.improveGo(fn)
+		h.improveGo(wrapped)
 		return
 	}
-	go fn()
+	go wrapped()
 }
 
 // improveAccepted is the shared tail of both improve triggers: open-proposal
