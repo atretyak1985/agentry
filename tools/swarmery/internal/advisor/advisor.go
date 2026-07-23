@@ -4,7 +4,7 @@
 //
 //	proposed → accepted|dismissed → adopted → verified
 //
-// Run() evaluates the six rules (rules.go) over the trailing 14-day window,
+// Run() evaluates the seven rules (rules.go) over the trailing 14-day window,
 // upserts recommendations under the dedup contract, auto-detects adoption
 // and verification. The daemon calls Run at startup and on a 24h ticker;
 // POST /api/retro/advise calls it on demand.
@@ -134,6 +134,7 @@ func Run(db *sql.DB, now time.Time) (Stats, error) {
 		{"R4", func() ([]finding, error) { return r4Redispatch(db, win) }},
 		{"R5", func() ([]finding, error) { return r5StaleImprovements(db, win, now) }},
 		{"R6", func() ([]finding, error) { return r6CacheRegression(db, win, now) }},
+		{"R7", func() ([]finding, error) { return r7StaleArchitectureMap(db, win, now) }},
 	}
 	for _, e := range evals {
 		fs, err := e.fn()
@@ -810,6 +811,12 @@ func metricValue(db *sql.DB, rule, target string, win window) (name string, valu
 	case "R6":
 		rate, hasTraffic, rerr := cacheHitRate(db, win)
 		return "cache_hit_rate", rate, hasTraffic && rerr == nil, rerr
+	case "R7":
+		// R7 (stale architecture map) has no DB-computable post-adoption metric:
+		// staleness is filesystem-grounded. The baseline records ok=false so the
+		// verify loop never acts on it; the rule re-proposes naturally if the map
+		// stays stale after acceptance.
+		return "stale_map", 0, false, nil
 	default:
 		return "", 0, false, fmt.Errorf("unknown rule %q", rule)
 	}

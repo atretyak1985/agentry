@@ -998,6 +998,183 @@ func TestErrorGroupVerifiesDirectlyFromAccepted(t *testing.T) {
 	}
 }
 
+// ── R7 ────────────────────────────────────────────────────────────────────
+
+// makeProjectDir creates a temporary project directory with a fake .git
+// (loose ref) and an architecture-out/architecture-map.json whose mtime is
+// forced to `age` before testNow. Returns the directory path.
+func makeProjectDir(t *testing.T, analyzedCommit string, age time.Duration) string {
+	t.Helper()
+	root := t.TempDir()
+
+	// Fake .git with HEAD → refs/heads/main → shaA.
+	gitDir := filepath.Join(root, ".git")
+	if err := os.MkdirAll(filepath.Join(gitDir, "refs", "heads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGit := func(p, content string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeGit(filepath.Join(gitDir, "HEAD"), "ref: refs/heads/main\n")
+	writeGit(filepath.Join(gitDir, "refs", "heads", "main"), shaA+"\n")
+
+	// architecture-out/architecture-map.json with the requested analyzedAtCommit.
+	mapDir := filepath.Join(root, "architecture-out")
+	if err := os.MkdirAll(mapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mapPath := filepath.Join(mapDir, "architecture-map.json")
+	content := fmt.Sprintf(`{"analyzedAtCommit":%q}`, analyzedCommit)
+	if err := os.WriteFile(mapPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Force mtime to testNow - age.
+	mtime := testNow.Add(-age)
+	if err := os.Chtimes(mapPath, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// Two distinct fake commit shas for R7 fixture.
+const shaA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // current HEAD
+const shaB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" // stale analyzed commit
+
+// insertProjectAt inserts a non-archived project row with the given path and
+// returns its id.
+func insertProjectAt(t *testing.T, db *sql.DB, id int64, path, slug string) {
+	t.Helper()
+	mustExec(t, db, `INSERT INTO projects (id, path, slug, name, first_seen, archived)
+		VALUES (?, ?, ?, ?, ?, 0)`, id, path, slug, slug, ago(30))
+}
+
+func TestR7StaleArchitectureMap(t *testing.T) {
+	// ── trigger: mismatch + old enough ───────────────────────────────────────
+	t.Run("triggers on mismatch and old map", func(t *testing.T) {
+		db := testDB(t)
+		staleAge := time.Duration(R7StaleDays+1) * 24 * time.Hour
+		root := makeProjectDir(t, shaB, staleAge)
+		insertProjectAt(t, db, 99, root, "proj-stale")
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 1 {
+			t.Fatalf("findings = %+v, want exactly 1", fs)
+		}
+		f := fs[0]
+		if f.rule != "R7" || f.targetKind != "project" || f.target != "proj-stale" {
+			t.Errorf("finding = %+v, want R7/project/proj-stale", f)
+		}
+		if !strings.Contains(f.detail, shaA[:7]) {
+			t.Errorf("detail %q must mention HEAD short sha %s", f.detail, shaA[:7])
+		}
+		if !strings.Contains(f.detail, shaB[:7]) {
+			t.Errorf("detail %q must mention analyzed short sha %s", f.detail, shaB[:7])
+		}
+	})
+
+	// ── counter-case (a): analyzed == HEAD → no finding ──────────────────────
+	t.Run("no finding when analyzed matches HEAD", func(t *testing.T) {
+		db := testDB(t)
+		staleAge := time.Duration(R7StaleDays+1) * 24 * time.Hour
+		root := makeProjectDir(t, shaA, staleAge) // shaA == HEAD
+		insertProjectAt(t, db, 99, root, "proj-match")
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 0 {
+			t.Fatalf("findings = %+v, want none when analyzed == HEAD", fs)
+		}
+	})
+
+	// ── counter-case (b): mismatch but fresh mtime < R7StaleDays → no finding ─
+	t.Run("no finding when map is too fresh", func(t *testing.T) {
+		db := testDB(t)
+		freshAge := time.Duration(R7StaleDays-1) * 24 * time.Hour
+		root := makeProjectDir(t, shaB, freshAge) // mismatch but recent
+		insertProjectAt(t, db, 99, root, "proj-fresh")
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 0 {
+			t.Fatalf("findings = %+v, want none when map is fresher than %d days", fs, R7StaleDays)
+		}
+	})
+
+	// ── counter-case (c): no map file → no finding ────────────────────────────
+	t.Run("no finding when map file absent", func(t *testing.T) {
+		db := testDB(t)
+		root := t.TempDir()
+		// Only create the fake .git, no architecture-out.
+		gitDir := filepath.Join(root, ".git")
+		if err := os.MkdirAll(filepath.Join(gitDir, "refs", "heads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "refs", "heads", "main"), []byte(shaA+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		insertProjectAt(t, db, 99, root, "proj-nomap")
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 0 {
+			t.Fatalf("findings = %+v, want none when map file is absent", fs)
+		}
+	})
+
+	// ── counter-case (d): unreadable .git → no finding (never guess) ─────────
+	t.Run("no finding when .git is unreadable", func(t *testing.T) {
+		db := testDB(t)
+		staleAge := time.Duration(R7StaleDays+1) * 24 * time.Hour
+		root := makeProjectDir(t, shaB, staleAge)
+		// Remove .git entirely so githead.Resolve returns ok=false.
+		if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
+			t.Fatal(err)
+		}
+		insertProjectAt(t, db, 99, root, "proj-nogit")
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 0 {
+			t.Fatalf("findings = %+v, want none when .git is unreadable", fs)
+		}
+	})
+
+	// ── counter-case (e): archived project → no finding ──────────────────────
+	t.Run("no finding for archived project", func(t *testing.T) {
+		db := testDB(t)
+		staleAge := time.Duration(R7StaleDays+1) * 24 * time.Hour
+		root := makeProjectDir(t, shaB, staleAge)
+		// Insert as archived.
+		mustExec(t, db, `INSERT INTO projects (id, path, slug, name, first_seen, archived)
+			VALUES (99, ?, 'proj-archived', 'proj-archived', ?, 1)`, root, ago(30))
+
+		fs, err := r7StaleArchitectureMap(db, evalWindow(), testNow)
+		if err != nil {
+			t.Fatalf("r7: %v", err)
+		}
+		if len(fs) != 0 {
+			t.Fatalf("findings = %+v, want none for archived project", fs)
+		}
+	})
+}
+
 func TestGuardedTransitionsRespectDismissed(t *testing.T) {
 	db := testDB(t)
 	res, err := db.Exec(`INSERT INTO recommendations
