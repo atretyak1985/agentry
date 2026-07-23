@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "architecture-map.schema.json",
+  "title": "Architecture Map",
+  "description": "Repo-wide architecture contract consumed by AI agents and rendered by the architecture-map HTML viewer.",
+  "type": "object",
+  "required": ["schemaVersion", "analyzedAt", "analyzedAtCommit", "project", "layers", "modules", "flows"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "analyzedAt": { "type": "string", "description": "ISO date of analysis" },
+    "analyzedAtCommit": { "type": "string", "minLength": 7, "description": "git rev-parse HEAD at analysis time" },
+    "project": {
+      "type": "object",
+      "required": ["name", "description", "techStack", "entryPoints"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "techStack": { "type": "array", "items": { "type": "string" } },
+        "entryPoints": { "type": "array", "items": { "type": "string" }, "description": "real file paths" }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "order"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "order": { "type": "integer", "description": "left-to-right column order in the viewer" }
+        }
+      }
+    },
+    "modules": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "path", "layer", "responsibility"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "name": { "type": "string" },
+          "path": { "type": "string", "description": "repo-relative directory or file" },
+          "layer": { "type": "string", "description": "ref layers[].id" },
+          "responsibility": { "type": "string" },
+          "dependencies": { "type": "array", "items": { "type": "string" }, "description": "refs modules[].id" },
+          "exports": { "type": "array", "items": { "type": "string" } },
+          "keyFiles": { "type": "array", "items": { "type": "string" } },
+          "relatedModules": { "type": "array", "items": { "type": "string" }, "description": "refs modules[].id" }
+        }
+      }
+    },
+    "flows": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description", "steps"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "steps": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "required": ["from", "to", "action"],
+              "additionalProperties": false,
+              "properties": {
+                "from": { "type": "string", "description": "ref modules[].id" },
+                "to": { "type": "string", "description": "ref modules[].id" },
+                "action": { "type": "string", "description": "what happens on this hop" },
+                "file": { "type": "string", "description": "real file anchoring this step" },
+                "payload": { "type": "string", "description": "what data crosses the hop" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "apis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["method", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "method": { "type": "string" },
+          "path": { "type": "string" },
+          "handlerFile": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "type": "string" },
+        "migrationsPath": { "type": "string" },
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": { "name": { "type": "string" }, "purpose": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "externalServices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "purpose"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "purpose": { "type": "string" },
+          "usedBy": { "type": "array", "items": { "type": "string" }, "description": "refs modules[].id" }
+        }
+      }
+    },
+    "conventions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "naming": { "type": "string" },
+        "folderStructure": { "type": "string" },
+        "patternsUsed": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "importantNotes": { "type": "array", "items": { "type": "string" } }
+  }
+}
