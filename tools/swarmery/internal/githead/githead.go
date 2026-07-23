@@ -45,6 +45,9 @@ func Resolve(dir string) (string, bool) {
 		return "", false
 	}
 	ref = strings.TrimSpace(ref)
+	if strings.Contains(ref, "..") { // a hostile HEAD must not read outside gitDir
+		return "", false
+	}
 	if b, err := os.ReadFile(filepath.Join(gitDir, filepath.FromSlash(ref))); err == nil {
 		s := strings.TrimSpace(string(b))
 		if shaRe.MatchString(s) {

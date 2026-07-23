@@ -670,7 +670,7 @@ export type RecommendationStatus =
   | 'verified';
 
 /** recommendations.target_kind — what the recommendation is about. */
-export type RecommendationTargetKind = 'tool' | 'agent' | 'error_group' | 'process' | 'config';
+export type RecommendationTargetKind = 'tool' | 'agent' | 'error_group' | 'process' | 'config' | 'project';
 
 /** The advisor's metric snapshot written when a recommendation is accepted
  * (internal/advisor baseline JSON) — the verification comparison anchor. */
@@ -685,10 +685,10 @@ export interface RecommendationBaseline {
   adopted_at?: string;
 }
 
-/** One advisor recommendation (deterministic rule engine, R1..R6). */
+/** One advisor recommendation (deterministic rule engine, R1..R7). */
 export interface Recommendation {
   id: number;
-  /** 'R1'..'R6'. */
+  /** 'R1'..'R7'. */
   rule: string;
   target_kind: RecommendationTargetKind;
   target: string;
