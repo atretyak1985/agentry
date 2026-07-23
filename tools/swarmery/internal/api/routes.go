@@ -77,6 +77,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("POST /api/retro/agents/{agent}/improve", requireLocalOrigin(h.improveAgent))
 	mux.HandleFunc("GET /api/retro/proposals", h.listProposals)
 	mux.HandleFunc("POST /api/retro/proposals/{id}/retry", requireLocalOrigin(h.retryProposal))
+	// self-improvement phase 4: human gate + apply/PR pipeline (apply.go).
+	// PATCH decides (approved fires Apply async); the manual apply re-runs a
+	// stuck-approved proposal after a gh outage. Same D4 origin hardening.
+	mux.HandleFunc("PATCH /api/retro/proposals/{id}", requireLocalOrigin(h.patchProposal))
+	mux.HandleFunc("POST /api/retro/proposals/{id}/apply", requireLocalOrigin(h.applyProposal))
 
 	// phase 3.5: workspaces
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
