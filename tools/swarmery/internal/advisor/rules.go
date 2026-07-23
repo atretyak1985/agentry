@@ -1,6 +1,6 @@
 package advisor
 
-// The six deterministic rules (R1..R6). Each rule folds data already in
+// The seven deterministic rules (R1..R7). Each rule folds data already in
 // SQLite over the trailing evaluation window into zero or more findings —
 // no LLM anywhere. Aggregation grains deliberately mirror internal/api so
 // the numbers a recommendation cites agree with what the Retro/Analytics
@@ -13,6 +13,8 @@ package advisor
 //	R4 re-dispatch share   — the delegationRates isRedispatch classifier
 //	R5 stale improvements  — retro_improvements via task_retros/tasks
 //	R6 cache regression    — the Analytics timeseriesCache hit-rate math
+//	R7 stale architecture  — architecture-out/architecture-map.json analyzed
+//	                         commit vs repo HEAD, aged past R7StaleDays
 //
 // The tiny classifiers (agent-name fold, error-message normalization,
 // re-dispatch verdict grammar) are duplicated here rather than imported:
@@ -24,12 +26,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/approvals"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/githead"
 )
 
 // Rule thresholds. Windows are days; shares are 0..1 fractions.
@@ -64,6 +69,10 @@ const (
 	// R6DropPP: flag when the cache hit rate dropped by more than this many
 	// percentage points (as a 0..1 fraction) vs the preceding window.
 	R6DropPP = 0.10
+	// R7StaleDays: a map whose analyzedAtCommit differs from the repo HEAD is
+	// only flagged once the artifact is at least this old — same-day churn
+	// between regenerations is not actionable.
+	R7StaleDays = 7
 )
 
 // finding is one rule hit, pre-persistence.
@@ -773,6 +782,64 @@ func r6CacheRegression(db *sql.DB, win window, now time.Time) ([]finding, error)
 			},
 		},
 	}}, nil
+}
+
+// ── R7: stale architecture map ────────────────────────────────────────────
+
+// r7StaleArchitectureMap flags non-archived projects whose architecture map
+// no longer matches the repo HEAD and has aged past R7StaleDays. Filesystem-
+// grounded (map JSON + githead), no git exec.
+func r7StaleArchitectureMap(db *sql.DB, win window, now time.Time) ([]finding, error) {
+	rows, err := db.Query(`SELECT path, slug FROM projects WHERE archived = 0 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cutoff := now.AddDate(0, 0, -R7StaleDays)
+	var out []finding
+	for rows.Next() {
+		var path, slug string
+		if err := rows.Scan(&path, &slug); err != nil {
+			return nil, err
+		}
+		mapPath := filepath.Join(path, "architecture-out", "architecture-map.json")
+		fi, err := os.Stat(mapPath)
+		if err != nil || fi.IsDir() || !fi.ModTime().Before(cutoff) {
+			continue
+		}
+		raw, err := os.ReadFile(mapPath)
+		if err != nil {
+			continue
+		}
+		var m struct {
+			AnalyzedAtCommit string `json:"analyzedAtCommit"`
+		}
+		if json.Unmarshal(raw, &m) != nil || len(m.AnalyzedAtCommit) < 7 {
+			continue
+		}
+		head, ok := githead.Resolve(path)
+		if !ok || head == m.AnalyzedAtCommit {
+			continue
+		}
+		ageDays := int(now.Sub(fi.ModTime()).Hours() / 24)
+		out = append(out, finding{
+			rule:       "R7",
+			targetKind: "project",
+			target:     slug,
+			title:      "Architecture map is stale: " + slug,
+			detail: fmt.Sprintf(
+				"architecture-map.json was analyzed at %s but HEAD is %s (map is %d days old). Re-run /architecture-map — the freshness gate makes it an incremental refresh.",
+				m.AnalyzedAtCommit[:7], head[:7], ageDays),
+			evidence: map[string]any{
+				"window":           win,
+				"counts":           map[string]int{"age_days": ageDays},
+				"analyzedAtCommit": m.AnalyzedAtCommit,
+				"headCommit":       head,
+			},
+		})
+	}
+	sortFindings(out)
+	return out, rows.Err()
 }
 
 // sortFindings orders findings by target for deterministic upsert order.
