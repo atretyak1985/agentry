@@ -1,6 +1,6 @@
 # Plugins
 
-The swarmery marketplace ships one mandatory **core** plugin and seven opt-in packs. Everything here is vendor-neutral: project-specific flavor comes from each consumer's `.claude/project.json` overlay at runtime, never from the plugins themselves.
+The swarmery marketplace ships one mandatory **core** plugin and eight opt-in packs. Everything here is vendor-neutral: project-specific flavor comes from each consumer's `.claude/project.json` overlay at runtime, never from the plugins themselves.
 
 ## Enabling and disabling
 
@@ -78,7 +78,7 @@ Changes take effect in the **next Claude Code session**: on startup Claude Code 
 **How to work with it.**
 1. Enable `architecture-pack` for the project (plugins card or `settings.json`).
 2. Run `/architecture-map` — or let any orchestration agent trigger it when a fresh map is needed.
-3. **Dashboard sidebar → Architecture**: the swarmery daemon serves `architecture-map.json` and `architecture-map.html` read-only; the page embeds the viewer or shows a "run /architecture-map first" hint when the artifacts are absent.
+3. **Dashboard sidebar → TOOLS → Architecture**: the swarmery daemon serves `architecture-map.json` and `architecture-map.html` read-only; the page embeds the viewer or shows a "run /architecture-map first" hint when the artifacts are absent.
 
 ---
 
