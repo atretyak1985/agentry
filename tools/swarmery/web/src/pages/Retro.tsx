@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  AgentChangeProposal,
   Recommendation,
   RetroAgentRow,
   RetroAgentsResp,
@@ -21,13 +22,18 @@ import type {
   RetroTaskRow,
 } from '../api/types';
 import {
+  applyProposal,
   createApprovalRule,
+  fetchProposals,
   fetchRecommendations,
   fetchRetroAgents,
   fetchRetroFriction,
   fetchRetroLessons,
   fetchRetroTasks,
+  improveAgent,
+  patchProposal,
   patchRecommendation,
+  retryProposal,
   runAdvise,
 } from '../api';
 import {
@@ -410,6 +416,265 @@ function RecommendationsRail(): JSX.Element | null {
   );
 }
 
+/* ----- agent change proposals (self-improvement phase 4) ----- */
+
+const PROPOSAL_STATUS_HUE: Record<AgentChangeProposal['status'], string> = {
+  proposed: 'border-line-strong text-ink-dim',
+  approved: 'border-amber/40 text-amber',
+  applied: 'border-green/40 text-green',
+  rejected: 'border-line-strong text-ink-faint',
+  failed: 'border-red/40 text-red',
+};
+
+function ProposalStatusChip({ status }: { status: AgentChangeProposal['status'] }): JSX.Element {
+  return (
+    <span
+      className={`rounded-[7px] border px-1.5 py-[2px] font-mono text-[10px] font-medium ${PROPOSAL_STATUS_HUE[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+/** Colorized unified diff — a lightweight +/- <pre>, no external dep. */
+function DiffView({ diff }: { diff: string }): JSX.Element {
+  const lines = diff.replace(/\n$/, '').split('\n');
+  return (
+    <pre className="mt-2 max-h-96 overflow-auto rounded-[10px] border border-line bg-field px-3 py-2 font-mono text-[10px] leading-relaxed">
+      {lines.map((line, i) => {
+        let cls = 'text-ink-dim';
+        if (line.startsWith('+') && !line.startsWith('+++')) cls = 'text-green';
+        else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-red';
+        else if (line.startsWith('@@')) cls = 'text-amber';
+        else if (line.startsWith('diff ') || line.startsWith('+++') || line.startsWith('---'))
+          cls = 'text-ink-faint';
+        return (
+          <div key={i} className={`whitespace-pre-wrap ${cls}`}>
+            {line || ' '}
+          </div>
+        );
+      })}
+    </pre>
+  );
+}
+
+const GUARDRAIL_TEXT =
+  'Approving applies this diff on a fresh branch behind hard guardrails ' +
+  '(neutrality scan clean, agent frontmatter present, ≤120 changed lines) ' +
+  'and opens a PR via gh. It never auto-merges. Continue?';
+
+function ProposalDetail({
+  p,
+  busy,
+  onDecide,
+  onRetry,
+  onReapply,
+}: {
+  p: AgentChangeProposal;
+  busy: boolean;
+  onDecide: (id: number, status: 'approved' | 'rejected') => void;
+  onRetry: (id: number) => void;
+  onReapply: (id: number) => void;
+}): JSX.Element {
+  return (
+    <div className="mt-2 border-t border-line pt-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-ink-faint">
+        <span className="truncate" title={p.agent_path}>
+          {p.agent_path}
+        </span>
+        {p.recommendation_id !== null && (
+          <span title="source recommendation">from recommendation #{p.recommendation_id}</span>
+        )}
+        <span>created {fmtAgo(p.created_at)}</span>
+      </div>
+
+      {p.rationale !== '' && (
+        <p className="mt-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink-3">
+          {p.rationale}
+        </p>
+      )}
+
+      {p.diff !== '' && <DiffView diff={p.diff} />}
+
+      {p.error !== null && (
+        <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-red">{p.error}</p>
+      )}
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        {p.status === 'proposed' && (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm(GUARDRAIL_TEXT)) onDecide(p.id, 'approved');
+              }}
+              className="rounded-[7px] border border-line-strong px-2 py-[3px] font-mono text-[10.5px] text-ink-dim transition-colors hover:border-green/40 hover:text-green disabled:opacity-50"
+            >
+              {busy ? '…' : 'Approve'}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDecide(p.id, 'rejected')}
+              className="rounded-[7px] border border-line-strong px-2 py-[3px] font-mono text-[10.5px] text-ink-dim transition-colors hover:border-red/40 hover:text-red disabled:opacity-50"
+            >
+              {busy ? '…' : 'Reject'}
+            </button>
+          </>
+        )}
+        {p.status === 'failed' && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRetry(p.id)}
+            className="rounded-[7px] border border-line-strong px-2 py-[3px] font-mono text-[10.5px] text-ink-dim transition-colors hover:border-ink/40 hover:text-ink disabled:opacity-50"
+          >
+            {busy ? '…' : 'Retry'}
+          </button>
+        )}
+        {p.status === 'approved' && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onReapply(p.id)}
+            title="re-run the apply/PR pipeline (e.g. after a gh outage)"
+            className="rounded-[7px] border border-line-strong px-2 py-[3px] font-mono text-[10.5px] text-ink-dim transition-colors hover:border-amber/40 hover:text-amber disabled:opacity-50"
+          >
+            {busy ? '…' : 'Re-run apply'}
+          </button>
+        )}
+        {p.pr_url !== null && (
+          <a
+            href={p.pr_url}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto font-mono text-[10.5px] text-green transition-colors hover:underline"
+          >
+            open PR ↗
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProposalCard({
+  p,
+  busy,
+  onDecide,
+  onRetry,
+  onReapply,
+}: {
+  p: AgentChangeProposal;
+  busy: boolean;
+  onDecide: (id: number, status: 'approved' | 'rejected') => void;
+  onRetry: (id: number) => void;
+  onReapply: (id: number) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-[14px] border border-line bg-surface px-4 py-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="min-w-0 flex-1 font-mono text-[12.5px] font-medium text-ink">
+          {p.agent}
+        </span>
+        <ProposalStatusChip status={p.status} />
+        <span className="font-mono text-[10px] text-ink-faint">{fmtAgo(p.created_at)}</span>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="font-mono text-[10px] text-ink-faint transition-colors hover:text-ink"
+        >
+          {open ? '▾ diff' : '▸ diff'}
+        </button>
+      </div>
+      {open && (
+        <ProposalDetail
+          p={p}
+          busy={busy}
+          onDecide={onDecide}
+          onRetry={onRetry}
+          onReapply={onReapply}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Proposals section: list of agent-rewrite proposals with the human gate. */
+function ProposalsRail({ reloadKey }: { reloadKey: number }): JSX.Element | null {
+  const [proposals, setProposals] = useState<AgentChangeProposal[] | null>(null);
+  const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const load = useCallback((): void => {
+    fetchProposals()
+      .then((r) => setProposals(r.proposals))
+      .catch(() => setProposals(null));
+  }, []);
+  useEffect(load, [load, reloadKey]);
+
+  const withBusy = useCallback(
+    (id: number, run: () => Promise<void>): void => {
+      setBusy((s) => new Set(s).add(id));
+      setFailed(null);
+      run()
+        .then(() => {
+          // Give the async apply/generate a beat to land, then refetch.
+          setTimeout(load, 500);
+        })
+        .catch((e: unknown) => setFailed(String(e)))
+        .finally(() =>
+          setBusy((s) => {
+            const next = new Set(s);
+            next.delete(id);
+            return next;
+          }),
+        );
+    },
+    [load],
+  );
+
+  const onDecide = useCallback(
+    (id: number, status: 'approved' | 'rejected') =>
+      withBusy(id, () => patchProposal(id, status)),
+    [withBusy],
+  );
+  const onRetry = useCallback((id: number) => withBusy(id, () => retryProposal(id)), [withBusy]);
+  const onReapply = useCallback((id: number) => withBusy(id, () => applyProposal(id)), [withBusy]);
+
+  if (proposals !== null && proposals.length === 0) return null;
+
+  return (
+    <section className="mt-[18px]">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+          Agent proposals
+        </span>
+        {failed !== null && <span className="font-mono text-[10px] text-red">{failed}</span>}
+      </div>
+      {proposals === null ? (
+        <Empty>no proposals</Empty>
+      ) : (
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          {proposals.map((p) => (
+            <ProposalCard
+              key={p.id}
+              p={p}
+              busy={busy.has(p.id)}
+              onDecide={onDecide}
+              onRetry={onRetry}
+              onReapply={onReapply}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ----- health strip ----- */
 
 /** vs-prev arrow: `up` colors follow "up is costly" unless `goodUp`.
@@ -518,7 +783,15 @@ function runsDelta(row: RetroAgentRow): string {
   return d > 0 ? ` +${String(d)}` : ` ${String(d)}`;
 }
 
-function Scorecard({ row }: { row: RetroAgentRow }): JSX.Element {
+function Scorecard({
+  row,
+  onImprove,
+  improving,
+}: {
+  row: RetroAgentRow;
+  onImprove: (agent: string) => void;
+  improving: boolean;
+}): JSX.Element {
   const split = errClassSplit(row.errors_by_class);
   return (
     <div className="rounded-[14px] border border-line bg-surface px-4 py-3.5">
@@ -526,6 +799,15 @@ function Scorecard({ row }: { row: RetroAgentRow }): JSX.Element {
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium text-ink">
           {row.agent}
         </span>
+        <button
+          type="button"
+          disabled={improving}
+          onClick={() => onImprove(row.agent)}
+          title="generate an advisor-evidenced improvement proposal for this agent"
+          className="rounded-[7px] border border-line-strong px-1.5 py-[2px] font-mono text-[10px] text-ink-dim transition-colors hover:border-green/40 hover:text-green disabled:opacity-50"
+        >
+          {improving ? '…' : 'Improve'}
+        </button>
         <span
           className={`font-mono text-[11px] ${errRateClass(row.error_rate)}`}
           title={`share of runs with ≥1 behavior-fixable error (${String(row.errors)} error events total)`}
@@ -858,6 +1140,29 @@ export function Retro(): JSX.Element {
   const [taskRows, setTaskRows] = useState<RetroTaskRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Proposals gate: bumping proposalsKey refetches the Proposals rail after an
+  // "Improve" trigger; `improving` disables the per-agent button in flight.
+  const [proposalsKey, setProposalsKey] = useState(0);
+  const [improving, setImproving] = useState<ReadonlySet<string>>(new Set());
+  const [improveErr, setImproveErr] = useState<string | null>(null);
+
+  const onImprove = useCallback((agent: string): void => {
+    setImproving((s) => new Set(s).add(agent));
+    setImproveErr(null);
+    improveAgent(agent)
+      .then(() => {
+        setTimeout(() => setProposalsKey((k) => k + 1), 500);
+      })
+      .catch((e: unknown) => setImproveErr(String(e)))
+      .finally(() =>
+        setImproving((s) => {
+          const next = new Set(s);
+          next.delete(agent);
+          return next;
+        }),
+      );
+  }, []);
+
   const applyPreset = useCallback(
     (n: number): void => {
       setPreset(n);
@@ -916,6 +1221,12 @@ export function Retro(): JSX.Element {
 
       <RecommendationsRail />
 
+      <ProposalsRail reloadKey={proposalsKey} />
+
+      {improveErr !== null && (
+        <p className="mt-2 font-mono text-[10px] text-red">{improveErr}</p>
+      )}
+
       {error !== null && <ErrorBox message={error} onRetry={load} />}
 
       {agents === null && error === null ? (
@@ -931,7 +1242,12 @@ export function Retro(): JSX.Element {
           ) : (
             <div className="grid gap-3.5 sm:grid-cols-2 wide:grid-cols-3">
               {agents.agents.map((row) => (
-                <Scorecard key={row.agent} row={row} />
+                <Scorecard
+                  key={row.agent}
+                  row={row}
+                  onImprove={onImprove}
+                  improving={improving.has(row.agent)}
+                />
               ))}
             </div>
           )}
