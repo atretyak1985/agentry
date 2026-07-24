@@ -348,7 +348,8 @@ func TestStatsPlaybooksWithColumn(t *testing.T) {
 		}
 	}
 	mustExec(`INSERT INTO projects (id, path, slug, name, first_seen) VALUES (1, '/w/a', '-w-a', 'A', ?)`, day20)
-	mustExec(`ALTER TABLE tasks ADD COLUMN playbook TEXT`)
+	// The tasks.playbook column ships in migration 0031 (Phase 13, now merged), so
+	// store.Open already provides it — no manual ALTER needed here.
 	mustExec(`INSERT INTO sessions (id, project_id, session_uuid, model, status, started_at) VALUES (1, 1, 'u1', 'm', 'completed', ?)`, at(0))
 	mustExec(`INSERT INTO turns (session_id, seq, role, started_at, tokens_in, tokens_out, cost_usd) VALUES
 		(1, 1, 'assistant', ?, 100, 50, 0.5)`, at(0))
