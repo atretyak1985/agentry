@@ -32,7 +32,15 @@ func NewServer(db *sql.DB, watching bool) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	Routes(mux, &Handler{DB: db, Watching: watching, Docs: docs,
-		Improve: &improve.Service{DB: db, Runner: improve.ClaudeRunner{}}})
+		Improve: &improve.Service{
+			DB:     db,
+			Runner: improve.ClaudeRunner{},
+			// Repo/Exec drive the phase-4 apply/PR pipeline. Repo is the
+			// marketplace clone attached via AttachImproveRepo (empty until then —
+			// generation works regardless; apply's git ops need it).
+			Repo: improveRepoRoot,
+			Exec: improve.OSExec{},
+		}})
 
 	dist, err := web.Dist()
 	if err != nil {

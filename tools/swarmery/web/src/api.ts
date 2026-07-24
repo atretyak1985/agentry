@@ -29,6 +29,7 @@ import type {
   ProjectPluginToggleResponse,
   ProjectsHealthResponse,
   ProjectsResponse,
+  ProposalsResp,
   Recommendation,
   RecommendationsResp,
   RecommendationStatus,
@@ -424,6 +425,60 @@ export async function runAdvise(): Promise<AdviseStats> {
   const res = await fetch('/api/retro/advise', { method: 'POST' });
   if (!res.ok) throw new Error(`advise failed: ${String(res.status)}`);
   return (await res.json()) as AdviseStats;
+}
+
+// --- self-improvement phase 4 — agent change proposals -----------------------
+
+/** Extracts an {error} message from a failed response body, else a default. */
+async function errBody(res: Response, fallback: string): Promise<string> {
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  return data.error ?? `${fallback}: ${String(res.status)}`;
+}
+
+/** GET /api/retro/proposals — newest first; optional CSV status filter. */
+export function fetchProposals(status?: string): Promise<ProposalsResp> {
+  if (MOCK) return mockApi.proposals();
+  const qs = status !== undefined ? `?status=${encodeURIComponent(status)}` : '';
+  return get(`/api/retro/proposals${qs}`);
+}
+
+/**
+ * POST /api/retro/agents/{agent}/improve — generate a proposal for one agent.
+ * 202 while the model runs; 404 unknown agent; 409 an open proposal exists.
+ */
+export async function improveAgent(agent: string): Promise<void> {
+  const res = await fetch(`/api/retro/agents/${encodeURIComponent(agent)}/improve`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await errBody(res, 'improve agent failed'));
+}
+
+/**
+ * PATCH /api/retro/proposals/{id} — approve or reject one proposal. Approving
+ * fires the apply/PR pipeline async; illegal transitions come back 422.
+ */
+export async function patchProposal(
+  id: number,
+  status: 'approved' | 'rejected',
+): Promise<void> {
+  const res = await fetch(`/api/retro/proposals/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(await errBody(res, 'decide proposal failed'));
+}
+
+/** POST /api/retro/proposals/{id}/retry — re-run generation for a failed row. */
+export async function retryProposal(id: number): Promise<void> {
+  const res = await fetch(`/api/retro/proposals/${String(id)}/retry`, { method: 'POST' });
+  if (!res.ok) throw new Error(await errBody(res, 'retry proposal failed'));
+}
+
+/** POST /api/retro/proposals/{id}/apply — manual re-run of a stuck approved row. */
+export async function applyProposal(id: number): Promise<void> {
+  const res = await fetch(`/api/retro/proposals/${String(id)}/apply`, { method: 'POST' });
+  if (!res.ok) throw new Error(await errBody(res, 'apply proposal failed'));
 }
 
 export function fetchDocs(): Promise<DocMeta[]> {

@@ -33,6 +33,7 @@ import type {
   DurationsResp,
   ErrorsResp,
   MatrixResp,
+  ProposalsResp,
   Recommendation,
   RecommendationsResp,
   RetroAgentsResp,
@@ -1355,6 +1356,12 @@ export const mockApi = {
   async advise(): Promise<AdviseStats> {
     await delay(150);
     return { proposed: 0, updated: 0, adopted: 0, verified: 0 };
+  },
+
+  // self-improvement phase 4 — agent change proposals (empty shell).
+  async proposals(): Promise<ProposalsResp> {
+    await delay(120);
+    return { proposals: [] };
   },
 
   async docs(): Promise<DocMeta[]> {

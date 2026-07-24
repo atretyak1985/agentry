@@ -724,6 +724,43 @@ export interface AdviseStats {
   verified: number;
 }
 
+// --- self-improvement phase 4 — agent change proposals -----------------------
+
+/** agent_change_proposals.status lifecycle (migration 0021). */
+export type ProposalStatus = 'proposed' | 'approved' | 'applied' | 'rejected' | 'failed';
+
+/**
+ * One agent-rewrite proposal (internal/improve): a unified diff against an
+ * agent definition file, generated from advisor evidence and gated behind a
+ * human Approve → apply/PR pipeline.
+ */
+export interface AgentChangeProposal {
+  id: number;
+  /** Links back to the accepted recommendation, or null for the ad-hoc trigger. */
+  recommendation_id: number | null;
+  /** Registry key (normalized). */
+  agent: string;
+  /** Absolute source path at generation time. */
+  agent_path: string;
+  /** sha256 of the agent content the diff was generated against. */
+  base_sha256: string;
+  /** Unified diff. */
+  diff: string;
+  /** Model's per-hunk rationale. */
+  rationale: string;
+  status: ProposalStatus;
+  /** Populated when status is 'failed' or a recoverable apply error occurred. */
+  error: string | null;
+  /** Populated once the PR is opened (status 'applied'). */
+  pr_url: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface ProposalsResp {
+  proposals: AgentChangeProposal[];
+}
+
 // --- Phase 2 — approvals + hooks (frozen at gate 2.2) ------------------------
 
 /** permission_requests.status */
