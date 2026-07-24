@@ -84,9 +84,18 @@ func TestAcquireIntegration(t *testing.T) {
 		t.Errorf("CommitsForTask(other) = %v, want empty", other)
 	}
 
-	// Second Acquire while the first is live → ErrBranchBusy (real git).
-	if _, err := m.Acquire(repo, "proj", taskID); err == nil {
-		t.Error("second Acquire of a live task should fail (branch busy)")
+	// Second Acquire of the SAME task while its worktree is live → warm reuse
+	// as-is (Invariant 4), returning the same path/branch idempotently. Real
+	// git reports canonicalized paths (macOS /var → /private/var); samePath
+	// resolves symlinks so warm reuse is detected identically on every OS.
+	// ErrBranchBusy is reserved for the branch checked out at a DIFFERENT path
+	// (Invariant 3) — covered by TestAcquireBranchBusyElsewhere.
+	a2, err := m.Acquire(repo, "proj", taskID)
+	if err != nil {
+		t.Fatalf("second Acquire (warm reuse) should succeed, got %v", err)
+	}
+	if !samePath(a2.Path, a.Path) || a2.Branch != a.Branch {
+		t.Errorf("warm reuse mismatch: got {%s,%s}, want {%s,%s}", a2.Path, a2.Branch, a.Path, a.Branch)
 	}
 
 	// Remove (delete the branch) then prune → source repo clean.

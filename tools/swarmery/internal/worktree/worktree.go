@@ -283,7 +283,12 @@ func isSubpath(parent, child string) bool {
 	return rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
-func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
+// samePath compares two paths after resolving symlinks in their deepest
+// existing ancestor. `git worktree list` reports canonicalized paths (e.g.
+// macOS /var → /private/var), while our computed paths are not resolved; a
+// plain filepath.Clean compare would then miss a legitimate warm-reuse match
+// and mis-fire ErrBranchBusy on the same task. evalOrClean canonicalizes both.
+func samePath(a, b string) bool { return evalOrClean(a) == evalOrClean(b) }
 
 func dirExists(p string) bool {
 	info, err := os.Stat(p)
