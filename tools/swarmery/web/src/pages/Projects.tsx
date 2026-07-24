@@ -61,7 +61,7 @@ function ProjectRow({ project, onChanged }: { project: Project; onChanged: () =>
     <Card>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <PinToggle project={project} onChanged={onChanged} />
-        <Link to={`/projects/${String(project.id)}`} className="group flex items-center gap-2">
+        <Link to={`/p/${project.slug}`} className="group flex items-center gap-2">
           <ProjectName
             name={project.name}
             slug={project.slug}
@@ -164,7 +164,7 @@ function HealthTable({ rows }: { rows: ProjectHealth[] }): JSX.Element {
           {rows.map((r) => (
             <tr key={r.id}>
               <td className="px-3 py-2">
-                <Link to={`/projects/${String(r.id)}`} className="hover:underline">
+                <Link to={`/p/${r.slug}`} className="hover:underline">
                   <ProjectName name={r.name} slug={r.slug} />
                 </Link>
                 {r.pinned && (
@@ -215,7 +215,7 @@ function TagFilter({
             onClick={() => onChange(selected ? null : tag)}
             className={`shrink-0 rounded-full border px-[11px] py-1 font-mono text-[10.5px] whitespace-nowrap transition-colors ${
               selected
-                ? 'border-[#4a4e58] bg-surface2 text-ink'
+                ? 'border-line-strong bg-surface2 text-ink'
                 : 'border-line-strong text-ink-dim hover:text-ink'
             }`}
           >

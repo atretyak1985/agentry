@@ -49,6 +49,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/docs/{slug}", h.getDoc)
 	mux.HandleFunc("GET /api/stats/overview", h.statsOverview)
 
+	// fusion phase 9 (Console/DX): the in-memory structured log ring
+	// (internal/logbuf) for `swarmery console` / `swarmery status`. Read-only,
+	// localhost-only; empty snapshot when the ring is not attached.
+	mux.HandleFunc("GET /api/logs", h.logs)
+
 	// analytics wave: interactive range analytics (analytics.go).
 	mux.HandleFunc("GET /api/stats/timeseries", h.statsTimeseries)
 	mux.HandleFunc("GET /api/stats/breakdown", h.statsBreakdown)
@@ -75,6 +80,9 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// (improve.go). Validation is synchronous, generation async (202).
 	mux.HandleFunc("POST /api/retro/recommendations/{id}/improve", requireLocalOrigin(h.improveRecommendation))
 	mux.HandleFunc("POST /api/retro/agents/{agent}/improve", requireLocalOrigin(h.improveAgent))
+	// read-only preview of the evidence bundle the rewriter would send the model
+	// — no origin fence, it mutates nothing.
+	mux.HandleFunc("GET /api/retro/agents/{agent}/evidence", h.agentEvidence)
 	mux.HandleFunc("GET /api/retro/proposals", h.listProposals)
 	mux.HandleFunc("POST /api/retro/proposals/{id}/retry", requireLocalOrigin(h.retryProposal))
 	// self-improvement phase 4: human gate + apply/PR pipeline (apply.go).
@@ -86,6 +94,29 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// phase 3.5: workspaces
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", h.getTask)
+
+	// fusion phase 1: task board (dispatchable queue — writes are localhost-only).
+	mux.HandleFunc("GET /api/board/tasks", h.listBoardTasks)
+	mux.HandleFunc("POST /api/board/tasks", requireLocalOrigin(h.createBoardTask))
+	mux.HandleFunc("PATCH /api/board/tasks/{id}", requireLocalOrigin(h.patchBoardTask))
+
+	// fusion phase 3: dispatcher control — status + pause/resume (global or
+	// per-project). The pause write carries the same D4 origin hardening.
+	mux.HandleFunc("GET /api/dispatch", h.getDispatch)
+	mux.HandleFunc("POST /api/dispatch/pause", requireLocalOrigin(h.pauseDispatch))
+
+	// fusion phase 6: auto-verification — manual re-run of the read-only verifier
+	// for a task (the auto trigger fires from the dispatcher's exit path). 202 +
+	// async seam; a headless spawn write, so the same D4 origin hardening.
+	mux.HandleFunc("POST /api/tasks/{id}/verify", requireLocalOrigin(h.verifyTask))
+
+	// fusion phase 8: planning mode — turn an idea into a plan. POST spawns a
+	// headless planner run in the project dir (202 + async seam), GET reads its
+	// live status, cancel aborts it. The writes carry the same D4 origin
+	// hardening; POST 409s when a run is already active for the project.
+	mux.HandleFunc("GET /api/projects/{id}/planning", h.getPlanning)
+	mux.HandleFunc("POST /api/projects/{id}/planning", requireLocalOrigin(h.startPlanning))
+	mux.HandleFunc("POST /api/projects/{id}/planning/cancel", requireLocalOrigin(h.cancelPlanning))
 
 	// phase 2: approvals (frozen contract — docs/hooks-protocol.md).
 	// All write endpoints reject foreign browser Origins (D4); requests
@@ -175,4 +206,96 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("POST /api/approval-rules", requireLocalOrigin(h.createApprovalRule))
 	mux.HandleFunc("PATCH /api/approval-rules/{id}", requireLocalOrigin(h.patchApprovalRule))
 	mux.HandleFunc("DELETE /api/approval-rules/{id}", requireLocalOrigin(h.deleteApprovalRule))
+
+	// fusion phase 7: routines (scheduled automation). CRUD + manual run +
+	// run history carry the same D4 origin hardening as every other mutating
+	// endpoint; the WEBHOOK trigger is the sole exception — it is meant for
+	// external callers, so it is token-gated (constant-time compare, 404 on any
+	// miss) instead of origin-fenced.
+	mux.HandleFunc("GET /api/routines", h.listRoutines)
+	mux.HandleFunc("POST /api/routines", requireLocalOrigin(h.createRoutine))
+	mux.HandleFunc("PATCH /api/routines/{id}", requireLocalOrigin(h.patchRoutine))
+	mux.HandleFunc("DELETE /api/routines/{id}", requireLocalOrigin(h.deleteRoutine))
+	mux.HandleFunc("POST /api/routines/{id}/run", requireLocalOrigin(h.runRoutine))
+	mux.HandleFunc("GET /api/routines/{id}/runs", h.listRoutineRuns)
+	mux.HandleFunc("POST /api/hooks/routine/{id}/{token}", h.hookRoutine)
+
+	// fusion phase 11: permission presets — a project's human-readable policy
+	// (unrestricted | approval-required | locked-down + per-category overrides)
+	// compiled into managed auto-approve rules. GET reads the effective policy;
+	// PUT sets it (D4 origin-fenced; escalations gated behind confirm → 428).
+	mux.HandleFunc("GET /api/projects/{id}/permission-preset", h.getPermissionPreset)
+	mux.HandleFunc("PUT /api/projects/{id}/permission-preset", requireLocalOrigin(h.putPermissionPreset))
+
+	// fusion phase 10: epic rollups + plan-doc editor. A workspace plan IS an
+	// epic; GET lists epics (workspace tasks with parsed plan/ phases) + their
+	// checkbox rollups; activate mints a board task from a phase doc (idempotent,
+	// 409 when already activated); the docs GET/PUT/PATCH read/edit/checkbox-flip
+	// the plan markdown, path-confined to that task's plan/ dir. The writes carry
+	// the same D4 origin hardening as every other mutating endpoint.
+	mux.HandleFunc("GET /api/epics", h.listEpics)
+	mux.HandleFunc("POST /api/epics/{taskId}/phases/{phaseId}/activate", requireLocalOrigin(h.activateEpicPhase))
+	mux.HandleFunc("GET /api/epics/{taskId}/docs", h.getPlanDoc)
+	mux.HandleFunc("PUT /api/epics/{taskId}/docs", requireLocalOrigin(h.putPlanDoc))
+	mux.HandleFunc("PATCH /api/epics/{taskId}/docs", requireLocalOrigin(h.patchPlanDoc))
+
+	// fusion phase 13: playbooks — selectable execution recipes. GET lists the
+	// registry (built-ins overlaid by a project's own files); the duplicate POST
+	// copies a built-in's markdown into the project so its prompts become editable
+	// (O_EXCL → 409 on repeat). The write carries the same D4 origin hardening.
+	mux.HandleFunc("GET /api/playbooks", h.listPlaybooks)
+	mux.HandleFunc("POST /api/projects/{id}/playbooks/{name}/duplicate", requireLocalOrigin(h.duplicatePlaybook))
+
+	// fusion phase 12: memory surface — the project's durable memory (CLAUDE.md,
+	// Claude Code auto-memory, serena memories) made listable/readable/editable.
+	// The PUT carries the same D4 origin hardening as every other mutating
+	// endpoint; the traversal fence + versioned backup live in memory.go. GET
+	// .../memory/file is more specific than .../memory so it wins the match.
+	mux.HandleFunc("GET /api/projects/{id}/memory", h.listMemory)
+	mux.HandleFunc("GET /api/projects/{id}/memory/file", h.getMemoryFile)
+	mux.HandleFunc("PUT /api/projects/{id}/memory/file", requireLocalOrigin(h.putMemoryFile))
+
+	// fusion phase 14: analytics uplift — Command-Center adoptions our store
+	// already backs (stats_uplift.go): autonomy ratio, productivity
+	// (LOC/languages/durations/hours-saved-ESTIMATE), the SDLC funnel snapshot,
+	// and the per-playbook rollup (degrades to an empty list pre-Phase-13). All
+	// read-only, range-scoped by the shared ?project= filter. Plus /api/usage —
+	// the Usage-popover windows with pace (telemetry ESTIMATE; the OAuth path is
+	// out of policy — see usage.go). /api/usage is unscoped (quota is global).
+	mux.HandleFunc("GET /api/stats/autonomy", h.statsAutonomy)
+	mux.HandleFunc("GET /api/stats/productivity", h.statsProductivity)
+	mux.HandleFunc("GET /api/stats/funnel", h.statsFunnel)
+	mux.HandleFunc("GET /api/stats/playbooks", h.statsPlaybooks)
+	mux.HandleFunc("GET /api/usage", h.usage)
+
+	// fusion phase 17: agent hub — agent-centric READ-ONLY aggregation over the
+	// registry + retro scorecards + analytics cost + sessions (agent_hub.go).
+	// Two GETs, no new tables, no new write paths: the roster and the per-agent
+	// profile bundle. Definition editing stays on the existing versioned System
+	// write surface (/api/system/agents/{id} + rollback) — the Hub UI calls it.
+	mux.HandleFunc("GET /api/agents/hub", h.agentsHub)
+	mux.HandleFunc("GET /api/agents/{id}/hub", h.agentHub)
+
+	// fusion phase 15: embedded terminal — a PTY bridged over a WebSocket
+	// (internal/term). NOT part of the frozen event bus (/api/ws): a separate
+	// PTY socket, no new bus message types. The origin gate is STRICTER than
+	// requireLocalOrigin (an absent Origin is rejected — browser-only), and the
+	// ?cwd allow-list (registered project path OR live worktree_path) lives in
+	// term.go; both run before the upgrade.
+	mux.HandleFunc("GET /api/term/ws", h.term)
+
+	// fusion phase 18: system hub — the catalog-wide extension of the agent-hub
+	// pattern grouped by ROLE (system_hub.go). Aggregation over the existing
+	// registry + events telemetry + config-lint; NO new tables. The per-type
+	// {id}/hub profile routes are more specific than the plain GET
+	// /api/system/{skills|hooks|commands}/{id} rows above, so the mux prefers
+	// them. The ONE new write is template copy-to-project: requireLocalOrigin,
+	// O_EXCL → 409, path-traversal fenced in the handler.
+	mux.HandleFunc("GET /api/system/hub/summary", h.systemHubSummary)
+	mux.HandleFunc("GET /api/system/skills/{id}/hub", h.skillHub)
+	mux.HandleFunc("GET /api/system/hooks/{id}/hub", h.hookHub)
+	mux.HandleFunc("GET /api/system/commands/{id}/hub", h.commandHub)
+	mux.HandleFunc("GET /api/system/templates", h.listSystemTemplates)
+	mux.HandleFunc("GET /api/system/templates/{name}", h.getSystemTemplate)
+	mux.HandleFunc("POST /api/system/templates/{name}/copy", requireLocalOrigin(h.copySystemTemplate))
 }

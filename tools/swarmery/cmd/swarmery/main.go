@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -32,19 +33,27 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/api"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/approvals"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/cost"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/dispatch"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/evals"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookcfg"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookshim"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/logbuf"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/planning"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/playbooks"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/prune"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/routines"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/store"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/sysedit"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/sysscan"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/term"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/toolproc"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/verify"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/worktree"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/wsingest"
 )
 
@@ -81,7 +90,16 @@ func main() {
 	case "uninstall":
 		err = installer.CmdUninstall(os.Args[2:])
 	case "status":
+		// fusion phase 9 (Console/DX): `status` now prints the live DAEMON
+		// snapshot (health + today-stats + approvals) and exits 1 when the
+		// daemon is unreachable, so it is usable in scripts. The launchd
+		// service introspection the command used to print moved to
+		// `service-status` (below) and stays reachable.
+		os.Exit(cmdStatus(os.Args[2:]))
+	case "service-status":
 		err = installer.CmdStatus(os.Args[2:])
+	case "console":
+		err = cmdConsole(os.Args[2:])
 	case "hook":
 		// Runtime shim: NEVER fails (fail-open D3) — exit code is always 0.
 		os.Exit(cmdHook(os.Args[2:]))
@@ -132,7 +150,14 @@ func usage() {
                                    launchd auto-start; bakes SWARMERY_* into the plist's EnvironmentVariables
                                    (--onboard-roots enables POST /api/projects/onboard + the dashboard button)
   swarmery uninstall               remove launchd service (keeps logs+db)
-  swarmery status                  service health, pid, uptime, db size
+  swarmery status   [--port <n>] [--url <base>]
+                                   live daemon snapshot (version/uptime/db/migrations/
+                                   ingest-lag + today sessions/cost/tokens + dispatch +
+                                   approvals/ws-clients); exit 1 when the daemon is down
+  swarmery console  [--port <n>] [--url <base>]
+                                   interactive TUI attached to the daemon: live event
+                                   feed + approvals (y/n) + dispatcher pause ([p])
+  swarmery service-status          launchd service health: pid, uptime, db size
   swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)
   swarmery hooks <install|uninstall|status> [--project <path>] [--all] [--port <n>]
   swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]
@@ -714,11 +739,27 @@ func cmdServe(args []string) error {
 			approvals.DeliveryUpdatedInput, approvals.DeliveryDenyMessage, *answerDelivery)
 	}
 
+	// fusion phase 9 (Console/DX): stand up the in-memory structured log ring and
+	// tee both slog and the stdlib `log` package into it. slog gets a tagging
+	// handler (boot code uses logbuf.Tagged / WithGroup for subsystem tags); the
+	// stdlib logger's output is redirected through a ring writer that mirrors to
+	// stderr so launchd logs are unchanged. `bootStart` anchors the phase timings.
+	bootStart := time.Now()
+	ring := logbuf.New(logbuf.DefaultCapacity)
+	slog.SetDefault(slog.New(logbuf.NewHandler(ring,
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+	log.SetOutput(logbuf.NewWriter(ring, "daemon", os.Stderr))
+	api.AttachLogRing(ring)
+	api.AttachUptime(bootStart)
+	bootLog := logbuf.Tagged(slog.Default(), "boot")
+
+	migrateStart := time.Now()
 	db, err := store.Open(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	bootLog.Info(logbuf.Phasef("store.migrate", time.Since(migrateStart)))
 
 	// control-plane v2: outbound webhook notifier (nil = disabled; Emit is
 	// nil-receiver-safe everywhere it is wired). Built before the pipeline so
@@ -855,6 +896,11 @@ func cmdServe(args []string) error {
 	// dir the sys scanner/editor uses so --claude-dir overrides apply here too.
 	api.AttachPluginCatalog(sysCfg.ClaudeDir)
 
+	// fusion phase 18: System Hub — GET /api/system/templates scans the plugin
+	// cache (<claude-dir>/plugins/cache) + each project's .claude/templates on
+	// demand. Wire the same resolved dir so --claude-dir applies here too.
+	api.AttachSystemHubDir(sysCfg.ClaudeDir)
+
 	// self-improvement phase 4: the apply/PR pipeline fetches + worktrees from
 	// the marketplace clone under <claude-dir>/plugins/marketplaces/swarmery.
 	// Wire the same resolved dir so --claude-dir applies here too.
@@ -875,16 +921,154 @@ func cmdServe(args []string) error {
 	toolMgr := toolproc.NewManager(toolproc.Config{Command: toolproc.DefaultCommand})
 	api.AttachToolManager(toolMgr)
 
+	// fusion phase 15: the embedded-terminal PTY manager. Owns every live PTY
+	// behind GET /api/term/ws; the shutdown path below runs CloseAll so no shell
+	// (or child of one) outlives the daemon. Its idle reaper starts under ctx.
+	termMgr := term.NewManager(term.Config{})
+	api.AttachTermManager(termMgr)
+
+	// fusion phase 3: the task dispatcher. Picks Todo board tasks and runs each
+	// as a headless `claude -p --session-id <uuid>` inside a swarm/<id> worktree
+	// (default root <home>/.swarmery/worktrees). Conservative caps + kill-switch
+	// from env (SWARMERY_DISPATCH=0 disables). Heal in_progress rows a crashed
+	// daemon left behind back to todo, then attach — the scheduler ticker starts
+	// below under the shutdown context. The worktree Manager is Git-mockable but
+	// runs the real git here.
+	// One worktree.Manager runs the real git for both the dispatcher (acquire/
+	// remove/tree) and auto-verification (tree-hash). Shared so both agree on the
+	// worktree root and git boundary.
+	wtMgr := &worktree.Manager{Git: worktree.ExecGit{}}
+
+	// fusion phase 13: the playbook registry (embedded built-ins + per-project
+	// .claude/playbooks overrides). Shared read-only by the dispatcher (multi-stage
+	// execution) and the verifier (verify strictness knob) and the api layer (list
+	// + duplicate). A malformed built-in fails startup loudly (they ship in the
+	// binary); project files are rescanned lazily on mtime change.
+	playbookReg, err := playbooks.New()
+	if err != nil {
+		return fmt.Errorf("playbooks registry: %w", err)
+	}
+	api.AttachPlaybooks(playbookReg)
+
+	dispatchSvc := dispatch.NewService(
+		db, dispatch.ConfigFromEnv(), dispatch.ClaudeRunner{}, wtMgr,
+	)
+	dispatchSvc.Playbooks = playbookReg
+	if err := dispatchSvc.HealStale(); err != nil {
+		log.Printf("warning: dispatch heal on startup: %v", err)
+	}
+	api.AttachDispatch(dispatchSvc)
+
+	// fusion phase 6: auto-verification. After a dispatched run lands in_review
+	// WITHOUT a sentinel, a bounded READ-ONLY headless `claude -p` grades the
+	// task's acceptance criteria and stamps verify_verdict (pass|fail|
+	// inconclusive). FAIL spawns a fix task within the root's retry budget (3);
+	// INCONCLUSIVE spawns nothing. Kill-switch SWARMERY_AUTOVERIFY=0 disables the
+	// auto trigger (the manual POST /api/tasks/{id}/verify still works). Heal
+	// interrupted runs (crash left them 'running') to error+inconclusive, then
+	// attach — to the api layer AND, as the dispatcher's Verifier seam, to the
+	// dispatcher so a no-sentinel exit pokes verification while the worktree lives.
+	verifySvc := verify.NewService(db, verify.ConfigFromEnv(), verify.ClaudeRunner{}, wtMgr)
+	// fusion phase 13: resolve each task's verify strictness knob (strict|normal|
+	// off) from its playbook via the shared registry — off skips the run, strict
+	// tightens the prompt bar. The seam keeps verify decoupled from the playbook
+	// package (wired here at the composition root).
+	verifySvc.PlaybookVerify = func(projectPath, name string) string {
+		if pb, ok := playbookReg.Get(projectPath, name); ok {
+			return pb.Verify
+		}
+		return "normal"
+	}
+	if err := verifySvc.HealStale(); err != nil {
+		log.Printf("warning: verify heal on startup: %v", err)
+	}
+	api.AttachVerify(verifySvc)
+	dispatchSvc.Verifier = verifySvc
+
+	// fusion phase 7: routines (scheduled automation). A 60s scheduler ticks due
+	// cron routines and runs their typed steps (command / ai-prompt / create-task)
+	// as headless `claude -p` runs (ai-prompt) or board-task inserts (create-task,
+	// via the api-layer TaskCreator adapter so board semantics + WS publish + poke
+	// stay in one place). Kill-switch SWARMERY_ROUTINES=0 disables the ticker; heal
+	// any 'running' run rows a crashed daemon left behind to 'failed' before the
+	// ticker starts below under the shutdown context.
+	routinesSvc := routines.NewService(
+		db, routines.ClaudeRunner{}, api.NewRoutinesTaskCreator(db), routines.Enabled(),
+	)
+	if err := routinesSvc.HealStale(); err != nil {
+		log.Printf("warning: routines heal on startup: %v", err)
+	}
+	api.AttachRoutines(routinesSvc)
+
+	// fusion phase 8: planning mode. A headless `claude -p --session-id <uuid>`
+	// planner run per project (single-flight, in-memory — no new tables) turns an
+	// idea into a plan in the private workspace; the run asks clarifying questions
+	// as reply text (the spike proved AskUserQuestion does not fire the permission
+	// hook under `-p`), answered via the existing session-resume chat. No heal on
+	// startup: in-flight planning is in-memory only, so a restart simply forgets
+	// any orphaned run (the plan it wrote is still picked up by wsingest).
+	planningSvc := planning.NewService(db, planning.ClaudeRunner{})
+	api.AttachPlanning(planningSvc)
+
+	buildStart := time.Now()
 	handler, err := api.NewServer(db, !*noIngest)
 	if err != nil {
 		return err
 	}
+	bootLog.Info(logbuf.Phasef("api.build", time.Since(buildStart)))
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
 	log.Printf("swarmery serving on http://%s (db: %s)", addr, *dbPath)
+	// Final startup-phase summary: api.listen (the mux + SPA are ready to bind)
+	// and the total boot time in the exact spec wording.
+	bootLog.Info(logbuf.Phasef("api.listen", time.Since(buildStart)))
+	bootLog.Info(logbuf.Readyf(time.Since(bootStart)))
 
 	// Graceful shutdown: SIGINT/SIGTERM → stop tool children, drain HTTP, exit.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// fusion phase 3: run the dispatcher poll-fallback ticker under the shutdown
+	// context. It runs an initial Schedule immediately (drains any Todo backlog
+	// on restart) then sweeps every PollInterval; the event fast path is the
+	// board handlers' pokeDispatch(). Exits when ctx is cancelled.
+	go dispatchSvc.StartScheduler(ctx)
+
+	// fusion phase 6: the verification stale-run reaper. A verifier that was
+	// killed or wedged leaves a 'running' verification_runs row; the reaper marks
+	// runs older than the stale window (2h) as error and stamps their task
+	// inconclusive so it never parks forever. Runs on a 10-minute ticker under the
+	// shutdown context; a first pass fires immediately.
+	go func() {
+		reap := func() {
+			if _, err := verifySvc.Reap(); err != nil {
+				log.Printf("error: verify reaper: %v", err)
+			}
+		}
+		reap()
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				reap()
+			}
+		}
+	}()
+	log.Printf("swarmery verify reaper started (interval 10m)")
+
+	// fusion phase 7: run the routines scheduler (60s cron ticker) under the same
+	// shutdown context, in its own goroutine independent of the dispatcher's. It
+	// touches disjoint tables (routines/routine_runs); a create-task step hands
+	// off to the dispatcher through the shared board (pokeDispatch inside the
+	// TaskCreator), so the two schedulers never contend on a lock.
+	go routinesSvc.StartScheduler(ctx)
+
+	// fusion phase 15: reap PTYs idle past the timeout (4h) on a 1-minute ticker
+	// under the shutdown context.
+	go termMgr.Reap(ctx.Done())
+
 	srv := &http.Server{Addr: addr, Handler: handler}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
@@ -900,6 +1084,9 @@ func cmdServe(args []string) error {
 		defer cancel()
 		srv.Shutdown(shutCtx) //nolint:errcheck // best-effort drain on the way out
 		toolMgr.StopAll()
+		// Drain done ⇒ no new /api/term/ws upgrade can register a PTY; tear down
+		// every live terminal (SIGHUP→SIGKILL its process group) so none survive.
+		termMgr.CloseAll()
 		// If ctx.Done won a race against a real ListenAndServe failure, surface it.
 		select {
 		case err := <-errCh:

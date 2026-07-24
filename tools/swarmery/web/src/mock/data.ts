@@ -3,12 +3,22 @@
 // testdata/fixtures/*.jsonl (simple, tool-heavy, and subagent sessions).
 
 import type {
+  BoardColumn,
+  BoardTask,
+  DispatchStatus,
   DocDetail,
   DocMeta,
+  DuplicatePlaybookResponse,
+  Epic,
+  EpicPhase,
   Event,
   FileChange,
   HealthResponse,
   PermissionRequest,
+  PlanDoc,
+  Playbook,
+  PlanningStart,
+  PlanningStatus,
   Project,
   ProjectComponents,
   ProjectDetail,
@@ -29,10 +39,16 @@ import type {
   AnalyticsDimension,
   AnalyticsMetric,
   ArchitectureProject,
+  AutonomyResp,
   BreakdownResp,
   DurationsResp,
   ErrorsResp,
+  FunnelResp,
   MatrixResp,
+  MemoryFileContent,
+  MemoryListResp,
+  PlaybookRollup,
+  ProductivityResp,
   ProposalsResp,
   Recommendation,
   RecommendationsResp,
@@ -40,21 +56,30 @@ import type {
   RetroFrictionResp,
   RetroLessonsResp,
   RetroTasksResp,
+  Routine,
+  RoutineInput,
+  RoutineRun,
   SkillsResp,
   TimeseriesResp,
   ToolsResp,
   ToolsResponse,
+  UsageResp,
 } from '../api/types';
 import { addDays, isoDay, parseDay } from '../lib/format';
 import { mockApprovalsList, mockResolveApproval } from './approvals';
 import {
+  mockAutonomy,
   mockBreakdown,
   mockDurations,
   mockErrorGroups,
+  mockFunnel,
   mockMatrix,
+  mockPlaybookStats,
+  mockProductivity,
   mockSkillStats,
   mockTimeseries,
   mockToolStats,
+  mockUsage,
 } from './analytics';
 
 interface AnalyticsRangeArg {
@@ -1119,6 +1144,248 @@ function mockTaskDetail(id: number | string): TaskDetail {
   return { ...summary, goal: 'mock goal line from the README card', sessionLinks: links };
 }
 
+// --- Fusion phase 1/3: board tasks (demo board for project 3 = swarmery) ------
+
+/** Build one mock board task; unset dispatcher-owned fields default to null/0. */
+function boardTask(p: Partial<BoardTask> & Pick<BoardTask, 'id' | 'externalId' | 'title' | 'boardColumn'>): BoardTask {
+  return {
+    projectId: 3,
+    projectSlug: 'swarmery',
+    prompt: p.title,
+    priority: 'normal',
+    status: 'queued',
+    paused: false,
+    userPaused: false,
+    dependencies: [],
+    model: null,
+    playbook: null,
+    fileScope: [],
+    branch: null,
+    worktreePath: null,
+    dispatchError: null,
+    retryCount: 0,
+    verifyVerdict: null,
+    verifyDetail: null,
+    columnMovedAt: iso(30 * MIN),
+    createdAt: iso(60 * MIN),
+    ...p,
+  };
+}
+
+/** Mutable in-memory board so create/patch/drag demo interactively (VITE_MOCK). */
+let mockBoard: BoardTask[] = [
+  boardTask({ id: 9101, externalId: 'T-a1b2c3', title: 'Add keyboard nav to the board', boardColumn: 'triage', priority: 'high' }),
+  boardTask({ id: 9102, externalId: 'T-d4e5f6', title: 'Wire status bar to /api/dispatch', boardColumn: 'triage' }),
+  boardTask({
+    id: 9103, externalId: 'T-g7h8i9', title: 'Optimistic column moves with revert', boardColumn: 'todo',
+    priority: 'urgent', model: 'sonnet', fileScope: ['web/src/pages/Board.tsx', 'web/src/workspace/'],
+  }),
+  boardTask({
+    id: 9104, externalId: 'T-j1k2l3', title: 'ProjectSwitcher dropdown', boardColumn: 'in_progress',
+    status: 'running', branch: 'swarm/T-j1k2l3', worktreePath: '/Volumes/Work/swarmery-worktrees/T-j1k2l3',
+    model: 'opus', playbook: 'review-heavy',
+  }),
+  boardTask({
+    id: 9105, externalId: 'T-m4n5o6', title: 'TaskDrawer edit fields', boardColumn: 'in_progress',
+    status: 'running', paused: true, userPaused: true, branch: 'swarm/T-m4n5o6',
+    dispatchError: 'file-scope overlap with T-j1k2l3 — parked until it lands',
+  }),
+  boardTask({
+    id: 9106, externalId: 'T-p7q8r9', title: 'Board WS cache patch in place', boardColumn: 'in_review',
+    status: 'in_review', verifyVerdict: 'pass', verifyDetail: 'all 6 acceptance criteria met; build green',
+    branch: 'swarm/T-p7q8r9',
+  }),
+  boardTask({
+    id: 9107, externalId: 'T-s1t2u3', title: 'Lazy-load the /p/:slug subtree', boardColumn: 'in_review',
+    status: 'in_review', verifyVerdict: 'fail',
+    verifyDetail: 'bundle grew 40KB — Board pulled into the initial chunk; re-split needed',
+    branch: 'swarm/T-s1t2u3', retryCount: 1,
+  }),
+  boardTask({
+    id: 9108, externalId: 'T-v4w5x6', title: 'Add DispatchStatus to the frozen contract', boardColumn: 'done',
+    status: 'completed', verifyVerdict: 'pass', columnMovedAt: iso(10 * MIN),
+  }),
+  boardTask({
+    id: 9109, externalId: 'T-y7z8a9', title: 'Rehome ProjectDetail into Overview', boardColumn: 'archived',
+    status: 'completed', columnMovedAt: iso(6 * 60 * MIN),
+  }),
+];
+
+/** Priority strings accepted by the create/patch mock (mirrors normalizePriority). */
+const MOCK_PRIORITIES = new Set(['urgent', 'high', 'normal', 'low']);
+let mockBoardSeq = 9200;
+
+// fusion phase 10: one demo epic for project 3 (swarmery) with a diamond
+// dependency shape (1 → 2,3 → 4) so the phase timeline + rollup render offline.
+const mockEpicPhase = (
+  id: number,
+  seq: number,
+  name: string,
+  dependsOn: number[],
+  done: number,
+  total: number,
+): EpicPhase => ({
+  id,
+  seq,
+  name,
+  docPath: `/ws/plan/phase-${String(seq)}.md`,
+  docRelPath: `phase-${String(seq)}.md`,
+  dependsOn,
+  checkboxesDone: done,
+  checkboxesTotal: total,
+  activatedAt: null,
+  boardTaskExternalId: null,
+  boardTaskId: null,
+  boardColumn: null,
+});
+
+const mockEpics: Epic[] = [
+  {
+    taskId: 7010,
+    externalId: '2026-07-24-fusion-orchestration',
+    projectId: 3,
+    projectSlug: 'swarmery',
+    title: 'Fusion-inspired orchestration',
+    status: 'running',
+    startedAt: iso(-3 * 86400),
+    planDir: '/ws/plan',
+    phases: [
+      mockEpicPhase(1, 1, 'Task queue: schema + write API', [], 5, 5),
+      mockEpicPhase(2, 2, 'Dispatcher', [1], 3, 6),
+      mockEpicPhase(3, 3, 'Board UI', [1], 2, 8),
+      mockEpicPhase(4, 4, 'Epics rollup + graph', [2, 3], 0, 6),
+    ],
+    rollup: { done: 10, total: 25, pct: 40 },
+  },
+];
+
+/** fusion phase 13: the built-in playbooks (mirrors internal/playbooks/builtin). */
+const mockPlaybooks: Playbook[] = [
+  {
+    name: 'quick-fix',
+    description: 'One focused pass for a small, well-scoped change. Verification runs at the normal bar.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [{ name: 'implement', body: '{task_prompt}' }],
+  },
+  {
+    name: 'standard',
+    description: 'The default recipe — a single implementation pass with normal verification.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [{ name: 'implement', body: '{task_prompt}' }],
+  },
+  {
+    name: 'review-heavy',
+    description: 'Implement, then adversarially self-review the diff before handing to verification. Verification runs strict.',
+    model: '', verify: 'strict', source: 'builtin', path: '',
+    stages: [
+      { name: 'implement', body: '{task_prompt}' },
+      {
+        name: 'self-review',
+        body: 'Adversarially review the work just completed on this branch (diff vs {start_point}).\nFix everything you find. If nothing needs fixing, end with: NO-OP: review clean.',
+      },
+    ],
+  },
+  {
+    name: 'plan-first',
+    description: 'Produce a short step plan first, then implement it in a second stage. Verification runs at the normal bar.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [
+      { name: 'plan', body: 'Do NOT edit any files. Produce a concise implementation plan.\n\n{task_prompt}' },
+      { name: 'implement', body: 'Implement by following the plan from the previous stage:\n\n{previous_stage_output}' },
+    ],
+  },
+];
+
+// fusion phase 8: planner state per project id — startPlanning flips a project
+// to active so the demo shows the running-planner panel.
+const mockPlanning: Record<number, PlanningStatus> = {};
+
+// fusion phase 12: project memory fixtures — one file per kind, backed by a
+// mutable store so an edit→save→reread round-trips in VITE_MOCK.
+interface MockMemoryMeta {
+  kind: 'claude-md' | 'auto-memory' | 'serena';
+  path: string;
+  updatedAt: string;
+  writable: boolean;
+}
+
+const mockMemoryFiles: MockMemoryMeta[] = [
+  { kind: 'claude-md', path: '/work/demo/CLAUDE.md', updatedAt: '2026-07-20T10:00:00Z', writable: true },
+  {
+    kind: 'auto-memory',
+    path: '/home/dev/.claude/projects/-work-demo/memory/MEMORY.md',
+    updatedAt: '2026-07-22T14:30:00Z',
+    writable: true,
+  },
+  {
+    kind: 'serena',
+    path: '/work/demo/.serena/memories/architecture.md',
+    updatedAt: '2026-07-18T09:15:00Z',
+    writable: false, // demonstrates the read-only badge
+  },
+];
+
+const mockMemoryStore = new Map<string, string>([
+  [
+    '/work/demo/CLAUDE.md',
+    '# CLAUDE.md\n\nProject instructions for the demo app.\n\n- Strict TypeScript.\n- Conventional commits.\n',
+  ],
+  [
+    '/home/dev/.claude/projects/-work-demo/memory/MEMORY.md',
+    '- [User role](user_role.md) — senior full-stack engineer\n- [Deploy notes](deploy.md) — staging alias is d16\n',
+  ],
+  [
+    '/work/demo/.serena/memories/architecture.md',
+    '# Architecture\n\nSingle Go daemon + embedded React SPA.\n',
+  ],
+]);
+
+/** Deterministic non-crypto content hash for mock base_hash round-trips. */
+function mockHash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+const mockProjectRecs: Recommendation[] = [
+  {
+    id: 501,
+    rule: 'R1',
+    target_kind: 'tool',
+    target: 'Bash',
+    title: 'Auto-approve Bash(git *) for this project',
+    detail: 'Bash was requested 34× and approved every time over the last 14 days.',
+    evidence: { window: { from: '2026-07-10', to: '2026-07-24' }, counts: { requested: 34 } },
+    baseline: null,
+    status: 'proposed',
+    created_at: '2026-07-23T12:00:00Z',
+    updated_at: '2026-07-23T12:00:00Z',
+  },
+  {
+    id: 502,
+    rule: 'R2',
+    target_kind: 'agent',
+    target: 'implementation-agent',
+    title: 'implementation-agent shows a rising failed-run share',
+    detail: 'Behavior-failed-run share rose to 41% (prev window 22%).',
+    evidence: { window: { from: '2026-07-10', to: '2026-07-24' }, counts: { failed: 9, runs: 22 } },
+    baseline: {
+      metric: 'behavior_failed_run_share',
+      value: 0.41,
+      per_day: false,
+      window_days: 14,
+      window: { from: '2026-07-10', to: '2026-07-24' },
+      accepted_at: '2026-07-24T08:00:00Z',
+    },
+    status: 'accepted',
+    created_at: '2026-07-22T09:00:00Z',
+    updated_at: '2026-07-24T08:00:00Z',
+  },
+];
+
 // --- Mock API ----------------------------------------------------------------
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -1295,6 +1562,32 @@ export const mockApi = {
     return mockErrorGroups(range);
   },
 
+  // analytics uplift (fusion phase 14)
+  async autonomy(range: AnalyticsRangeArg = {}): Promise<AutonomyResp> {
+    await delay(90);
+    return mockAutonomy(range);
+  },
+
+  async productivity(range: AnalyticsRangeArg = {}): Promise<ProductivityResp> {
+    await delay(120);
+    return mockProductivity(range);
+  },
+
+  async funnel(range: AnalyticsRangeArg = {}): Promise<FunnelResp> {
+    await delay(90);
+    return mockFunnel(range);
+  },
+
+  async playbookStats(range: AnalyticsRangeArg = {}): Promise<PlaybookRollup[]> {
+    await delay(90);
+    return mockPlaybookStats(range);
+  },
+
+  async usage(): Promise<UsageResp> {
+    await delay(80);
+    return mockUsage();
+  },
+
   // retro loop — empty shells (no retro fixtures yet)
   async retroAgents(): Promise<RetroAgentsResp> {
     await delay(120);
@@ -1358,6 +1651,57 @@ export const mockApi = {
     return { proposed: 0, updated: 0, adopted: 0, verified: 0 };
   },
 
+  // fusion phase 12 — project memory surface + project-scoped insights.
+  async projectRecommendations(_project: string | number): Promise<RecommendationsResp> {
+    await delay(120);
+    return { recommendations: mockProjectRecs };
+  },
+
+  async memoryList(_project: string | number): Promise<MemoryListResp> {
+    await delay(110);
+    return {
+      files: mockMemoryFiles.map((f) => ({
+        kind: f.kind,
+        path: f.path,
+        name: f.path.split('/').pop() ?? f.path,
+        sizeBytes: new TextEncoder().encode(mockMemoryStore.get(f.path) ?? '').length,
+        updatedAt: f.updatedAt,
+        writable: f.writable,
+      })),
+    };
+  },
+
+  async memoryFile(_project: string | number, path: string): Promise<MemoryFileContent> {
+    await delay(80);
+    const meta = mockMemoryFiles.find((f) => f.path === path);
+    const content = mockMemoryStore.get(path) ?? '';
+    return {
+      path,
+      kind: meta?.kind ?? 'claude-md',
+      content,
+      hash: mockHash(content),
+      writable: meta?.writable ?? true,
+    };
+  },
+
+  async putMemoryFile(
+    _project: string | number,
+    path: string,
+    content: string,
+  ): Promise<MemoryFileContent> {
+    await delay(140);
+    mockMemoryStore.set(path, content);
+    const meta = mockMemoryFiles.find((f) => f.path === path);
+    if (meta) meta.updatedAt = new Date().toISOString();
+    return {
+      path,
+      kind: meta?.kind ?? 'claude-md',
+      content,
+      hash: mockHash(content),
+      writable: true,
+    };
+  },
+
   // self-improvement phase 4 — agent change proposals (empty shell).
   async proposals(): Promise<ProposalsResp> {
     await delay(120);
@@ -1386,6 +1730,200 @@ export const mockApi = {
     await delay(140);
     const numeric = typeof id === 'number' ? id : Number.parseInt(id, 10);
     return mockTaskDetail(Number.isNaN(numeric) ? id : numeric);
+  },
+
+  // --- fusion phase 1/3 — task board + dispatcher (mutable in-memory board) ---
+
+  async boardTasks(projectId?: number, boardColumn?: BoardColumn): Promise<BoardTask[]> {
+    await delay(90);
+    return mockBoard
+      .filter((t) => (projectId === undefined || t.projectId === projectId))
+      .filter((t) => (boardColumn === undefined || t.boardColumn === boardColumn))
+      .map((t) => ({ ...t }));
+  },
+
+  // --- fusion phase 10: epics + plan-doc editor ---
+  async epics(projectId?: number): Promise<Epic[]> {
+    await delay(90);
+    return mockEpics
+      .filter((e) => projectId === undefined || e.projectId === projectId)
+      .map((e) => ({ ...e, phases: e.phases.map((p) => ({ ...p })) }));
+  },
+
+  async activateEpicPhase(taskId: number, phaseId: number): Promise<BoardTask> {
+    await delay(120);
+    const epic = mockEpics.find((e) => e.taskId === taskId);
+    const phase = epic?.phases.find((p) => p.id === phaseId);
+    if (!epic || !phase) throw new Error('mock: phase not found');
+    mockBoardSeq += 1;
+    const ext = `T-${mockBoardSeq.toString(36)}`;
+    const created = boardTask({
+      id: mockBoardSeq,
+      externalId: ext,
+      projectId: epic.projectId,
+      title: phase.name,
+      prompt: `# ${phase.name}\n\n(mock activation)`,
+      boardColumn: 'todo',
+      columnMovedAt: iso(0),
+      createdAt: iso(0),
+    });
+    mockBoard = [created, ...mockBoard];
+    phase.activatedAt = iso(0);
+    phase.boardTaskId = created.id;
+    phase.boardTaskExternalId = ext;
+    phase.boardColumn = 'todo';
+    return { ...created };
+  },
+
+  async planDoc(_taskId: number, path: string): Promise<PlanDoc> {
+    await delay(60);
+    return {
+      path,
+      content: `# ${path}\n\nMock plan document.\n\n## Acceptance criteria\n- [x] first\n- [ ] second\n`,
+    };
+  },
+
+  async togglePlanCheckbox(_taskId: number, path: string, line: number, done: boolean): Promise<PlanDoc> {
+    await delay(60);
+    const lines = [
+      `# ${path}`,
+      '',
+      'Mock plan document.',
+      '',
+      '## Acceptance criteria',
+      '- [x] first',
+      '- [ ] second',
+    ];
+    const cur = lines[line];
+    if (cur !== undefined) {
+      lines[line] = cur.replace(/\[.\]/, done ? '[x]' : '[ ]');
+    }
+    return { path, content: lines.join('\n') + '\n', backup: '.backups/mock/doc.md' };
+  },
+
+  async createBoardTask(input: {
+    projectId: number;
+    title: string;
+    prompt: string;
+    priority?: string;
+    model?: string;
+    playbook?: string;
+    fileScope?: string[];
+    dependencies?: string[];
+    boardColumn?: BoardColumn;
+  }): Promise<BoardTask> {
+    await delay(120);
+    const title = input.title.trim();
+    const prompt = input.prompt.trim();
+    if (title === '' || prompt === '') throw new Error('title and prompt are required');
+    const priority = input.priority ?? 'normal';
+    if (!MOCK_PRIORITIES.has(priority)) throw new Error(`invalid priority ${priority}`);
+    mockBoardSeq += 1;
+    const created = boardTask({
+      id: mockBoardSeq,
+      externalId: `T-${mockBoardSeq.toString(36)}`,
+      projectId: input.projectId,
+      title,
+      prompt,
+      priority: priority as BoardTask['priority'],
+      boardColumn: input.boardColumn ?? 'triage',
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.playbook !== undefined && input.playbook !== '' ? { playbook: input.playbook } : {}),
+      ...(input.fileScope !== undefined ? { fileScope: input.fileScope } : {}),
+      ...(input.dependencies !== undefined ? { dependencies: input.dependencies } : {}),
+      columnMovedAt: input.boardColumn !== undefined && input.boardColumn !== 'triage' ? iso(0) : null,
+      createdAt: iso(0),
+    });
+    mockBoard = [created, ...mockBoard];
+    return { ...created };
+  },
+
+  async patchBoardTask(id: number, patch: {
+    boardColumn?: BoardColumn;
+    title?: string;
+    prompt?: string;
+    priority?: string;
+    model?: string | null;
+    playbook?: string | null;
+    fileScope?: string[];
+    dependencies?: string[];
+    paused?: boolean;
+    userPaused?: boolean;
+  }): Promise<BoardTask> {
+    await delay(90);
+    const cur = mockBoard.find((t) => t.id === id);
+    if (cur === undefined) throw new Error('task not found');
+    // Mirror the Go legalTransition guard so the demo surfaces the same 4xx.
+    if (patch.boardColumn !== undefined && cur.boardColumn === 'done' && patch.boardColumn === 'in_progress') {
+      throw new Error('illegal transition done→in_progress (recovery is dispatcher-owned)');
+    }
+    if (patch.priority !== undefined && !MOCK_PRIORITIES.has(patch.priority)) {
+      throw new Error(`invalid priority ${patch.priority}`);
+    }
+    const next: BoardTask = {
+      ...cur,
+      ...(patch.boardColumn !== undefined ? { boardColumn: patch.boardColumn } : {}),
+      ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
+      ...(patch.priority !== undefined ? { priority: patch.priority as BoardTask['priority'] } : {}),
+      ...(patch.model !== undefined ? { model: patch.model } : {}),
+      ...(patch.playbook !== undefined ? { playbook: patch.playbook === '' ? null : patch.playbook } : {}),
+      ...(patch.fileScope !== undefined ? { fileScope: patch.fileScope } : {}),
+      ...(patch.dependencies !== undefined ? { dependencies: patch.dependencies } : {}),
+      ...(patch.paused !== undefined ? { paused: patch.paused } : {}),
+      ...(patch.userPaused !== undefined ? { userPaused: patch.userPaused } : {}),
+      ...(patch.boardColumn !== undefined && patch.boardColumn !== cur.boardColumn
+        ? { columnMovedAt: iso(0) }
+        : {}),
+    };
+    mockBoard = mockBoard.map((t) => (t.id === id ? next : t));
+    return { ...next };
+  },
+
+  async dispatch(): Promise<DispatchStatus> {
+    await delay(70);
+    const running = mockBoard.filter((t) => t.boardColumn === 'in_progress' && !t.paused).length;
+    return {
+      enabled: true,
+      globalPaused: false,
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      activeRuns: running,
+      freeSlots: Math.max(0, 2 - running),
+      pausedScopes: [],
+    };
+  },
+
+  // --- fusion phase 13 — playbooks ---
+
+  async playbooks(_projectId?: number): Promise<Playbook[]> {
+    await delay(70);
+    return mockPlaybooks.map((p) => ({ ...p, stages: p.stages.map((s) => ({ ...s })) }));
+  },
+
+  async duplicatePlaybook(_projectId: number, name: string): Promise<DuplicatePlaybookResponse> {
+    await delay(120);
+    const path = `/Volumes/Work/demo/.claude/playbooks/${name}.md`;
+    return { name, path, hint: `edit ${path} — project files override built-ins` };
+  },
+
+  // --- fusion phase 8 — planning mode ---
+
+  async planning(projectId: number): Promise<PlanningStatus> {
+    await delay(60);
+    return mockPlanning[projectId] ?? { active: false, sessionUuid: '', sessionId: null, startedAt: null };
+  },
+
+  async startPlanning(projectId: number, _idea: string): Promise<PlanningStart> {
+    await delay(120);
+    const uuid = `mock-plan-${String(projectId)}-${String(Date.now())}`;
+    mockPlanning[projectId] = {
+      active: true,
+      sessionUuid: uuid,
+      sessionId: 9001, // a canned session so the demo shows the active panel
+      startedAt: new Date().toISOString(),
+    };
+    return { sessionUuid: uuid };
   },
 
   // --- phase 2 — approvals (mutable store in ./approvals.ts) ---
@@ -1504,4 +2042,109 @@ export const mockApi = {
       },
     };
   },
+
+  // ── Routines (fusion phase 7) ──
+  async routines(): Promise<Routine[]> {
+    await delay(120);
+    return mockRoutines.map((r) => ({ ...r, steps: [...r.steps] }));
+  },
+  async routineRuns(id: string): Promise<RoutineRun[]> {
+    await delay(100);
+    return (mockRoutineRuns[id] ?? []).map((r) => ({ ...r }));
+  },
+  async createRoutine(input: RoutineInput): Promise<Routine> {
+    await delay(120);
+    const id = `R-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    const r: Routine = {
+      id,
+      projectId: input.projectId ?? null,
+      name: input.name,
+      cronExpr: input.cronExpr ?? '',
+      enabled: input.enabled ?? true,
+      catchUp: input.catchUp ?? 'skip',
+      steps: input.steps ?? [],
+      hasWebhook: input.webhook ?? false,
+      ...(input.webhook ? { webhookToken: 'mocktoken00000000000000000000000' } : {}),
+      timeoutSec: input.timeoutSec ?? 900,
+      createdAt: now,
+      updatedAt: now,
+      lastRunAt: null,
+      nextRunAt: input.cronExpr && (input.enabled ?? true) ? now : null,
+    };
+    mockRoutines.unshift(r);
+    return { ...r };
+  },
+  async patchRoutine(id: string, input: Partial<RoutineInput>): Promise<Routine> {
+    await delay(100);
+    const r = mockRoutines.find((x) => x.id === id);
+    if (!r) throw new Error(`mock: routine ${id} not found`);
+    if (input.name !== undefined) r.name = input.name;
+    if (input.cronExpr !== undefined) r.cronExpr = input.cronExpr;
+    if (input.enabled !== undefined) r.enabled = input.enabled;
+    if (input.catchUp !== undefined) r.catchUp = input.catchUp;
+    if (input.steps !== undefined) r.steps = input.steps;
+    if (input.timeoutSec !== undefined) r.timeoutSec = input.timeoutSec;
+    r.nextRunAt = r.cronExpr && r.enabled ? new Date().toISOString() : null;
+    r.updatedAt = new Date().toISOString();
+    return { ...r };
+  },
+};
+
+// In-memory routines fixtures (VITE_MOCK): seeded with the three canonical
+// routines so the page renders offline.
+const mockRoutines: Routine[] = [
+  {
+    id: 'R-nightl',
+    projectId: null,
+    name: 'nightly advisor re-run',
+    cronExpr: '0 3 * * *',
+    enabled: true,
+    catchUp: 'skip',
+    steps: [
+      { type: 'command', name: 'advise', command: 'curl -fsS -X POST http://localhost:7777/api/retro/advise' },
+    ],
+    hasWebhook: false,
+    timeoutSec: 900,
+    createdAt: '2026-07-24T00:00:00.000Z',
+    updatedAt: '2026-07-24T00:00:00.000Z',
+    lastRunAt: '2026-07-24T03:00:00.000Z',
+    nextRunAt: '2026-07-25T03:00:00.000Z',
+  },
+  {
+    id: 'R-weekly',
+    projectId: null,
+    name: 'weekly deps-check',
+    cronExpr: '0 6 * * 1',
+    enabled: true,
+    catchUp: 'run_one',
+    steps: [{ type: 'ai-prompt', name: 'deps', prompt: 'Run /deps-check and summarize outdated packages.' }],
+    hasWebhook: true,
+    timeoutSec: 1800,
+    createdAt: '2026-07-24T00:00:00.000Z',
+    updatedAt: '2026-07-24T00:00:00.000Z',
+    lastRunAt: null,
+    nextRunAt: '2026-07-27T06:00:00.000Z',
+  },
+];
+
+const mockRoutineRuns: Record<string, RoutineRun[]> = {
+  'R-nightl': [
+    {
+      id: 2,
+      trigger: 'cron',
+      status: 'ok',
+      detail: '[{"name":"advise","type":"command","status":"ok","output":"advisor: 3 new"}]',
+      startedAt: '2026-07-24T03:00:00.000Z',
+      finishedAt: '2026-07-24T03:00:04.000Z',
+    },
+    {
+      id: 1,
+      trigger: 'manual',
+      status: 'failed',
+      detail: '[{"name":"advise","type":"command","status":"failed","error":"curl: (7) connection refused"}]',
+      startedAt: '2026-07-23T03:00:00.000Z',
+      finishedAt: '2026-07-23T03:00:01.000Z',
+    },
+  ],
 };

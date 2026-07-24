@@ -4,24 +4,44 @@
 
 import type {
   AdviseStats,
+  AgentEvidence,
   AnalyticsDimension,
   AnalyticsMetric,
   ApprovalRule,
   AttachResponse,
+  BoardColumn,
+  BoardTask,
   BreakdownResp,
   DetachResponse,
+  DispatchStatus,
+  AutonomyResp,
   DocDetail,
   DocMeta,
   DurationsResp,
+  Epic,
   ErrorsResp,
   FileSessionsResponse,
+  FunnelResp,
   HealthResponse,
   MatrixResp,
+  DuplicatePlaybookResponse,
+  MemoryFileContent,
+  MemoryListResp,
   OnboardConfig,
+  PlaybookRollup,
+  ProductivityResp,
+  UsageResp,
   OnboardRequest,
   OnboardResponse,
+  Playbook,
+  PermissionEscalation,
+  PermissionPresetInput,
+  PermissionPresetView,
   PermissionRequest,
   PermissionRequestStatus,
+  PlanDoc,
+  PlanningStart,
+  PlanningStatus,
   ProjectDetail,
   ProjectMeta,
   ProjectMetaPatch,
@@ -37,6 +57,9 @@ import type {
   RetroFrictionResp,
   RetroLessonsResp,
   RetroTasksResp,
+  Routine,
+  RoutineInput,
+  RoutineRun,
   SearchResponse,
   SessionDetailResponse,
   SessionOutcome,
@@ -362,6 +385,39 @@ export function fetchErrorGroups(range: AnalyticsRange = {}): Promise<ErrorsResp
   return get(`/api/stats/errors?${rangeQuery(range, {})}`);
 }
 
+// --- analytics uplift (fusion phase 14) ---------------------------------------
+
+/** Autonomy ratio — tool-calls per human intervention (fusion phase 14). */
+export function fetchAutonomy(range: AnalyticsRange = {}): Promise<AutonomyResp> {
+  if (MOCK) return mockApi.autonomy(range);
+  return get(`/api/stats/autonomy?${rangeQuery(range, {})}`);
+}
+
+/** Productivity — commits/LOC/languages/durations + hours-saved ESTIMATE. */
+export function fetchProductivity(range: AnalyticsRange = {}): Promise<ProductivityResp> {
+  if (MOCK) return mockApi.productivity(range);
+  return get(`/api/stats/productivity?${rangeQuery(range, {})}`);
+}
+
+/** SDLC funnel snapshot over the board columns (fusion phase 14). */
+export function fetchFunnel(range: AnalyticsRange = {}): Promise<FunnelResp> {
+  if (MOCK) return mockApi.funnel(range);
+  return get(`/api/stats/funnel?${rangeQuery(range, {})}`);
+}
+
+/** Per-playbook rollup — empty list pre-Phase-13 (fusion phase 14). */
+export function fetchPlaybookStats(range: AnalyticsRange = {}): Promise<PlaybookRollup[]> {
+  if (MOCK) return mockApi.playbookStats(range);
+  return get(`/api/stats/playbooks?${rangeQuery(range, {})}`);
+}
+
+/** Subscription-usage windows with pace (telemetry ESTIMATE). Unscoped — quota
+ * is global. `fresh` bypasses the daemon's 60s cache (the popover Refresh btn). */
+export function fetchUsage(fresh = false): Promise<UsageResp> {
+  if (MOCK) return mockApi.usage();
+  return get(`/api/usage${fresh ? '?fresh=1' : ''}`);
+}
+
 // --- retro loop (per-agent scorecards + friction board) -----------------------
 
 /** Per-agent health scorecards + previous-window comparison (retro loop). */
@@ -427,6 +483,79 @@ export async function runAdvise(): Promise<AdviseStats> {
   return (await res.json()) as AdviseStats;
 }
 
+// --- fusion phase 12 — project-scoped insights + memory ----------------------
+
+/**
+ * GET /api/retro/recommendations?projectId= — the advisor recs attributable to
+ * one project (post-filtered on evidence session). `project` is a slug or id.
+ */
+export function fetchProjectRecommendations(
+  project: string | number,
+  status?: string,
+): Promise<RecommendationsResp> {
+  if (MOCK) return mockApi.projectRecommendations(project);
+  const qs = new URLSearchParams({ projectId: String(project) });
+  if (status !== undefined) qs.set('status', status);
+  return get(`/api/retro/recommendations?${qs.toString()}`);
+}
+
+/**
+ * POST /api/retro/advise?projectId= — run the advisor now for the project's
+ * Insights card. The engine still runs fleet-wide (cross-project rates); the
+ * projectId is accepted for API symmetry and the READ side does the narrowing.
+ */
+export async function runProjectAdvise(project: string | number): Promise<AdviseStats> {
+  if (MOCK) return mockApi.advise();
+  const qs = new URLSearchParams({ projectId: String(project) });
+  const res = await fetch(`/api/retro/advise?${qs.toString()}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`advise failed: ${String(res.status)}`);
+  return (await res.json()) as AdviseStats;
+}
+
+/** GET /api/projects/{id}/memory — the project's memory files across 3 roots. */
+export function fetchMemoryList(project: string | number): Promise<MemoryListResp> {
+  if (MOCK) return mockApi.memoryList(project);
+  return get(`/api/projects/${encodeURIComponent(String(project))}/memory`);
+}
+
+/** GET /api/projects/{id}/memory/file?path= — one memory file's content+hash. */
+export function fetchMemoryFile(
+  project: string | number,
+  path: string,
+): Promise<MemoryFileContent> {
+  if (MOCK) return mockApi.memoryFile(project, path);
+  const qs = new URLSearchParams({ path });
+  return get(`/api/projects/${encodeURIComponent(String(project))}/memory/file?${qs.toString()}`);
+}
+
+/**
+ * PUT /api/projects/{id}/memory/file?path= — versioned write. A 409 (base_hash
+ * drifted from disk) throws with the disk-side message so the editor can prompt
+ * a reload; 403 means the readonly kill-switch is on.
+ */
+export async function putMemoryFile(
+  project: string | number,
+  path: string,
+  content: string,
+  baseHash: string,
+): Promise<MemoryFileContent> {
+  if (MOCK) return mockApi.putMemoryFile(project, path, content);
+  const qs = new URLSearchParams({ path });
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(String(project))}/memory/file?${qs.toString()}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, base_hash: baseHash }),
+    },
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `save failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as MemoryFileContent;
+}
+
 // --- self-improvement phase 4 — agent change proposals -----------------------
 
 /** Extracts an {error} message from a failed response body, else a default. */
@@ -440,6 +569,15 @@ export function fetchProposals(status?: string): Promise<ProposalsResp> {
   if (MOCK) return mockApi.proposals();
   const qs = status !== undefined ? `?status=${encodeURIComponent(status)}` : '';
   return get(`/api/retro/proposals${qs}`);
+}
+
+/**
+ * GET /api/retro/agents/{agent}/evidence — read-only preview of the evidence
+ * bundle the rewriter would feed the model. A built-in agent answers
+ * in_registry:false with no bundle.
+ */
+export function fetchAgentEvidence(agent: string): Promise<AgentEvidence> {
+  return get(`/api/retro/agents/${encodeURIComponent(agent)}/evidence`);
 }
 
 /**
@@ -503,6 +641,184 @@ export function fetchTasks(days = 14): Promise<TasksResponse> {
 export function fetchTask(id: number | string): Promise<TaskDetail> {
   if (MOCK) return mockApi.task(id);
   return get(`/api/tasks/${encodeURIComponent(id)}`);
+}
+
+// --- fusion phase 1/3: task board + dispatcher (frozen contract in api/types) ---
+
+/**
+ * GET /api/board/tasks?projectId=&boardColumn= — dispatchable board rows
+ * (source='queue'), newest first. Both filters optional; the board scopes by
+ * projectId, the Archived column lazy-loads with boardColumn='archived'.
+ */
+export function fetchBoardTasks(projectId?: number, boardColumn?: BoardColumn): Promise<BoardTask[]> {
+  if (MOCK) return mockApi.boardTasks(projectId, boardColumn);
+  const qs = new URLSearchParams();
+  if (projectId !== undefined) qs.set('projectId', String(projectId));
+  if (boardColumn !== undefined) qs.set('boardColumn', boardColumn);
+  const q = qs.toString();
+  return get(`/api/board/tasks${q === '' ? '' : `?${q}`}`);
+}
+
+/** Body of POST /api/board/tasks (matches createBoardTask in tasks_board.go). */
+export interface CreateBoardTaskInput {
+  projectId: number;
+  title: string;
+  prompt: string;
+  priority?: string;
+  model?: string;
+  /** Selected execution recipe name (fusion phase 13); omit/empty = default. */
+  playbook?: string;
+  fileScope?: string[];
+  dependencies?: string[];
+  boardColumn?: BoardColumn;
+}
+
+/** POST /api/board/tasks → 201 BoardTask. QuickEntry sends {title,prompt=title}. */
+export async function createBoardTask(input: CreateBoardTaskInput): Promise<BoardTask> {
+  if (MOCK) return mockApi.createBoardTask(input);
+  const res = await fetch('/api/board/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `create task failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as BoardTask;
+}
+
+/**
+ * User-editable subset of a board task (the fields patchBoardTask accepts —
+ * boardColumn/title/prompt/priority/model/fileScope/dependencies/paused/
+ * userPaused). Dispatcher-owned fields are NOT settable here.
+ */
+export interface PatchBoardTaskInput {
+  boardColumn?: BoardColumn;
+  title?: string;
+  prompt?: string;
+  priority?: string;
+  model?: string | null;
+  /** Selected recipe name; "" clears the selection back to the default. */
+  playbook?: string | null;
+  fileScope?: string[];
+  dependencies?: string[];
+  paused?: boolean;
+  userPaused?: boolean;
+}
+
+/** PATCH /api/board/tasks/{id} → updated BoardTask (id = numeric row id). */
+export async function patchBoardTask(id: number, patch: PatchBoardTaskInput): Promise<BoardTask> {
+  if (MOCK) return mockApi.patchBoardTask(id, patch);
+  const res = await fetch(`/api/board/tasks/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `patch task failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as BoardTask;
+}
+
+/** GET /api/dispatch — dispatcher status snapshot (503 when not attached). */
+export function fetchDispatchStatus(): Promise<DispatchStatus> {
+  if (MOCK) return mockApi.dispatch();
+  return get('/api/dispatch');
+}
+
+// --- fusion phase 13: playbooks (selectable workflows) ------------------------
+
+/**
+ * GET /api/playbooks?projectId= — the playbooks visible to a project (built-ins
+ * overlaid by the project's own .claude/playbooks files), sorted by name. Omit
+ * projectId for built-ins only.
+ */
+export function fetchPlaybooks(projectId?: number): Promise<Playbook[]> {
+  if (MOCK) return mockApi.playbooks(projectId);
+  const qs = projectId !== undefined ? `?projectId=${String(projectId)}` : '';
+  return get(`/api/playbooks${qs}`);
+}
+
+/**
+ * POST /api/projects/{id}/playbooks/{name}/duplicate — copy a built-in's
+ * markdown into the project so its prompts become editable. Non-2xx (404 unknown
+ * built-in/project, 409 the project file already exists, 503 not attached)
+ * throws the server's {error} text for inline display.
+ */
+export async function duplicatePlaybook(
+  projectId: number,
+  name: string,
+): Promise<DuplicatePlaybookResponse> {
+  if (MOCK) return mockApi.duplicatePlaybook(projectId, name);
+  const res = await fetch(
+    `/api/projects/${String(projectId)}/playbooks/${encodeURIComponent(name)}/duplicate`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `duplicate playbook failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as DuplicatePlaybookResponse;
+}
+
+// --- fusion phase 8: planning mode --------------------------------------------
+
+/** GET /api/projects/{id}/planning — the planner status for a project. */
+export function fetchPlanning(projectId: number): Promise<PlanningStatus> {
+  if (MOCK) return mockApi.planning(projectId);
+  return get(`/api/projects/${String(projectId)}/planning`);
+}
+
+/**
+ * POST /api/projects/{id}/planning {idea} — spawn a headless planner run.
+ * Returns 202 with the pre-generated session uuid. Non-2xx (400 empty idea,
+ * 404 unknown project, 409 a run is already active, 503 not attached) throws the
+ * server's {error} text for inline display.
+ */
+export async function startPlanning(projectId: number, idea: string): Promise<PlanningStart> {
+  if (MOCK) return mockApi.startPlanning(projectId, idea);
+  const res = await fetch(`/api/projects/${String(projectId)}/planning`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idea }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `start planning failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as PlanningStart;
+}
+
+/** POST /api/projects/{id}/planning/cancel — abort the in-flight planner run. */
+export async function cancelPlanning(projectId: number): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/projects/${String(projectId)}/planning/cancel`, { method: 'POST' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `cancel planning failed: ${String(res.status)}`);
+  }
+}
+
+/** POST /api/dispatch/pause — global or per-project pause toggle. */
+export async function pauseDispatch(
+  scope: 'global' | 'project',
+  paused: boolean,
+  projectId?: number,
+): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const body: { scope: string; paused: boolean; projectId?: number } = { scope, paused };
+  if (scope === 'project' && projectId !== undefined) body.projectId = projectId;
+  const res = await fetch('/api/dispatch/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `pause failed: ${String(res.status)}`);
+  }
 }
 
 // --- phase 2 — approvals (docs/hooks-protocol.md; DTO frozen in api/types.ts) ---
@@ -596,6 +912,57 @@ export async function toggleApprovalRule(id: number, enabled: boolean): Promise<
 export async function deleteApprovalRule(id: number): Promise<void> {
   const res = await fetch(`/api/approval-rules/${String(id)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`delete rule failed: ${String(res.status)}`);
+}
+
+// --- fusion phase 11 — permission presets ------------------------------------
+
+/**
+ * Thrown by putPermissionPreset on a 428: the change escalates privileges and
+ * needs explicit confirmation. Carries the escalation list so the caller can
+ * render a confirm dialog, then retry with `confirm: true`.
+ */
+export class EscalationRequiredError extends Error {
+  readonly escalations: string[];
+  readonly reason: string;
+  constructor(payload: PermissionEscalation) {
+    super(payload.error);
+    this.name = 'EscalationRequiredError';
+    this.escalations = payload.escalations;
+    this.reason = payload.reason;
+  }
+}
+
+export function fetchPermissionPreset(projectId: number | string): Promise<PermissionPresetView> {
+  return get(`/api/projects/${String(projectId)}/permission-preset`);
+}
+
+/**
+ * PUT /api/projects/{id}/permission-preset. On a 428 (privileged change without
+ * confirm) throws {@link EscalationRequiredError}; other non-2xx throw a plain
+ * Error. Returns the recompiled effective policy view on success.
+ */
+export async function putPermissionPreset(
+  projectId: number | string,
+  input: PermissionPresetInput,
+): Promise<PermissionPresetView> {
+  const res = await fetch(`/api/projects/${String(projectId)}/permission-preset`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 428) {
+    const payload = (await res.json().catch(() => ({
+      error: 'confirmation required',
+      reason: '',
+      escalations: [],
+    }))) as PermissionEscalation;
+    throw new EscalationRequiredError(payload);
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `set preset failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as PermissionPresetView;
 }
 
 /** POST /api/sessions/{id}/kill — send SIGTERM (force=false) or SIGKILL (force=true). */
@@ -747,4 +1114,156 @@ export function fetchFileSessions(path: string, project?: string): Promise<FileS
   const qs = new URLSearchParams({ path });
   if (project !== undefined && project !== '') qs.set('project', project);
   return get(`/api/files/sessions?${qs.toString()}`);
+}
+
+// ── Routines (fusion phase 7) ───────────────────────────────────────────────
+
+/** GET /api/routines — all routines (optionally project-scoped), newest first. */
+export function fetchRoutines(projectId?: number): Promise<Routine[]> {
+  if (MOCK) return mockApi.routines();
+  const qs = projectId ? `?projectId=${String(projectId)}` : '';
+  return get(`/api/routines${qs}`);
+}
+
+/** GET /api/routines/{id}/runs — run history (newest first). */
+export function fetchRoutineRuns(id: string): Promise<RoutineRun[]> {
+  if (MOCK) return mockApi.routineRuns(id);
+  return get(`/api/routines/${encodeURIComponent(id)}/runs`);
+}
+
+/** POST /api/routines — create. Returns the routine (with webhookToken when
+ * webhook:true was requested). */
+export async function createRoutine(input: RoutineInput): Promise<Routine> {
+  if (MOCK) return mockApi.createRoutine(input);
+  const res = await fetch('/api/routines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `create routine failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as Routine;
+}
+
+/** PATCH /api/routines/{id} — partial update. */
+export async function patchRoutine(id: string, input: Partial<RoutineInput>): Promise<Routine> {
+  if (MOCK) return mockApi.patchRoutine(id, input);
+  const res = await fetch(`/api/routines/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `update routine failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as Routine;
+}
+
+/** DELETE /api/routines/{id}. */
+export async function deleteRoutine(id: string): Promise<void> {
+  if (MOCK) return;
+  const res = await fetch(`/api/routines/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `delete routine failed: ${String(res.status)}`);
+  }
+}
+
+/** POST /api/routines/{id}/run — manual trigger. Returns whether a run started
+ * (false when the routine is already running / the global cap is full). */
+export async function runRoutine(id: string): Promise<{ status: string }> {
+  if (MOCK) return { status: 'started' };
+  const res = await fetch(`/api/routines/${encodeURIComponent(id)}/run`, { method: 'POST' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `run routine failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as { status: string };
+}
+
+// ── Epics (fusion phase 10) ─────────────────────────────────────────────────
+
+/** GET /api/epics?projectId= — epics (workspace plans) with phases + rollups. */
+export function fetchEpics(projectId?: number): Promise<Epic[]> {
+  if (MOCK) return mockApi.epics(projectId);
+  const qs = projectId !== undefined ? `?projectId=${String(projectId)}` : '';
+  return get(`/api/epics${qs}`);
+}
+
+/**
+ * POST /api/epics/{taskId}/phases/{phaseId}/activate → 201 BoardTask. A second
+ * call for an already-activated phase throws {@link PhaseAlreadyActivatedError}
+ * (409) carrying the existing board task.
+ */
+export async function activateEpicPhase(taskId: number, phaseId: number): Promise<BoardTask> {
+  if (MOCK) return mockApi.activateEpicPhase(taskId, phaseId);
+  const res = await fetch(`/api/epics/${String(taskId)}/phases/${String(phaseId)}/activate`, {
+    method: 'POST',
+  });
+  if (res.status === 409) {
+    const payload = (await res.json().catch(() => ({}))) as { error?: string; task?: BoardTask };
+    throw new PhaseAlreadyActivatedError(payload.error ?? 'phase already activated', payload.task);
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `activate failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as BoardTask;
+}
+
+/** Thrown on a 409 from activateEpicPhase — carries the existing board task. */
+export class PhaseAlreadyActivatedError extends Error {
+  readonly task: BoardTask | undefined;
+  constructor(message: string, task: BoardTask | undefined) {
+    super(message);
+    this.name = 'PhaseAlreadyActivatedError';
+    this.task = task;
+  }
+}
+
+/** GET /api/epics/{taskId}/docs?path= — read a plan doc (path-confined). */
+export function fetchPlanDoc(taskId: number, path: string): Promise<PlanDoc> {
+  if (MOCK) return mockApi.planDoc(taskId, path);
+  return get(`/api/epics/${String(taskId)}/docs?path=${encodeURIComponent(path)}`);
+}
+
+/** PUT /api/epics/{taskId}/docs?path= {content} — overwrite a plan doc (backup). */
+export async function savePlanDoc(taskId: number, path: string, content: string): Promise<PlanDoc> {
+  if (MOCK) return { path, content, backup: '.backups/mock/doc.md' };
+  const res = await fetch(`/api/epics/${String(taskId)}/docs?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `save doc failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as PlanDoc;
+}
+
+/**
+ * PATCH /api/epics/{taskId}/docs?path= {line, done} — flip one checkbox by
+ * 0-based line index (the exact `- [ ]`↔`- [x]` line).
+ */
+export async function togglePlanCheckbox(
+  taskId: number,
+  path: string,
+  line: number,
+  done: boolean,
+): Promise<PlanDoc> {
+  if (MOCK) return mockApi.togglePlanCheckbox(taskId, path, line, done);
+  const res = await fetch(`/api/epics/${String(taskId)}/docs?path=${encodeURIComponent(path)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ line, done }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `toggle checkbox failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as PlanDoc;
 }

@@ -52,7 +52,7 @@ function FilterChip({
       aria-pressed={selected}
       className={`shrink-0 rounded-full border px-[11px] py-1 font-mono text-[10.5px] whitespace-nowrap transition-colors ${
         selected
-          ? 'border-[#4a4e58] bg-surface2 text-ink'
+          ? 'border-line-strong bg-surface2 text-ink'
           : 'border-line-strong text-ink-dim hover:text-ink'
       }`}
     >

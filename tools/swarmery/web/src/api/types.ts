@@ -527,6 +527,116 @@ export interface ErrorsResp {
   approx: boolean;
 }
 
+// --- Analytics uplift (fusion phase 14) --------------------------------------
+// These mirror the daemon DTOs in internal/api/stats_uplift.go + usage.go, which
+// serialize as camelCase — do not snake_case them.
+
+/** GET /api/stats/autonomy — tool-calls per human intervention. */
+export interface AutonomyResp {
+  from: string;
+  to: string;
+  toolCalls: number;
+  interventions: {
+    approvals: number;
+    userPrompts: number;
+    total: number;
+  };
+  /** toolCalls / max(1, interventions); when fullyAutonomous, this IS toolCalls. */
+  ratio: number;
+  /** True when there were zero human interventions in the range. */
+  fullyAutonomous: boolean;
+}
+
+/** One language bucket for the productivity chart (top 12 by LOC). */
+export interface LanguageStat {
+  ext: string;
+  files: number;
+  loc: number;
+}
+
+/** Completed-task duration aggregates (nearest-rank percentiles). Null when none. */
+export interface TaskDurationsStat {
+  completed: number;
+  avgSec: number | null;
+  medianSec: number | null;
+  p90Sec: number | null;
+  totalActiveMs: number;
+}
+
+/** Human-hours saved — ALWAYS an estimate; the UI must label it so. */
+export interface HoursSaved {
+  value: number;
+  formula: string;
+  estimate: boolean;
+}
+
+/** GET /api/stats/productivity — LOC / languages / durations / hours-saved. */
+export interface ProductivityResp {
+  from: string;
+  to: string;
+  commits: number;
+  filesModified: number;
+  loc: number;
+  languages: LanguageStat[];
+  taskDurations: TaskDurationsStat;
+  humanHoursSaved: HoursSaved;
+}
+
+/** One board column in the SDLC funnel snapshot. */
+export interface FunnelColumn {
+  column: string;
+  /** Current occupancy. */
+  count: number;
+  /** Reached-in-range for terminal columns; current count for intake columns. */
+  entered: number;
+}
+
+/** GET /api/stats/funnel — board SDLC funnel. `snapshot` is always true (honesty). */
+export interface FunnelResp {
+  from: string;
+  to: string;
+  columns: FunnelColumn[];
+  enteredInRange: number;
+  doneInRange: number;
+  completionRate: number;
+  perDay: number;
+  snapshot: boolean;
+}
+
+/** GET /api/stats/playbooks — per-playbook rollup (empty pre-Phase-13). */
+export interface PlaybookRollup {
+  playbook: string;
+  tasksDone: number;
+  inProgress: number;
+  costUsd: number | null;
+  tokens: number;
+}
+
+/** One subscription-usage window with a pace indicator. */
+export interface UsageWindow {
+  key: string;
+  label: string;
+  used: number;
+  limit: number;
+  /** used/limit as a fraction (may exceed 1). */
+  usedPct: number;
+  /** usedPct/elapsedPct - 1; positive = over pace. */
+  pace: number;
+  /** RFC3339 timestamp when the rolling window resets. */
+  resetsAt: string;
+  /** "estimate" (telemetry) | "oauth" (future). */
+  source: string;
+}
+
+/** GET /api/usage — subscription windows. `configured` false → set SWARMERY_USAGE_LIMITS. */
+export interface UsageResp {
+  configured: boolean;
+  /** "estimate" — never presented as exact (see usage.go OAuth spike note). */
+  source: string;
+  generatedAt: string;
+  windows: UsageWindow[];
+}
+
 // --- Retro loop (GET /api/retro/{agents,friction}) ---------------------------
 
 /** Same aggregates over the preceding window of equal length. */
@@ -572,7 +682,27 @@ export interface RetroAgentRow {
   re_dispatch_rate: number | null;
   /** latest eval run for the agent; null when none imported. */
   eval: RetroAgentEval | null;
+  /**
+   * True when the agent resolves to a live registry row with an editable
+   * definition file — the agents the rewriter can act on. Built-in agents
+   * (Explore, general-purpose, debugger) are false, so the UI hides their
+   * "Improve" button. Optional for forward-compat with older daemons.
+   */
+  improvable?: boolean;
   prev: RetroPrev;
+}
+
+/**
+ * GET /api/retro/agents/{agent}/evidence — read-only preview of the evidence
+ * bundle the rewriter would feed the model. A built-in agent answers
+ * in_registry:false with no bundle.
+ */
+export interface AgentEvidence {
+  agent: string;
+  in_registry: boolean;
+  agent_path?: string;
+  base_sha256?: string;
+  bundle?: string;
 }
 
 /** The orchestrator ("main" fold key) — excluded from agents[]. */
@@ -724,6 +854,46 @@ export interface AdviseStats {
   verified: number;
 }
 
+// --- fusion phase 12 — project memory surface --------------------------------
+
+/** memory file kind: which of a project's three memory roots it comes from. */
+export type MemoryKind = 'claude-md' | 'auto-memory' | 'serena';
+
+/** One listed memory file (GET /api/projects/{id}/memory). */
+export interface MemoryFile {
+  kind: MemoryKind;
+  /** Absolute on-disk path — the opaque ?path= handle for read/write. */
+  path: string;
+  /** Display basename. */
+  name: string;
+  sizeBytes: number;
+  /** RFC3339 file mtime. */
+  updatedAt: string;
+  /** False in readonly mode — the editor shows a read-only badge. */
+  writable: boolean;
+}
+
+export interface MemoryListResp {
+  files: MemoryFile[];
+}
+
+/** GET /api/projects/{id}/memory/file?path= — one file's content + hash. */
+export interface MemoryFileContent {
+  path: string;
+  kind: MemoryKind;
+  content: string;
+  /** sha256 of content — the base_hash handle for the next versioned PUT. */
+  hash: string;
+  writable: boolean;
+}
+
+/** 409 body of a PUT whose base_hash no longer matches disk. */
+export interface MemoryConflict {
+  error: string;
+  disk_hash: string;
+  base_hash: string;
+}
+
 // --- self-improvement phase 4 — agent change proposals -----------------------
 
 /** agent_change_proposals.status lifecycle (migration 0021). */
@@ -812,6 +982,52 @@ export interface ApprovalRule {
   enabled: boolean;
   note: string | null;
   createdAt: string;
+  /**
+   * 'manual' (hand-written) or 'preset' (compiled from a project's permission
+   * preset, fusion phase 11). Managed ('preset') rules are read-only in the
+   * manual rules UI — the preset owns their lifecycle.
+   */
+  source: 'manual' | 'preset';
+}
+
+/* ----- permission presets (fusion phase 11 — DESIGN.md §2 item 11) ----- */
+
+/** The three presets, over the low-level approval_rules. */
+export type PermissionPreset = 'unrestricted' | 'approval-required' | 'locked-down';
+
+/** Per-category override policy — two states only ("block" is out of scope). */
+export type CategoryPolicy = 'allow' | 'ask';
+
+/** One category's resolved policy under the current preset + overrides. */
+export interface PermissionCategory {
+  category: string;
+  patterns: string[];
+  policy: CategoryPolicy;
+}
+
+/** GET /api/projects/{id}/permission-preset — the effective policy view. */
+export interface PermissionPresetView {
+  projectId: number;
+  preset: PermissionPreset;
+  overrides: Record<string, CategoryPolicy>;
+  /** true iff preset === 'locked-down' — the dispatcher refuses this project's tasks. */
+  lockedDown: boolean;
+  categories: PermissionCategory[];
+}
+
+/** PUT body for setting a project's permission preset. */
+export interface PermissionPresetInput {
+  preset: PermissionPreset;
+  overrides?: Record<string, CategoryPolicy>;
+  /** Required (→ true) when the change escalates privileges (R13); else 428. */
+  confirm?: boolean;
+}
+
+/** The 428 payload when a privileged change needs explicit confirmation. */
+export interface PermissionEscalation {
+  error: string;
+  reason: string;
+  escalations: string[];
 }
 
 /** WS event names — frozen; MVP trio implemented by Agent A, permission_* added at gate 2.2 (phase 2). */
@@ -821,7 +1037,8 @@ export type WSMessageType =
   | 'event_appended'
   | 'permission_requested'
   | 'permission_resolved'
-  | 'system_item_updated';
+  | 'system_item_updated'
+  | 'task_updated';
 
 /** Messages pushed over /api/ws — see docs/ws-protocol.md. */
 export type WSMessage =
@@ -830,7 +1047,131 @@ export type WSMessage =
   | { type: 'event_appended'; payload: { sessionId: number; event: Event } }
   | { type: 'permission_requested'; payload: PermissionRequest }
   | { type: 'permission_resolved'; payload: PermissionRequest }
-  | { type: 'system_item_updated'; payload: SystemItemUpdate };
+  | { type: 'system_item_updated'; payload: SystemItemUpdate }
+  | { type: 'task_updated'; payload: BoardTask };
+
+// --- Fusion phase 1: task board — additive contracts --------------------------
+
+/** Closed set of kanban columns (Fusion builtin:coding semantics). */
+export type BoardColumn =
+  | 'triage'
+  | 'todo'
+  | 'in_progress'
+  | 'in_review'
+  | 'done'
+  | 'archived';
+
+/** Accepted task priority tokens (mapped to the INTEGER priority column server-side). */
+export type TaskPriority = 'urgent' | 'high' | 'normal' | 'low';
+
+/**
+ * A dispatchable board task — response of POST/PATCH /api/board/tasks, item of
+ * GET /api/board/tasks, and the `task_updated` WS payload. Mirrors
+ * boardTaskDTO in internal/api/tasks_board.go. Dispatcher-owned fields
+ * (branch, worktreePath, dispatchError, retryCount, verifyVerdict,
+ * verifyDetail) are read-only from the client until Phase 3/6 fill them.
+ */
+export interface BoardTask {
+  id: number;
+  externalId: string;
+  projectId: number;
+  projectSlug: string | null;
+  title: string;
+  prompt: string;
+  priority: TaskPriority;
+  status: string;
+  boardColumn: BoardColumn;
+  paused: boolean;
+  userPaused: boolean;
+  dependencies: string[];
+  model: string | null;
+  /** Selected execution recipe name (fusion phase 13); null = default 'standard'. */
+  playbook: string | null;
+  fileScope: string[];
+  branch: string | null;
+  worktreePath: string | null;
+  dispatchError: string | null;
+  retryCount: number;
+  verifyVerdict: string | null;
+  verifyDetail: string | null;
+  columnMovedAt: string | null;
+  createdAt: string;
+}
+
+// --- fusion phase 13: playbooks (selectable workflows) ------------------------
+
+/** One stage of a playbook: a name + its prompt-template body. */
+export interface PlaybookStage {
+  name: string;
+  body: string;
+}
+
+/** Verify strictness knob a playbook hands to auto-verification (Phase 6). */
+export type PlaybookVerify = 'strict' | 'normal' | 'off';
+
+/** Where a resolved playbook came from (built-in vs project-local override). */
+export type PlaybookSource = 'builtin' | 'project';
+
+/**
+ * A playbook — item of GET /api/playbooks. Mirrors playbookDTO in
+ * internal/api/playbooks.go. Structure is read-only in the UI; a project makes
+ * a built-in's prompts editable by duplicating it (POST …/duplicate).
+ */
+export interface Playbook {
+  name: string;
+  description: string;
+  model: string;
+  verify: PlaybookVerify;
+  source: PlaybookSource;
+  stages: PlaybookStage[];
+  /** On-disk path of a project playbook (""/absent for a built-in). */
+  path: string;
+}
+
+/** Response of POST /api/projects/{id}/playbooks/{name}/duplicate. */
+export interface DuplicatePlaybookResponse {
+  name: string;
+  path: string;
+  hint: string;
+}
+
+/**
+ * GET /api/dispatch — dispatcher runtime snapshot (fusion phase 3). Mirrors the
+ * Go `dispatch.Status` struct (internal/dispatch/service.go). Read-only; the
+ * status bar derives its pause chip + slot readout from it. `pausedScopes`
+ * lists every currently-paused scope key ("global" or "project:<id>").
+ */
+export interface DispatchStatus {
+  enabled: boolean;
+  globalPaused: boolean;
+  maxConcurrent: number;
+  maxWorktrees: number;
+  activeRuns: number;
+  freeSlots: number;
+  pausedScopes: string[];
+}
+
+// --- fusion phase 8: planning mode -------------------------------------------
+
+/**
+ * Go `planning.Status` (internal/planning/service.go) — GET
+ * /api/projects/{id}/planning. `sessionUuid` is the pre-generated planner
+ * session id (present while active, so the page links to /sessions/{uuid} and
+ * matches the transcript before the numeric row is minted); `sessionId` is that
+ * numeric row once ingest/the hook mints it (null until then — the page filters
+ * approvals + reads turns by it); `startedAt` is the RFC3339 run start.
+ */
+export interface PlanningStatus {
+  active: boolean;
+  sessionUuid: string;
+  sessionId: number | null;
+  startedAt: string | null;
+}
+
+/** POST /api/projects/{id}/planning → 202 body. */
+export interface PlanningStart {
+  sessionUuid: string;
+}
 
 // --- Phase 4: system registry (Stage 1) — additive contracts ------------------
 
@@ -1454,4 +1795,334 @@ export interface ToolsResponse {
   serena: { available: boolean; projects: ToolsSerenaProject[] };
   graphify: { projects: ToolsGraphifyProject[] };
   architecture: { projects: ArchitectureProject[] };
+}
+
+// ── Routines (fusion phase 7 — scheduled automation) ────────────────────────
+
+/** routines step kind (mirrors internal/routines/step.go). */
+export type RoutineStepType = 'command' | 'ai-prompt' | 'create-task';
+
+/** One typed routine step. Only the fields relevant to `type` are set. */
+export interface RoutineStep {
+  type: RoutineStepType;
+  name: string;
+  // command
+  command?: string;
+  timeoutSec?: number;
+  continueOnFailure?: boolean;
+  // ai-prompt
+  prompt?: string;
+  model?: string;
+  // create-task
+  taskTitle?: string;
+  taskPrompt?: string;
+  boardColumn?: string;
+}
+
+/** routines.catch_up policy. */
+export type RoutineCatchUp = 'skip' | 'run_one';
+
+/** A routine (GET/POST/PATCH response, list item). webhookToken is present ONLY
+ * on the create/rotate response; list/get expose hasWebhook instead. */
+export interface Routine {
+  id: string;
+  projectId: number | null;
+  name: string;
+  cronExpr: string;
+  enabled: boolean;
+  catchUp: RoutineCatchUp;
+  steps: RoutineStep[];
+  hasWebhook: boolean;
+  webhookToken?: string;
+  timeoutSec: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+}
+
+/** routine_runs row status. */
+export type RoutineRunStatus = 'running' | 'ok' | 'failed' | 'timeout';
+
+/** One run-history entry. detail is the per-step results JSON (string). */
+export interface RoutineRun {
+  id: number;
+  trigger: 'cron' | 'manual' | 'webhook';
+  status: RoutineRunStatus;
+  detail: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** POST/PATCH /api/routines request body. */
+export interface RoutineInput {
+  projectId?: number | null;
+  name: string;
+  cronExpr?: string;
+  enabled?: boolean;
+  catchUp?: RoutineCatchUp;
+  steps?: RoutineStep[];
+  timeoutSec?: number;
+  webhook?: boolean;
+}
+
+// --- fusion phase 10: epic rollups + plan-doc editor --------------------------
+
+/** One epic phase — mirrors epicPhaseDTO in internal/api/epics.go. */
+export interface EpicPhase {
+  id: number;
+  seq: number;
+  name: string;
+  /** Absolute doc path on disk (informational). */
+  docPath: string;
+  /** Path relative to the plan/ dir — the value the docs endpoints accept. */
+  docRelPath: string;
+  dependsOn: number[];
+  checkboxesDone: number;
+  checkboxesTotal: number;
+  activatedAt: string | null;
+  /** external_id of the board task this phase was activated into (null until). */
+  boardTaskExternalId: string | null;
+  boardTaskId: number | null;
+  /** The current board column of that board task (null until activated). */
+  boardColumn: BoardColumn | null;
+}
+
+/** Checkbox rollup across an epic's phases. */
+export interface EpicRollup {
+  done: number;
+  total: number;
+  /** 0..100; 0 when total===0. */
+  pct: number;
+}
+
+/** One epic (a workspace plan) — mirrors epicDTO in internal/api/epics.go. */
+export interface Epic {
+  taskId: number;
+  externalId: string;
+  projectId: number;
+  projectSlug: string;
+  title: string;
+  status: string;
+  startedAt: string | null;
+  planDir: string;
+  phases: EpicPhase[];
+  rollup: EpicRollup;
+}
+
+/** GET/PUT/PATCH /api/epics/{taskId}/docs response body. */
+export interface PlanDoc {
+  path: string;
+  content: string;
+  /** On-disk backup path a write created (absent on GET). */
+  backup?: string;
+}
+
+// --- fusion phase 17: agent hub ----------------------------------------------
+// Agent-centric READ-ONLY aggregation. Go DTOs live in internal/api/agent_hub.go.
+// Reuses Recommendation / AgentChangeProposal / RetroLesson for the Insights tab
+// (same shapes the Retro page renders) — no forked contracts.
+
+/** One roster card: a registry identity + its 30-day rollups (folded by
+ * normalised agent name). Go: agentRosterRow. */
+export interface AgentRosterRow {
+  id: number;
+  name: string;
+  scope: 'global' | 'project';
+  projectSlug: string | null;
+  origin: 'local' | 'plugin';
+  pluginName: string | null;
+  model: string | null;
+  path: string;
+  description: string | null;
+  /** The agent resolves to a live registry row the rewriter can act on. */
+  improvable: boolean;
+  runs30d: number;
+  /** success/(success+fail) over judged sessions; null when none in range. */
+  successRate: number | null;
+  /** Behaviour-failed-run share (0..1) — the roster health dot thresholds it. */
+  failedShare: number;
+  cost30d: number;
+  lastActiveAt: string | null;
+}
+
+export interface AgentRosterResp {
+  agents: AgentRosterRow[];
+}
+
+/** One runs/day sparkline bucket (local day). Go: agentDayCount. */
+export interface AgentDayCount {
+  day: string;
+  runs: number;
+}
+
+/** Profile Overview tab. Go: agentOverviewDTO. */
+export interface AgentOverview {
+  runs30d: number;
+  successRate: number | null;
+  failedShare: number;
+  cost30d: number;
+  tokensOut30d: number;
+  lastActiveAt: string | null;
+  avgMs: number | null;
+  p95Ms: number | null;
+  runsByDay: AgentDayCount[];
+  errors: number;
+  errorsByClass: Record<string, number>;
+}
+
+/** One Runs-tab row (a subagent run in a session). Go: agentRunRow. */
+export interface AgentRun {
+  ts: string;
+  projectSlug: string;
+  sessionUuid: string;
+  sessionTitle: string;
+  description: string;
+  status: string;
+  durationMs: number;
+}
+
+/** One Activity-tab event. Go: agentActivityRow. */
+export interface AgentActivity {
+  ts: string;
+  type: string;
+  toolName: string | null;
+  status: string | null;
+  sessionUuid: string;
+  projectSlug: string;
+}
+
+/** One Tasks-tab row (a board task or delegation ledger row). Go: agentTaskRow. */
+export interface AgentTask {
+  externalId: string;
+  title: string;
+  status: string;
+  source: 'session' | 'delegation';
+  phase: string | null;
+  verdict: string | null;
+  startedAt: string | null;
+}
+
+/** Insights tab — the retro/improve rows filtered to the agent. */
+export interface AgentInsights {
+  recommendations: Recommendation[];
+  proposals: AgentChangeProposal[];
+  lessons: RetroLesson[];
+}
+
+/** GET /api/agents/{id}/hub — the full profile bundle (identity + all tabs). */
+export interface AgentProfile extends AgentRosterRow {
+  overview: AgentOverview;
+  runs: AgentRun[];
+  activity: AgentActivity[];
+  tasks: AgentTask[];
+  insights: AgentInsights;
+}
+
+// --- fusion phase 18: system hub ---------------------------------------------
+// The catalog-wide extension of the Agent Hub pattern grouped by ROLE (Toolkit =
+// Skills/Commands/Templates · Hooks · Insights). Go DTOs live in
+// internal/api/system_hub.go. Reuses SystemItem / SystemHook / SystemCommand for
+// definition meta — no forked contracts.
+
+/** Go: systemHubSummaryDTO — GET /api/system/hub/summary: the nav count badges. */
+export interface SystemHubSummary {
+  agents: number;
+  skills: number;
+  hooks: number;
+  commands: number;
+  templates: number;
+  /** Open insights-inbox count (promotion + stale-override). */
+  insights: number;
+  /** Active (unresolved) config-lint findings. */
+  lintFindings: number;
+}
+
+/** One local-day bucket in a usage sparkline. Go: systemHubDayCount. */
+export interface SystemHubDayCount {
+  day: string;
+  count: number;
+}
+
+/** Go: skillUsageDTO — the skill profile's 30-day rollup (skill_use grain). */
+export interface SkillUsage {
+  windowDays: number;
+  invocations: number;
+  sessions: number;
+  projects: number;
+  errors: number;
+  lastUsed: string | null;
+  /** true when the window overlaps pruned (rolled-up) days — counts undercount. */
+  approximate: boolean;
+  byDay: SystemHubDayCount[];
+}
+
+/** One recent invoking session in the skill profile. Go: skillSessionRow. */
+export interface SkillSession {
+  ts: string;
+  sessionUuid: string;
+  sessionTitle: string;
+  projectSlug: string;
+  status: string;
+}
+
+/** GET /api/system/skills/{id}/hub — definition meta + usage. Go: skillHubDTO. */
+export interface SkillHub extends SystemItem {
+  usage: SkillUsage;
+  sessions: SkillSession[];
+}
+
+/** One config_lint_findings row on a hub profile. Go: systemLintFindingDTO. */
+export interface SystemLintFindingRow {
+  rule: string;
+  severity: LintSeverity;
+  message: string;
+}
+
+/** GET /api/system/hooks/{id}/hub — the settings entry + lint. Go: hookHubDTO. */
+export interface HookHub extends SystemHook {
+  lint: SystemLintFindingRow[];
+  /** Always false in v1 — hook firings are not tracked (honest note in the UI). */
+  firingTelemetry: boolean;
+}
+
+/** GET /api/system/commands/{id}/hub — frontmatter + content + approximate usage. */
+export interface CommandHub extends SystemCommand {
+  /** Redacted frontmatter block. */
+  frontmatter: string;
+  /** Redacted markdown body. */
+  content: string;
+  usage: {
+    windowDays: number;
+    invocations: number;
+    /** ALWAYS true — slash-command usage is inferred from prompt text. */
+    approximate: boolean;
+  };
+}
+
+/** Go: systemTemplateDTO — one row of GET /api/system/templates. */
+export interface SystemTemplate {
+  /** Identity (file stem) — the {name} path handle. */
+  name: string;
+  fileName: string;
+  path: string;
+  /** Badge: "core" / "pack:<name>" / "project override". */
+  resolution: string;
+  /** plugin | project (only plugin built-ins can be copied into the project). */
+  source: 'plugin' | 'project';
+  pluginName: string;
+  /** A built-in shadowed by a project-local copy (project list only). */
+  overridden: boolean;
+}
+
+/** GET /api/system/templates/{name} — content (read-only). */
+export interface SystemTemplateContent extends SystemTemplate {
+  content: string;
+}
+
+/** 201 body of POST /api/system/templates/{name}/copy. */
+export interface SystemTemplateCopyResponse {
+  name: string;
+  path: string;
+  hint: string;
 }

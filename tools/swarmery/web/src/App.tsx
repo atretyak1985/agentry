@@ -26,6 +26,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { NewProjectButton } from './components/NewProjectButton';
 import { NotifySettings } from './components/NotifySettings';
 import { ProjectDropdown } from './components/ProjectDropdown';
+import { UsagePopover } from './components/UsagePopover';
 import { isoDay } from './lib/format';
 import { useHealth, shortVersion } from './lib/health';
 import { loadPrefs, useBrowserNotifications, type NotifyPrefs } from './lib/notifications';
@@ -34,9 +35,9 @@ import {
   pageSearchPlaceholder,
   usePageSearchControl,
 } from './lib/pageSearch';
-import { ScopeProvider, useScope } from './lib/scope';
-import { useTheme } from './lib/theme';
+import { useScope } from './lib/scope';
 import { useLiveUpdates } from './lib/ws';
+import { ThemePicker } from './theme/ThemePicker';
 
 interface NavItem {
   to: string;
@@ -76,31 +77,13 @@ function ScopeSwitcher(): JSX.Element {
 }
 
 export function App(): JSX.Element {
+  // ScopeProvider now lives one level up (RootProviders in main.tsx) so the
+  // fleet App and the project-workspace shell share one project store; App only
+  // adds the page-search context the fleet header needs.
   return (
-    <ScopeProvider>
-      <PageSearchProvider>
-        <AppShell />
-      </PageSearchProvider>
-    </ScopeProvider>
-  );
-}
-
-/** Light/dark toggle — a sun/moon pill matching the header control language. */
-function ThemeToggle(): JSX.Element {
-  const { theme, toggle } = useTheme();
-  const isLight = theme === 'light';
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isLight}
-      aria-label={isLight ? 'switch to dark theme' : 'switch to light theme'}
-      title={isLight ? 'switch to dark theme' : 'switch to light theme'}
-      onClick={toggle}
-      className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg border border-line bg-field text-[13px] leading-none text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
-    >
-      <span aria-hidden="true">{isLight ? '☾' : '☀'}</span>
-    </button>
+    <PageSearchProvider>
+      <AppShell />
+    </PageSearchProvider>
   );
 }
 
@@ -298,6 +281,7 @@ function AppShell(): JSX.Element {
           label: 'Approvals',
           ...(pendingCount > 0 ? { badge: String(pendingCount), alert: true } : {}),
         },
+        { to: '/routines', glyph: '⟳', label: 'Routines' },
       ],
     },
     {
@@ -320,7 +304,13 @@ function AppShell(): JSX.Element {
     {
       label: 'System',
       items: [
-        { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
+        { to: '/agents', glyph: '☰', label: 'Agents' },
+        // System Hub (fusion phase 18) — the catalog grouped by ROLE. Toolkit
+        // (skills/commands/templates) + Hooks land on the hub; Insights carries
+        // the promotion/drift/lint inbox badge.
+        { to: '/system-hub', glyph: '⚙', label: 'Toolkit' },
+        { to: '/system-hub/hooks', glyph: '⎇', label: 'Hooks' },
+        { to: '/system-hub/insights', glyph: '◇', label: 'Insights', ...badgeFor(insightCount) },
         ...(hasDocs ? [DOCS_NAV] : []),
       ],
     },
@@ -347,7 +337,8 @@ function AppShell(): JSX.Element {
             the page body. Cmd+K still opens the global search palette. */}
         <HeaderSearch />
         <span className="ml-auto flex items-center gap-3">
-        <ThemeToggle />
+        <ThemePicker />
+        <UsagePopover />
         {!MOCK && (
           <span className="flex items-center gap-2">
             <NotifySettings prefs={notifyPrefs} onChange={setNotifyPrefs} />

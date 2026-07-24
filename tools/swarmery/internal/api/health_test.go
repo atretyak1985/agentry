@@ -40,18 +40,24 @@ func TestHealth(t *testing.T) {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
 
-		// Exact key set (JSON keys are frozen verbatim).
+		// The ORIGINAL parity keys are still present verbatim (the web header
+		// reads them) — this is the backward-compat guarantee. Fusion phase 9
+		// ADDS operational keys (asserted below); it renames nothing.
 		var keys map[string]json.RawMessage
 		if err := json.Unmarshal(body, &keys); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		for _, k := range []string{"status", "version", "db_size_bytes", "watching"} {
 			if _, ok := keys[k]; !ok {
-				t.Errorf("watching=%v: missing key %q in %s", watching, k, body)
+				t.Errorf("watching=%v: missing frozen parity key %q in %s", watching, k, body)
 			}
 		}
-		if len(keys) != 4 {
-			t.Errorf("watching=%v: got %d keys, want 4: %s", watching, len(keys), body)
+		// Fusion phase 9 additive fields (camelCase). ingestLagSec may be JSON
+		// null (fresh DB) but the key must exist so clients can render "—".
+		for _, k := range []string{"uptimeSec", "dbSizeBytes", "migrationVersion", "wsClients", "ingestLagSec", "dispatch"} {
+			if _, ok := keys[k]; !ok {
+				t.Errorf("watching=%v: missing phase-9 key %q in %s", watching, k, body)
+			}
 		}
 
 		var got struct {

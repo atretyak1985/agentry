@@ -24,6 +24,15 @@ var wsBus *ingest.Bus
 // AttachBus wires the ingest event bus into the /api/ws endpoint.
 func AttachBus(b *ingest.Bus) { wsBus = b }
 
+// wsClientCount reports the number of live WS subscribers for GET /api/health's
+// wsClients field (fusion phase 9). 0 when the bus is not attached.
+func wsClientCount() int {
+	if wsBus == nil {
+		return 0
+	}
+	return wsBus.SubscriberCount()
+}
+
 // publishSessionUpdated notifies WS subscribers that a session row changed so
 // the dashboard reflects it without waiting for the next procwatch tick. A
 // no-op when the bus is not attached (e.g. serve --no-ingest).
@@ -141,6 +150,17 @@ func (h *Handler) buildWSMessage(n ingest.Notification) ([]byte, error) {
 			return nil, nil
 		}
 		payload = p
+	case ingest.NoteTaskUpdated:
+		// fusion phase 1 — task board: payload is the full board-task DTO,
+		// hydrated from the DB so the shape lives in one place (tasks.go).
+		bt, err := h.boardTaskByID(n.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		if bt == nil {
+			return nil, nil
+		}
+		payload = bt
 	default:
 		return nil, errors.New("unknown notification type " + n.Type)
 	}
