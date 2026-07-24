@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/hookshim"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/ingest"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/installer"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/logbuf"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
@@ -85,7 +87,16 @@ func main() {
 	case "uninstall":
 		err = installer.CmdUninstall(os.Args[2:])
 	case "status":
+		// fusion phase 9 (Console/DX): `status` now prints the live DAEMON
+		// snapshot (health + today-stats + approvals) and exits 1 when the
+		// daemon is unreachable, so it is usable in scripts. The launchd
+		// service introspection the command used to print moved to
+		// `service-status` (below) and stays reachable.
+		os.Exit(cmdStatus(os.Args[2:]))
+	case "service-status":
 		err = installer.CmdStatus(os.Args[2:])
+	case "console":
+		err = cmdConsole(os.Args[2:])
 	case "hook":
 		// Runtime shim: NEVER fails (fail-open D3) — exit code is always 0.
 		os.Exit(cmdHook(os.Args[2:]))
@@ -136,7 +147,14 @@ func usage() {
                                    launchd auto-start; bakes SWARMERY_* into the plist's EnvironmentVariables
                                    (--onboard-roots enables POST /api/projects/onboard + the dashboard button)
   swarmery uninstall               remove launchd service (keeps logs+db)
-  swarmery status                  service health, pid, uptime, db size
+  swarmery status   [--port <n>] [--url <base>]
+                                   live daemon snapshot (version/uptime/db/migrations/
+                                   ingest-lag + today sessions/cost/tokens + dispatch +
+                                   approvals/ws-clients); exit 1 when the daemon is down
+  swarmery console  [--port <n>] [--url <base>]
+                                   interactive TUI attached to the daemon: live event
+                                   feed + approvals (y/n) + dispatcher pause ([p])
+  swarmery service-status          launchd service health: pid, uptime, db size
   swarmery hook <permission-request|stop>          Claude Code hook shim (reads stdin)
   swarmery hooks <install|uninstall|status> [--project <path>] [--all] [--port <n>]
   swarmery onboard <slug> [pack ...] [--dir <path>] [--workspace-root <path>] [--statusline-src <path>]
@@ -718,11 +736,27 @@ func cmdServe(args []string) error {
 			approvals.DeliveryUpdatedInput, approvals.DeliveryDenyMessage, *answerDelivery)
 	}
 
+	// fusion phase 9 (Console/DX): stand up the in-memory structured log ring and
+	// tee both slog and the stdlib `log` package into it. slog gets a tagging
+	// handler (boot code uses logbuf.Tagged / WithGroup for subsystem tags); the
+	// stdlib logger's output is redirected through a ring writer that mirrors to
+	// stderr so launchd logs are unchanged. `bootStart` anchors the phase timings.
+	bootStart := time.Now()
+	ring := logbuf.New(logbuf.DefaultCapacity)
+	slog.SetDefault(slog.New(logbuf.NewHandler(ring,
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+	log.SetOutput(logbuf.NewWriter(ring, "daemon", os.Stderr))
+	api.AttachLogRing(ring)
+	api.AttachUptime(bootStart)
+	bootLog := logbuf.Tagged(slog.Default(), "boot")
+
+	migrateStart := time.Now()
 	db, err := store.Open(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	bootLog.Info(logbuf.Phasef("store.migrate", time.Since(migrateStart)))
 
 	// control-plane v2: outbound webhook notifier (nil = disabled; Emit is
 	// nil-receiver-safe everywhere it is wired). Built before the pipeline so
@@ -929,12 +963,18 @@ func cmdServe(args []string) error {
 	}
 	api.AttachRoutines(routinesSvc)
 
+	buildStart := time.Now()
 	handler, err := api.NewServer(db, !*noIngest)
 	if err != nil {
 		return err
 	}
+	bootLog.Info(logbuf.Phasef("api.build", time.Since(buildStart)))
 	addr := net.JoinHostPort(*bind, strconv.Itoa(*port))
 	log.Printf("swarmery serving on http://%s (db: %s)", addr, *dbPath)
+	// Final startup-phase summary: api.listen (the mux + SPA are ready to bind)
+	// and the total boot time in the exact spec wording.
+	bootLog.Info(logbuf.Phasef("api.listen", time.Since(buildStart)))
+	bootLog.Info(logbuf.Readyf(time.Since(bootStart)))
 
 	// Graceful shutdown: SIGINT/SIGTERM → stop tool children, drain HTTP, exit.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

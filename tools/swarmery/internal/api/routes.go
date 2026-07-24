@@ -49,6 +49,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/docs/{slug}", h.getDoc)
 	mux.HandleFunc("GET /api/stats/overview", h.statsOverview)
 
+	// fusion phase 9 (Console/DX): the in-memory structured log ring
+	// (internal/logbuf) for `swarmery console` / `swarmery status`. Read-only,
+	// localhost-only; empty snapshot when the ring is not attached.
+	mux.HandleFunc("GET /api/logs", h.logs)
+
 	// analytics wave: interactive range analytics (analytics.go).
 	mux.HandleFunc("GET /api/stats/timeseries", h.statsTimeseries)
 	mux.HandleFunc("GET /api/stats/breakdown", h.statsBreakdown)
