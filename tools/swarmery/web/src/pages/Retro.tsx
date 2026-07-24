@@ -30,7 +30,6 @@ import {
   fetchRetroFriction,
   fetchRetroLessons,
   fetchRetroTasks,
-  improveAgent,
   patchProposal,
   patchRecommendation,
   retryProposal,
@@ -47,6 +46,7 @@ import {
 } from '../lib/format';
 import { useScope } from '../lib/scope';
 import { ApproxHint, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
+import { ImproveModal } from '../components/ImproveModal';
 
 const PRESETS = [7, 14, 30, 90] as const;
 
@@ -786,11 +786,9 @@ function runsDelta(row: RetroAgentRow): string {
 function Scorecard({
   row,
   onImprove,
-  improving,
 }: {
   row: RetroAgentRow;
-  onImprove: (agent: string) => void;
-  improving: boolean;
+  onImprove: (row: RetroAgentRow) => void;
 }): JSX.Element {
   const split = errClassSplit(row.errors_by_class);
   return (
@@ -799,15 +797,16 @@ function Scorecard({
         <span className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium text-ink">
           {row.agent}
         </span>
-        <button
-          type="button"
-          disabled={improving}
-          onClick={() => onImprove(row.agent)}
-          title="generate an advisor-evidenced improvement proposal for this agent"
-          className="rounded-[7px] border border-line-strong px-1.5 py-[2px] font-mono text-[10px] text-ink-dim transition-colors hover:border-green/40 hover:text-green disabled:opacity-50"
-        >
-          {improving ? '…' : 'Improve'}
-        </button>
+        {row.improvable === true && (
+          <button
+            type="button"
+            onClick={() => onImprove(row)}
+            title="preview the evidence and generate an improvement proposal for this agent"
+            className="rounded-[7px] border border-line-strong px-1.5 py-[2px] font-mono text-[10px] text-ink-dim transition-colors hover:border-green/40 hover:text-green"
+          >
+            Improve
+          </button>
+        )}
         <span
           className={`font-mono text-[11px] ${errRateClass(row.error_rate)}`}
           title={`share of runs with ≥1 behavior-fixable error (${String(row.errors)} error events total)`}
@@ -1140,27 +1139,18 @@ export function Retro(): JSX.Element {
   const [taskRows, setTaskRows] = useState<RetroTaskRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Proposals gate: bumping proposalsKey refetches the Proposals rail after an
-  // "Improve" trigger; `improving` disables the per-agent button in flight.
+  // Proposals gate: bumping proposalsKey refetches the Proposals rail after a
+  // successful generation. The Improve button now opens a preview modal that
+  // owns the in-flight state; `improveRow` is the agent whose modal is open.
   const [proposalsKey, setProposalsKey] = useState(0);
-  const [improving, setImproving] = useState<ReadonlySet<string>>(new Set());
-  const [improveErr, setImproveErr] = useState<string | null>(null);
+  const [improveRow, setImproveRow] = useState<RetroAgentRow | null>(null);
 
-  const onImprove = useCallback((agent: string): void => {
-    setImproving((s) => new Set(s).add(agent));
-    setImproveErr(null);
-    improveAgent(agent)
-      .then(() => {
-        setTimeout(() => setProposalsKey((k) => k + 1), 500);
-      })
-      .catch((e: unknown) => setImproveErr(String(e)))
-      .finally(() =>
-        setImproving((s) => {
-          const next = new Set(s);
-          next.delete(agent);
-          return next;
-        }),
-      );
+  const onImprove = useCallback((row: RetroAgentRow): void => {
+    setImproveRow(row);
+  }, []);
+
+  const onGenerated = useCallback((): void => {
+    setTimeout(() => setProposalsKey((k) => k + 1), 500);
   }, []);
 
   const applyPreset = useCallback(
@@ -1223,8 +1213,12 @@ export function Retro(): JSX.Element {
 
       <ProposalsRail reloadKey={proposalsKey} />
 
-      {improveErr !== null && (
-        <p className="mt-2 font-mono text-[10px] text-red">{improveErr}</p>
+      {improveRow !== null && (
+        <ImproveModal
+          row={improveRow}
+          onClose={() => setImproveRow(null)}
+          onGenerated={onGenerated}
+        />
       )}
 
       {error !== null && <ErrorBox message={error} onRetry={load} />}
@@ -1242,12 +1236,7 @@ export function Retro(): JSX.Element {
           ) : (
             <div className="grid gap-3.5 sm:grid-cols-2 wide:grid-cols-3">
               {agents.agents.map((row) => (
-                <Scorecard
-                  key={row.agent}
-                  row={row}
-                  onImprove={onImprove}
-                  improving={improving.has(row.agent)}
-                />
+                <Scorecard key={row.agent} row={row} onImprove={onImprove} />
               ))}
             </div>
           )}

@@ -572,7 +572,27 @@ export interface RetroAgentRow {
   re_dispatch_rate: number | null;
   /** latest eval run for the agent; null when none imported. */
   eval: RetroAgentEval | null;
+  /**
+   * True when the agent resolves to a live registry row with an editable
+   * definition file — the agents the rewriter can act on. Built-in agents
+   * (Explore, general-purpose, debugger) are false, so the UI hides their
+   * "Improve" button. Optional for forward-compat with older daemons.
+   */
+  improvable?: boolean;
   prev: RetroPrev;
+}
+
+/**
+ * GET /api/retro/agents/{agent}/evidence — read-only preview of the evidence
+ * bundle the rewriter would feed the model. A built-in agent answers
+ * in_registry:false with no bundle.
+ */
+export interface AgentEvidence {
+  agent: string;
+  in_registry: boolean;
+  agent_path?: string;
+  base_sha256?: string;
+  bundle?: string;
 }
 
 /** The orchestrator ("main" fold key) — excluded from agents[]. */
