@@ -21,3 +21,6 @@ node_modules/
 .idea/
 .claude/worktrees/
 .claude/settings.json.bak
+
+# Generated architecture maps (architecture-pack) — regenerated per repo, never shipped
+architecture-out/
