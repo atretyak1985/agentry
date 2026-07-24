@@ -1014,6 +1014,14 @@ var recStatuses = map[string]bool{
 // recommendations, newest activity first. Default filter is the "actionable
 // rail" set (proposed,accepted,adopted); status=all disables filtering (the
 // UI fetches status=verified lazily for its history section).
+//
+// ?projectId=<slug|id> narrows the OUTPUT to recommendations attributable to
+// that project — those whose evidence session_ids resolve to one of the
+// project's sessions. Recommendations are global by identity (dedup_key =
+// rule:target, aggregated cross-project), so this is a post-filter on the
+// evidence rather than a scoped query: fleet-level rules with no session
+// attribution (R5 process / R6 config / R7 architecture) drop out of a
+// project-scoped view, which is correct — they belong to the whole fleet.
 func (h *Handler) retroRecommendations(w http.ResponseWriter, r *http.Request) {
 	q := `SELECT id, rule, target_kind, target, title, detail, evidence, baseline,
 	             status, created_at, updated_at
@@ -1040,6 +1048,20 @@ func (h *Handler) retroRecommendations(w http.ResponseWriter, r *http.Request) {
 	}
 	q += ` ORDER BY updated_at DESC, id DESC`
 
+	// Resolve the optional project scope to its evidence-session set up front
+	// (empty set ⇒ nothing matches, an unknown project yields no recs).
+	var projectUUIDs map[string]struct{}
+	scoped := false
+	if pid := strings.TrimSpace(r.URL.Query().Get("projectId")); pid != "" {
+		scoped = true
+		set, err := h.projectSessionUUIDs(pid)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		projectUUIDs = set
+	}
+
 	rows, err := h.DB.Query(q, args...)
 	if err != nil {
 		writeErr(w, err)
@@ -1056,11 +1078,61 @@ func (h *Handler) retroRecommendations(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
+		if scoped && !evidenceInProject(evidence, projectUUIDs) {
+			continue
+		}
 		d.Evidence = json.RawMessage(evidence)
 		d.scanBaseline(base)
 		out.Recommendations = append(out.Recommendations, d)
 	}
 	writeJSON(w, out, rows.Err())
+}
+
+// projectSessionUUIDs returns the set of session_uuids belonging to a project
+// (resolved by slug or id). Used to attribute recommendations to a project via
+// their evidence session_ids.
+func (h *Handler) projectSessionUUIDs(project string) (map[string]struct{}, error) {
+	rows, err := h.DB.Query(`
+		SELECT s.session_uuid
+		  FROM sessions s
+		  JOIN projects p ON p.id = s.project_id
+		 WHERE p.slug = ? OR CAST(p.id AS TEXT) = ?`, project, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[string]struct{}{}
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			return nil, err
+		}
+		set[uuid] = struct{}{}
+	}
+	return set, rows.Err()
+}
+
+// evidenceInProject reports whether a recommendation's evidence JSON references
+// at least one session in the project set. The advisor embeds a capped sample
+// of session_ids (rules.go) for exactly the rules that are project-attributable
+// (R1 tool / R2 agent / R3 error_group / R4 re-dispatch); rules without a
+// session_ids array (R5/R6/R7) are fleet-level and never match a project.
+func evidenceInProject(evidence string, projectUUIDs map[string]struct{}) bool {
+	if len(projectUUIDs) == 0 {
+		return false
+	}
+	var parsed struct {
+		SessionIDs []string `json:"session_ids"`
+	}
+	if err := json.Unmarshal([]byte(evidence), &parsed); err != nil {
+		return false // unparseable evidence can't be attributed
+	}
+	for _, uuid := range parsed.SessionIDs {
+		if _, ok := projectUUIDs[uuid]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // legalRecTransition guards the user-driven part of the lifecycle: accept or
@@ -1178,6 +1250,14 @@ func (h *Handler) patchRecommendation(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/retro/advise — run the advisor engine now ("Analyze now") and
 // return its Stats tally.
+//
+// ?projectId=<slug|id> is accepted for API symmetry with the project-scoped
+// Insights card, but the engine ALWAYS runs over the full corpus: the rules
+// compute cross-project rates (an agent's error rate, a tool's denial rate) and
+// scoping the input to one project's slice would produce statistically wrong
+// numbers. Per-project narrowing happens on the READ side (the recommendations
+// GET filters by evidence session). An unknown project id is not an error —
+// the run proceeds fleet-wide either way.
 func (h *Handler) retroAdvise(w http.ResponseWriter, r *http.Request) {
 	stats, err := advisor.Run(h.DB, time.Now())
 	writeJSON(w, stats, err)

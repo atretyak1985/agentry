@@ -245,4 +245,13 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// (O_EXCL → 409 on repeat). The write carries the same D4 origin hardening.
 	mux.HandleFunc("GET /api/playbooks", h.listPlaybooks)
 	mux.HandleFunc("POST /api/projects/{id}/playbooks/{name}/duplicate", requireLocalOrigin(h.duplicatePlaybook))
+
+	// fusion phase 12: memory surface — the project's durable memory (CLAUDE.md,
+	// Claude Code auto-memory, serena memories) made listable/readable/editable.
+	// The PUT carries the same D4 origin hardening as every other mutating
+	// endpoint; the traversal fence + versioned backup live in memory.go. GET
+	// .../memory/file is more specific than .../memory so it wins the match.
+	mux.HandleFunc("GET /api/projects/{id}/memory", h.listMemory)
+	mux.HandleFunc("GET /api/projects/{id}/memory/file", h.getMemoryFile)
+	mux.HandleFunc("PUT /api/projects/{id}/memory/file", requireLocalOrigin(h.putMemoryFile))
 }
