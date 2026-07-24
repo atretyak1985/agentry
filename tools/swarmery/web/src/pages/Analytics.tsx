@@ -84,7 +84,10 @@ function pivotsFor(metric: AnalyticsMetric): AnalyticsDimension[] {
 
 const PRESETS = [7, 14, 30, 90] as const;
 
-const SERIES_PALETTE = [
+// Fallback ramp (the historical swarm-dark series hues) — used only if the
+// `--color-series-N` CSS vars resolve empty (e.g. a getComputedStyle race before
+// the stylesheet is live). The live ramp comes from useChartPalette().
+const SERIES_PALETTE_FALLBACK = [
   '#e8a13a',
   '#6fb4f0',
   '#58c08a',
@@ -98,13 +101,20 @@ const SERIES_PALETTE = [
 /**
  * Stable color per series key (not per position) so a model/agent keeps its
  * hue across the chart, legend, and breakdown panels. Projects reuse the
- * app-wide distinct-color map (`colorFor`), passed in by the caller.
+ * app-wide distinct-color map (`colorFor`); every other dimension draws from the
+ * palette-aware series ramp (`ramp`, from useChartPalette) so charts re-tint
+ * with the active theme.
  */
-function seriesColor(colorFor: ColorForSlug, group: AnalyticsDimension, key: string): string {
+function seriesColor(
+  colorFor: ColorForSlug,
+  ramp: readonly string[],
+  group: AnalyticsDimension,
+  key: string,
+): string {
   if (group === 'project') return colorFor(key);
   let hash = 0;
   for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return SERIES_PALETTE[hash % SERIES_PALETTE.length] ?? '#8b8f99';
+  return ramp[hash % ramp.length] ?? SERIES_PALETTE_FALLBACK[hash % SERIES_PALETTE_FALLBACK.length] ?? '#8b8f99';
 }
 
 function fmtValue(metric: AnalyticsMetric, n: number): string {
@@ -124,6 +134,7 @@ function HeroInsight({
   metric: AnalyticsMetric;
 }): JSX.Element {
   const colorFor = useProjectColor();
+  const ramp = useChartPalette();
   const insight = useMemo(() => {
     const nDays = series.buckets.length;
     const rangeTotal = series.series.reduce((a, s) => a + s.total, 0);
@@ -133,7 +144,7 @@ function HeroInsight({
     const ranked = [...series.series].sort((a, b) => b.total - a.total);
     const top = ranked[0] ?? { name: '—', total: 0, key: '' };
     const topShare = rangeTotal > 0 ? Math.round((top.total / rangeTotal) * 100) : 0;
-    const topColor = seriesColor(colorFor, series.group, top.key);
+    const topColor = seriesColor(colorFor, ramp, series.group, top.key);
     const movers = series.series
       .map((s) => {
         const f = (s.values[0] ?? 0) + (s.values[1] ?? 0) + (s.values[2] ?? 0);
@@ -155,7 +166,7 @@ function HeroInsight({
     });
     const peakLabel = fmtDayShort(series.buckets[peakIdx] ?? '');
     return { nDays, rangeTotal, dailyAvg, deltaPct, top, topShare, topColor, mover, peakLabel };
-  }, [series, colorFor]);
+  }, [series, colorFor, ramp]);
 
   const { nDays, rangeTotal, dailyAvg, deltaPct, top, topShare, topColor, mover, peakLabel } =
     insight;
@@ -728,7 +739,7 @@ function ChartTooltip({
 /** Recharts SVG props can't take CSS vars, so read the theme's chart tokens as
  * resolved color strings — recomputed when the theme flips. */
 function useChartTokens(): { grid: string; axis: string; tick: string; empty: string } {
-  const { theme } = useTheme();
+  const { theme, palette } = useTheme();
   return useMemo(() => {
     const cs = getComputedStyle(document.documentElement);
     const v = (name: string): string => cs.getPropertyValue(name).trim();
@@ -738,8 +749,24 @@ function useChartTokens(): { grid: string; axis: string; tick: string; empty: st
       tick: v('--color-chart-tick'),
       empty: v('--color-chart-empty'),
     };
-    // theme is the trigger: the vars change value when data-theme flips.
-  }, [theme]);
+    // theme + palette are the triggers: the vars change value when either flips.
+  }, [theme, palette]);
+}
+
+/** The 8-hue series ramp resolved from the active palette's `--color-series-N`
+ * tokens (empty entries dropped) — recomputed on any mode/palette change so
+ * multi-series charts re-tint with the theme. */
+function useChartPalette(): readonly string[] {
+  const { theme, palette } = useTheme();
+  return useMemo(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const ramp: string[] = [];
+    for (let i = 1; i <= 8; i += 1) {
+      const c = cs.getPropertyValue(`--color-series-${i}`).trim();
+      if (c !== '') ramp.push(c);
+    }
+    return ramp.length > 0 ? ramp : [...SERIES_PALETTE_FALLBACK];
+  }, [theme, palette]);
 }
 
 function MainChart({
@@ -752,6 +779,7 @@ function MainChart({
   hidden: ReadonlySet<string>;
 }): JSX.Element {
   const colorFor = useProjectColor();
+  const ramp = useChartPalette();
   const chart = useChartTokens();
   const visible = data.series.filter((s) => !hidden.has(s.key));
   const rows = data.buckets.map((day, i) => {
@@ -788,7 +816,7 @@ function MainChart({
           />
           <Tooltip content={<ChartTooltip metric={metric} />} />
           {visible.map((s, idx) => {
-            const color = seriesColor(colorFor, data.group, s.key);
+            const color = seriesColor(colorFor, ramp, data.group, s.key);
             return (
               <Area
                 key={s.key}
@@ -824,11 +852,12 @@ function Legend({
   onToggle: (key: string) => void;
 }): JSX.Element {
   const colorFor = useProjectColor();
+  const ramp = useChartPalette();
   return (
     <div className="mt-3 flex flex-wrap gap-[7px]">
       {data.series.map((s) => {
         const off = hidden.has(s.key);
-        const color = seriesColor(colorFor, data.group, s.key);
+        const color = seriesColor(colorFor, ramp, data.group, s.key);
         return (
           <button
             key={s.key}
@@ -872,6 +901,7 @@ function BreakdownPanel({
 }): JSX.Element {
   const cacheView = metric === 'cache';
   const colorFor = useProjectColor();
+  const ramp = useChartPalette();
   // Any $ in this pivot? project/model/agent carry cost; skill never does.
   const hasCost = rows.some((r) => r.cost_usd !== null);
   const hasRuns = rows.some((r) => r.runs !== null);
@@ -886,7 +916,7 @@ function BreakdownPanel({
   return (
     <div className="flex flex-col gap-2.5">
       {rows.map((r) => {
-        const color = seriesColor(colorFor, pivot, r.key);
+        const color = seriesColor(colorFor, ramp, pivot, r.key);
         return (
           <div key={r.key}>
             <div className="flex items-baseline gap-2 font-mono text-[11.5px]">

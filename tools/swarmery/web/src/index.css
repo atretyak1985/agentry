@@ -56,6 +56,20 @@
   --color-chart-tick: #7c8da3; /* axis tick labels */
   --color-chart-empty: #ffffff06; /* matrix heatmap empty cell */
 
+  /* ---- chart series ramp (Analytics multi-series lines/bars) — 8 stable hues
+     read via getComputedStyle so each palette re-tints the whole chart. Ordered
+     to lead with the palette's own accent so charts feel "on theme". Defaults
+     below are the historical swarm ramp (Analytics SERIES_PALETTE) verbatim so
+     swarm charts are unchanged. ---- */
+  --color-series-1: #e8a13a;
+  --color-series-2: #6fb4f0;
+  --color-series-3: #58c08a;
+  --color-series-4: #c58be0;
+  --color-series-5: #f0a35a;
+  --color-series-6: #7ad0c0;
+  --color-series-7: #b0a0f0;
+  --color-series-8: #e88ab0;
+
   /* ---- type — Canvas triad ---- */
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
@@ -92,7 +106,10 @@
 }
 
 /* Light theme override — same token names, re-defined under a data attribute
- * set by ThemeProvider (src/lib/theme.tsx) on <html data-theme="light">.
+ * set by ThemeProvider (src/lib/theme.tsx) on <html data-mode="light"> (the
+ * resolved mode; `system` resolves to light/dark at runtime). data-theme is
+ * mirrored to the same value for any external/legacy reader, but every CSS
+ * rule keys off data-mode — the single source of truth for the mode axis.
  * Tailwind v4 @theme vars are real CSS custom properties, so this cascades
  * to every bg-bg/text-ink/border-line utility with zero component changes.
  *
@@ -103,7 +120,7 @@
  * too light for text on white). Brand-as-text uses a deeper amber than the
  * dot/accent (#e8a13a stays the recognizable brand mark elsewhere).
  */
-:root[data-theme='light'] {
+:root[data-mode='light'] {
   /* ---- surfaces ---- */
   --color-bg: #f6f2ea; /* page — warm off-white, not pure white */
   --color-surface: #ffffff; /* cards, panels, sheets — brightest surface */
@@ -118,7 +135,7 @@
   /* ---- ink scale (dark warm ink, mirrors the cream scale's roles) ---- */
   --color-ink: #2a2620; /* primary text */
   --color-ink-2: #514c44; /* secondary body text */
-  --color-ink-3: #6f6a61; /* tertiary — row why-lines, descriptions */
+  --color-ink-3: #655f56; /* tertiary — row why-lines, descriptions (AA 4.5:1 on the raised surface, was #6f6a61 = 4.32) */
   --color-ink-dim: #726d64; /* muted captions, project labels */
   --color-ink-faint: #787368; /* faint mono micro-labels, timestamps, arrows (4.2:1 on bg) */
 
@@ -138,13 +155,332 @@
   --color-chart-axis: #00000022;
   --color-chart-tick: #6f6a61;
   --color-chart-empty: #00000008;
+
+  /* ---- chart series ramp — deeper/saturated so lines read on a light ground
+     (the dark ramp is too pale on white) ---- */
+  --color-series-1: #b5730f;
+  --color-series-2: #1f6bb8;
+  --color-series-3: #1f8a5a;
+  --color-series-4: #8a3fac;
+  --color-series-5: #c05a1a;
+  --color-series-6: #0f8a7a;
+  --color-series-7: #5a4fac;
+  --color-series-8: #b83f7a;
+}
+
+/* ============================================================================
+ * Curated palettes (Fusion phase 16) — orthogonal to mode. Each palette re-tints
+ * surfaces + swaps the brand/accent/series hues; the ink scale is inherited from
+ * the swarm mode values above unless a palette needs its own for AA. A palette
+ * block layers on TOP of the mode block via a more specific attribute selector,
+ * so `[data-palette]` + the mode's `:root` / `[data-mode='light']` combine.
+ *
+ * `swarm` (the default) intentionally defines NOTHING — it IS the base @theme
+ * (dark) and the [data-mode='light'] block, so the default look is byte-for-byte
+ * unchanged whether or not data-palette="swarm" is present.
+ *
+ * Every palette clears WCAG AA (4.5:1) for body ink on every surface in BOTH
+ * modes — verified by phase-16-notes/contrast-check.mjs in the task workspace.
+ * ==========================================================================*/
+
+/* ---- OCEAN — cool blue, deep-sea dark / clear-water light ---- */
+:root[data-palette='ocean'] {
+  --color-bg: #0b0f14;
+  --color-surface: #101720;
+  --color-field: #121a24;
+  --color-surface2: #18222e;
+  --color-line: #1f2b38;
+  --color-line-strong: #2a3946;
+  --color-line-soft: #16202a;
+  --color-brand: #4fb0e8;
+  --color-brand-mark: #4fb0e8;
+  --color-green: #48c9a0;
+  --color-amber: #e0a94a;
+  --color-blue: #4fb0e8;
+  --color-purple: #8fb0f0;
+  --color-ink-faint: #6b7885; /* lifted for AA over the darker ocean surfaces */
+  --color-chart-tick: #6f8494;
+  --color-series-1: #4fb0e8;
+  --color-series-2: #48c9a0;
+  --color-series-3: #8fb0f0;
+  --color-series-4: #e0a94a;
+  --color-series-5: #6fd0e0;
+  --color-series-6: #a0c0f0;
+  --color-series-7: #7ad0c0;
+  --color-series-8: #e88ab0;
+}
+:root[data-palette='ocean'][data-mode='light'] {
+  --color-bg: #eef3f7;
+  --color-surface: #ffffff;
+  --color-field: #e6eef4;
+  --color-surface2: #dce8f0;
+  --color-line: #c8d8e2;
+  --color-line-strong: #aec4d2;
+  --color-line-soft: #d8e4ec;
+  --color-ink: #132029;
+  --color-ink-2: #39505f;
+  --color-ink-3: #516777;
+  --color-ink-dim: #5f7484;
+  --color-ink-faint: #697d8b;
+  --color-brand: #0d6ea8;
+  --color-brand-mark: #0d6ea8;
+  --color-green: #0f7a5a;
+  --color-amber: #8a5a08;
+  --color-red: #b8382f;
+  --color-blue: #0d6ea8;
+  --color-purple: #5a4fac;
+  --color-chart-tick: #516777;
+  --color-series-1: #0d6ea8;
+  --color-series-2: #0f7a5a;
+  --color-series-3: #5a4fac;
+  --color-series-4: #8a5a08;
+  --color-series-5: #1a8ab0;
+  --color-series-6: #3f5fac;
+  --color-series-7: #0f8a7a;
+  --color-series-8: #b83f7a;
+}
+
+/* ---- FOREST — muted green, canopy dark / meadow light ---- */
+:root[data-palette='forest'] {
+  --color-bg: #0c1210;
+  --color-surface: #101a16;
+  --color-field: #121e18;
+  --color-surface2: #182820;
+  --color-line: #1e2c24;
+  --color-line-strong: #293a30;
+  --color-line-soft: #16221c;
+  --color-brand: #5fc98a;
+  --color-brand-mark: #5fc98a;
+  --color-green: #5fc98a;
+  --color-amber: #d8b24a;
+  --color-red: #e5675f;
+  --color-blue: #6fb4f0;
+  --color-purple: #b8a0e0;
+  --color-ink-faint: #6d7d72;
+  --color-chart-tick: #7c9384;
+  --color-series-1: #5fc98a;
+  --color-series-2: #d8b24a;
+  --color-series-3: #6fb4f0;
+  --color-series-4: #b8a0e0;
+  --color-series-5: #7ad0a0;
+  --color-series-6: #a0d0b0;
+  --color-series-7: #7ad0c0;
+  --color-series-8: #e88ab0;
+}
+:root[data-palette='forest'][data-mode='light'] {
+  --color-bg: #eef4ee;
+  --color-surface: #ffffff;
+  --color-field: #e6efe6;
+  --color-surface2: #dce9dc;
+  --color-line: #c8dcc8;
+  --color-line-strong: #aec8ae;
+  --color-line-soft: #d8e6d8;
+  --color-ink: #16241c;
+  --color-ink-2: #3c5244;
+  --color-ink-3: #53695b;
+  --color-ink-dim: #617666;
+  --color-ink-faint: #6b7d6f;
+  --color-brand: #1f7a45;
+  --color-brand-mark: #1f7a45;
+  --color-green: #1f7a45;
+  --color-amber: #7a5c08;
+  --color-red: #b8382f;
+  --color-blue: #1f6bb8;
+  --color-purple: #7a3fac;
+  --color-chart-tick: #53695b;
+  --color-series-1: #1f7a45;
+  --color-series-2: #7a5c08;
+  --color-series-3: #1f6bb8;
+  --color-series-4: #7a3fac;
+  --color-series-5: #2f9a5a;
+  --color-series-6: #4f8a6a;
+  --color-series-7: #0f8a7a;
+  --color-series-8: #b83f7a;
+}
+
+/* ---- SUNSET — warm coral/magenta, dusk dark / peach light ---- */
+:root[data-palette='sunset'] {
+  --color-bg: #140d0e;
+  --color-surface: #1c1314;
+  --color-field: #201618;
+  --color-surface2: #2a1e20;
+  --color-line: #2e2224;
+  --color-line-strong: #3a2c2e;
+  --color-line-soft: #241a1c;
+  --color-brand: #f08a5a;
+  --color-brand-mark: #f08a5a;
+  --color-green: #58c08a;
+  --color-amber: #f0b04a;
+  --color-red: #e5675f;
+  --color-blue: #6fb4f0;
+  --color-purple: #e08ab0;
+  --color-ink-faint: #85736e;
+  --color-chart-tick: #9a847c;
+  --color-series-1: #f08a5a;
+  --color-series-2: #e08ab0;
+  --color-series-3: #f0b04a;
+  --color-series-4: #c58be0;
+  --color-series-5: #f0a070;
+  --color-series-6: #e0a0c0;
+  --color-series-7: #7ad0c0;
+  --color-series-8: #6fb4f0;
+}
+:root[data-palette='sunset'][data-mode='light'] {
+  --color-bg: #f7efea;
+  --color-surface: #ffffff;
+  --color-field: #f4e8e1;
+  --color-surface2: #f0ded4;
+  --color-line: #e4cabd;
+  --color-line-strong: #d2b0a0;
+  --color-line-soft: #ecd8cc;
+  --color-ink: #291c16;
+  --color-ink-2: #5f463c;
+  --color-ink-3: #775b51;
+  --color-ink-dim: #846860;
+  --color-ink-faint: #8b736b;
+  --color-brand: #b8502a;
+  --color-brand-mark: #b8502a;
+  --color-green: #237a4e;
+  --color-amber: #93590c;
+  --color-red: #b8382f;
+  --color-blue: #1f6bb8;
+  --color-purple: #ac3f7a;
+  --color-chart-tick: #775b51;
+  --color-series-1: #b8502a;
+  --color-series-2: #ac3f7a;
+  --color-series-3: #93590c;
+  --color-series-4: #8a3fac;
+  --color-series-5: #c05a1a;
+  --color-series-6: #a84f7a;
+  --color-series-7: #0f8a7a;
+  --color-series-8: #1f6bb8;
+}
+
+/* ---- ZEN — neutral cool gray, slate accent (light-first, minimal color) ---- */
+:root[data-palette='zen'] {
+  --color-bg: #101214;
+  --color-surface: #16191c;
+  --color-field: #181c1f;
+  --color-surface2: #20252a;
+  --color-line: #262c31;
+  --color-line-strong: #333a41;
+  --color-line-soft: #1c2126;
+  --color-ink: #e6e8ea;
+  --color-ink-2: #c2c6ca;
+  --color-ink-3: #969ba1;
+  --color-ink-dim: #868b91;
+  --color-ink-faint: #6a7178;
+  --color-brand: #8fa3b8;
+  --color-brand-mark: #8fa3b8;
+  --color-green: #58c08a;
+  --color-amber: #e0b04a;
+  --color-red: #e5675f;
+  --color-blue: #7fb0e0;
+  --color-purple: #b0a0d0;
+  --color-chart-tick: #808890;
+  --color-series-1: #8fa3b8;
+  --color-series-2: #7fb0e0;
+  --color-series-3: #58c08a;
+  --color-series-4: #b0a0d0;
+  --color-series-5: #a0b0c0;
+  --color-series-6: #90c0d0;
+  --color-series-7: #7ad0c0;
+  --color-series-8: #e0b04a;
+}
+:root[data-palette='zen'][data-mode='light'] {
+  --color-bg: #f4f5f6;
+  --color-surface: #ffffff;
+  --color-field: #eceef0;
+  --color-surface2: #e2e5e8;
+  --color-line: #d4d8dc;
+  --color-line-strong: #bcc2c8;
+  --color-line-soft: #e0e3e6;
+  --color-ink: #1e2226;
+  --color-ink-2: #464c52;
+  --color-ink-3: #5d646b;
+  --color-ink-dim: #6b727a;
+  --color-ink-faint: #757c84;
+  --color-brand: #4a5a6b;
+  --color-brand-mark: #4a5a6b;
+  --color-green: #237a4e;
+  --color-amber: #7a5c08;
+  --color-red: #b8382f;
+  --color-blue: #1f6bb8;
+  --color-purple: #5a4a7a;
+  --color-chart-tick: #5d646b;
+  --color-series-1: #4a5a6b;
+  --color-series-2: #1f6bb8;
+  --color-series-3: #237a4e;
+  --color-series-4: #5a4a7a;
+  --color-series-5: #6a7a8b;
+  --color-series-6: #3f6a8a;
+  --color-series-7: #0f8a7a;
+  --color-series-8: #b83f7a;
+}
+
+/* ---- EMBER — deep warm orange/red, forge dark / terracotta light ---- */
+:root[data-palette='ember'] {
+  --color-bg: #120e0c;
+  --color-surface: #1a1512;
+  --color-field: #1e1815;
+  --color-surface2: #28201c;
+  --color-line: #2c2420;
+  --color-line-strong: #3a2e28;
+  --color-line-soft: #221c18;
+  --color-brand: #e87a4a;
+  --color-brand-mark: #e87a4a;
+  --color-green: #58c08a;
+  --color-amber: #e8a13a;
+  --color-red: #e5675f;
+  --color-blue: #6fb4f0;
+  --color-purple: #c58be0;
+  --color-ink-faint: #7d6f66;
+  --color-chart-tick: #927c72;
+  --color-series-1: #e87a4a;
+  --color-series-2: #e8a13a;
+  --color-series-3: #58c08a;
+  --color-series-4: #c58be0;
+  --color-series-5: #f0a35a;
+  --color-series-6: #e0b070;
+  --color-series-7: #7ad0c0;
+  --color-series-8: #6fb4f0;
+}
+:root[data-palette='ember'][data-mode='light'] {
+  --color-bg: #f6f1ec;
+  --color-surface: #ffffff;
+  --color-field: #f1e9e2;
+  --color-surface2: #ecdfd6;
+  --color-line: #e0cebf;
+  --color-line-strong: #ccb4a2;
+  --color-line-soft: #e8dccf;
+  --color-ink: #241c16;
+  --color-ink-2: #544940;
+  --color-ink-3: #69594e;
+  --color-ink-dim: #77685e;
+  --color-ink-faint: #7d6f66;
+  --color-brand: #a8481f;
+  --color-brand-mark: #a8481f;
+  --color-green: #237a4e;
+  --color-amber: #93590c;
+  --color-red: #b8382f;
+  --color-blue: #1f6bb8;
+  --color-purple: #8a3fac;
+  --color-chart-tick: #69594e;
+  --color-series-1: #a8481f;
+  --color-series-2: #93590c;
+  --color-series-3: #237a4e;
+  --color-series-4: #8a3fac;
+  --color-series-5: #c05a1a;
+  --color-series-6: #b8703a;
+  --color-series-7: #0f8a7a;
+  --color-series-8: #b83f7a;
 }
 
 @layer base {
   :root {
     color-scheme: dark;
   }
-  :root[data-theme='light'] {
+  :root[data-mode='light'] {
     color-scheme: light;
   }
   html {
@@ -165,7 +501,7 @@
   ::selection {
     background: rgb(232 161 58 / 0.25);
   }
-  :root[data-theme='light'] ::selection {
+  :root[data-mode='light'] ::selection {
     /* Same amber tint, lower alpha — 0.25 reads too saturated over white. */
     background: rgb(147 89 12 / 0.16);
   }
@@ -203,7 +539,7 @@
       transparent 45%
     );
   }
-  :root[data-theme='light'] .app-shell {
+  :root[data-mode='light'] .app-shell {
     background-image: radial-gradient(
       circle at 78% -5%,
       color-mix(in srgb, var(--color-brand-mark) 3%, transparent),
