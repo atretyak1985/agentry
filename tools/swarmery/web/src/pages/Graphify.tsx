@@ -13,11 +13,13 @@ import { fetchTools } from '../api';
 import { Card, Empty, ErrorBox, Loading, SectionTitle } from '../components/ui';
 import { fmtAgo } from '../lib/format';
 
-export function Graphify(): JSX.Element {
+export function Graphify({ scopedSlug }: { scopedSlug?: string } = {}): JSX.Element {
   const [data, setData] = useState<ToolsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Selection is kept by project id so it survives reloads; null → default
-  // (first project with a viz, else the first entry).
+  // (first project with a viz, else the first entry). In project-workspace mode
+  // (scopedSlug set) the switcher owns project choice, so the in-page dropdown
+  // is hidden and the selection is pinned to that slug.
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   // Unmount guard (ProjectPlugins idiom): a ref because the load callback
@@ -46,10 +48,10 @@ export function Graphify(): JSX.Element {
   }, [load]);
 
   const projects = data?.graphify.projects ?? [];
-  const project =
-    projects.find((p) => p.id === selectedId) ??
-    projects.find((p) => p.hasViz) ??
-    projects[0];
+  const scoped = scopedSlug !== undefined;
+  const project = scoped
+    ? projects.find((p) => p.slug === scopedSlug)
+    : (projects.find((p) => p.id === selectedId) ?? projects.find((p) => p.hasViz) ?? projects[0]);
 
   return (
     <div className="min-w-0 px-4 pt-6 pb-10 desk:px-10 desk:pt-[34px] desk:pb-[60px]">
@@ -64,24 +66,28 @@ export function Graphify(): JSX.Element {
       ) : data !== null ? (
         project === undefined ? (
           <Empty>
-            no projects with graphify-pack enabled — enable it in a project&apos;s plugins card
+            {scoped
+              ? 'graphify-pack is not enabled for this project — enable it in Settings'
+              : 'no projects with graphify-pack enabled — enable it in a project’s plugins card'}
           </Empty>
         ) : (
           <>
             <Card>
               <div className="flex flex-wrap items-center gap-3">
-                <select
-                  value={String(project.id)}
-                  onChange={(e) => setSelectedId(Number(e.target.value))}
-                  aria-label="graphify project"
-                  className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
-                >
-                  {projects.map((p) => (
-                    <option key={p.id} value={String(p.id)}>
-                      {p.name ?? p.slug}
-                    </option>
-                  ))}
-                </select>
+                {!scoped && (
+                  <select
+                    value={String(project.id)}
+                    onChange={(e) => setSelectedId(Number(e.target.value))}
+                    aria-label="graphify project"
+                    className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {p.name ?? p.slug}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {project.builtAt !== null && (
                   <span className="font-mono text-[10.5px] text-ink-faint">
                     graph built {fmtAgo(project.builtAt)}

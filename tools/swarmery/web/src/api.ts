@@ -9,8 +9,11 @@ import type {
   AnalyticsMetric,
   ApprovalRule,
   AttachResponse,
+  BoardColumn,
+  BoardTask,
   BreakdownResp,
   DetachResponse,
+  DispatchStatus,
   DocDetail,
   DocMeta,
   DurationsResp,
@@ -513,6 +516,107 @@ export function fetchTasks(days = 14): Promise<TasksResponse> {
 export function fetchTask(id: number | string): Promise<TaskDetail> {
   if (MOCK) return mockApi.task(id);
   return get(`/api/tasks/${encodeURIComponent(id)}`);
+}
+
+// --- fusion phase 1/3: task board + dispatcher (frozen contract in api/types) ---
+
+/**
+ * GET /api/board/tasks?projectId=&boardColumn= — dispatchable board rows
+ * (source='queue'), newest first. Both filters optional; the board scopes by
+ * projectId, the Archived column lazy-loads with boardColumn='archived'.
+ */
+export function fetchBoardTasks(projectId?: number, boardColumn?: BoardColumn): Promise<BoardTask[]> {
+  if (MOCK) return mockApi.boardTasks(projectId, boardColumn);
+  const qs = new URLSearchParams();
+  if (projectId !== undefined) qs.set('projectId', String(projectId));
+  if (boardColumn !== undefined) qs.set('boardColumn', boardColumn);
+  const q = qs.toString();
+  return get(`/api/board/tasks${q === '' ? '' : `?${q}`}`);
+}
+
+/** Body of POST /api/board/tasks (matches createBoardTask in tasks_board.go). */
+export interface CreateBoardTaskInput {
+  projectId: number;
+  title: string;
+  prompt: string;
+  priority?: string;
+  model?: string;
+  fileScope?: string[];
+  dependencies?: string[];
+  boardColumn?: BoardColumn;
+}
+
+/** POST /api/board/tasks → 201 BoardTask. QuickEntry sends {title,prompt=title}. */
+export async function createBoardTask(input: CreateBoardTaskInput): Promise<BoardTask> {
+  if (MOCK) return mockApi.createBoardTask(input);
+  const res = await fetch('/api/board/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `create task failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as BoardTask;
+}
+
+/**
+ * User-editable subset of a board task (the fields patchBoardTask accepts —
+ * boardColumn/title/prompt/priority/model/fileScope/dependencies/paused/
+ * userPaused). Dispatcher-owned fields are NOT settable here.
+ */
+export interface PatchBoardTaskInput {
+  boardColumn?: BoardColumn;
+  title?: string;
+  prompt?: string;
+  priority?: string;
+  model?: string | null;
+  fileScope?: string[];
+  dependencies?: string[];
+  paused?: boolean;
+  userPaused?: boolean;
+}
+
+/** PATCH /api/board/tasks/{id} → updated BoardTask (id = numeric row id). */
+export async function patchBoardTask(id: number, patch: PatchBoardTaskInput): Promise<BoardTask> {
+  if (MOCK) return mockApi.patchBoardTask(id, patch);
+  const res = await fetch(`/api/board/tasks/${String(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `patch task failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as BoardTask;
+}
+
+/** GET /api/dispatch — dispatcher status snapshot (503 when not attached). */
+export function fetchDispatchStatus(): Promise<DispatchStatus> {
+  if (MOCK) return mockApi.dispatch();
+  return get('/api/dispatch');
+}
+
+/** POST /api/dispatch/pause — global or per-project pause toggle. */
+export async function pauseDispatch(
+  scope: 'global' | 'project',
+  paused: boolean,
+  projectId?: number,
+): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const body: { scope: string; paused: boolean; projectId?: number } = { scope, paused };
+  if (scope === 'project' && projectId !== undefined) body.projectId = projectId;
+  const res = await fetch('/api/dispatch/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `pause failed: ${String(res.status)}`);
+  }
 }
 
 // --- phase 2 — approvals (docs/hooks-protocol.md; DTO frozen in api/types.ts) ---

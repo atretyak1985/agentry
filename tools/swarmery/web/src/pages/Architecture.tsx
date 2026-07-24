@@ -18,7 +18,7 @@ import { fmtAgo } from '../lib/format';
 const ACTIVE_STATES = new Set<ProvisionState['state']>(['pending', 'installing', 'generating']);
 const POLL_MS = 3_000;
 
-export function Architecture(): JSX.Element {
+export function Architecture({ scopedSlug }: { scopedSlug?: string } = {}): JSX.Element {
   const [data, setData] = useState<ToolsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -46,11 +46,12 @@ export function Architecture(): JSX.Element {
   }, [load]);
 
   const projects = data?.architecture.projects ?? [];
-  // Selection prefers hasMap (a built project) over an unbuilt one.
-  const project =
-    projects.find((p) => p.id === selectedId) ??
-    projects.find((p) => p.hasMap) ??
-    projects[0];
+  const scoped = scopedSlug !== undefined;
+  // Selection prefers hasMap (a built project) over an unbuilt one; in
+  // project-workspace mode it is pinned to the workspace slug.
+  const project = scoped
+    ? projects.find((p) => p.slug === scopedSlug)
+    : (projects.find((p) => p.id === selectedId) ?? projects.find((p) => p.hasMap) ?? projects[0]);
 
   // While any project has an in-flight provision job, re-fetch every 3s until
   // it settles (mirrors Serena's interval-until-settled; the aliveRef guard in
@@ -76,23 +77,29 @@ export function Architecture(): JSX.Element {
         <Loading label="architecture…" />
       ) : data !== null ? (
         project === undefined ? (
-          <Empty>no architecture maps yet — run /architecture-map in a project repo</Empty>
+          <Empty>
+            {scoped
+              ? 'no architecture map for this project — enable architecture-pack in Settings to generate it'
+              : 'no architecture maps yet — run /architecture-map in a project repo'}
+          </Empty>
         ) : (
           <>
             <Card>
               <div className="flex flex-wrap items-center gap-3">
-                <select
-                  value={String(project.id)}
-                  onChange={(e) => setSelectedId(Number(e.target.value))}
-                  aria-label="architecture project"
-                  className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
-                >
-                  {projects.map((p) => (
-                    <option key={p.id} value={String(p.id)}>
-                      {p.name ?? p.slug}
-                    </option>
-                  ))}
-                </select>
+                {!scoped && (
+                  <select
+                    value={String(project.id)}
+                    onChange={(e) => setSelectedId(Number(e.target.value))}
+                    aria-label="architecture project"
+                    className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {p.name ?? p.slug}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {project.builtAt !== null && (
                   <span className="font-mono text-[10.5px] text-ink-faint">
                     map built {fmtAgo(project.builtAt)}
