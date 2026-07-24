@@ -261,7 +261,11 @@ func evalOrClean(p string) string {
 			break // reached the root; nothing existed
 		}
 		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
-			parts := append([]string{resolved}, tail...)
+			// `dir` is the deepest non-existent component; its own basename
+			// must be re-appended along with the accumulated tail, otherwise
+			// the path collapses to the resolved ancestor and the repo-root
+			// guard over-matches (e.g. repoRoot "/tmp/repo" → "/tmp").
+			parts := append([]string{resolved, filepath.Base(dir)}, tail...)
 			return filepath.Clean(filepath.Join(parts...))
 		}
 		tail = append([]string{filepath.Base(dir)}, tail...)

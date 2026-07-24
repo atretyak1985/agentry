@@ -3,6 +3,7 @@ package worktree
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,6 +181,39 @@ func TestGuardRepoRootDirections(t *testing.T) {
 	// Disjoint siblings are fine.
 	if err := guardRepoRoot("/a/repo", "/a/worktrees/T-x"); err != nil {
 		t.Errorf("guardRepoRoot(disjoint) = %v, want nil", err)
+	}
+}
+
+// TestEvalOrCleanKeepsDeepestComponent guards against a regression where
+// evalOrClean dropped the basename of the deepest non-existent directory when
+// its parent resolved directly — collapsing e.g. "<real>/repo" to "<real>" and
+// making the repo-root guard over-match. Reproduces the Linux-CI condition
+// where repoRoot and the worktree root share a symlinked real parent.
+func TestEvalOrCleanKeepsDeepestComponent(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(real): %v", err)
+	}
+
+	// Direct child of an existing (symlinked) dir must be preserved.
+	if got, want := evalOrClean(filepath.Join(link, "repo")), filepath.Join(resolvedReal, "repo"); got != want {
+		t.Errorf("evalOrClean(link/repo) = %q, want %q", got, want)
+	}
+	// Multi-level non-existent tail under a symlinked existing dir.
+	if got, want := evalOrClean(filepath.Join(link, "wts", "proj", "T-x")), filepath.Join(resolvedReal, "wts", "proj", "T-x"); got != want {
+		t.Errorf("evalOrClean(link/wts/proj/T-x) = %q, want %q", got, want)
+	}
+	// A sibling repoRoot under the same symlinked parent must NOT be seen as
+	// containing the worktree path (the exact false-positive fixed here).
+	repoRoot := filepath.Join(link, "repo")
+	wtPath := filepath.Join(link, "wts", "proj", "T-x")
+	if err := guardRepoRoot(repoRoot, wtPath); err != nil {
+		t.Errorf("guardRepoRoot(sibling under symlink) = %v, want nil", err)
 	}
 }
 
