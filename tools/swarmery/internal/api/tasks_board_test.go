@@ -20,7 +20,7 @@ import (
 var boardTaskKeys = []string{
 	"id", "externalId", "projectId", "projectSlug", "title", "prompt",
 	"priority", "status", "boardColumn", "paused", "userPaused",
-	"dependencies", "model", "fileScope", "branch", "worktreePath",
+	"dependencies", "model", "playbook", "fileScope", "branch", "worktreePath",
 	"dispatchError", "retryCount", "verifyVerdict", "verifyDetail",
 	"columnMovedAt", "createdAt",
 }

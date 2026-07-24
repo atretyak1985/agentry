@@ -92,6 +92,7 @@ type taskOpts struct {
 	model      string
 	retryCount int
 	paused     int
+	playbook   string // selected recipe name (drives the verify knob via PlaybookVerify seam)
 }
 
 func insertTask(t *testing.T, db *sql.DB, o taskOpts) int64 {
@@ -114,12 +115,12 @@ func insertTask(t *testing.T, db *sql.DB, o taskOpts) int64 {
 	res, err := db.Exec(`
 		INSERT INTO tasks(project_id, title, prompt, priority, status, created_at,
 		                  source, external_id, board_column, model, file_scope,
-		                  dependencies, worktree_path, branch, retry_count, paused)
+		                  dependencies, worktree_path, branch, retry_count, paused, playbook)
 		VALUES(1, ?, ?, 5, 'needs_review', '2026-07-24T00:00:00.000Z',
-		       ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+		       ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)`,
 		"title "+o.externalID, "do the thing for "+o.externalID,
 		o.source, o.externalID, o.column, nullStr(o.model), o.fileScope,
-		o.worktree, "swarm/"+o.externalID, o.retryCount, o.paused)
+		o.worktree, "swarm/"+o.externalID, o.retryCount, o.paused, nullStr(o.playbook))
 	if err != nil {
 		t.Fatalf("insert task: %v", err)
 	}

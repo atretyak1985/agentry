@@ -166,6 +166,7 @@ type boardTaskDTO struct {
 	UserPaused    bool     `json:"userPaused"`
 	Dependencies  []string `json:"dependencies"`
 	Model         *string  `json:"model"`
+	Playbook      *string  `json:"playbook"` // selected recipe name (null = default 'standard')
 	FileScope     []string `json:"fileScope"`
 	Branch        *string  `json:"branch"`
 	WorktreePath  *string  `json:"worktreePath"`
@@ -180,7 +181,7 @@ type boardTaskDTO struct {
 const boardTaskSelect = `
 	SELECT t.id, t.external_id, t.project_id, p.slug, t.title, t.prompt,
 	       t.priority, t.status, t.board_column, t.paused, t.user_paused,
-	       t.dependencies, t.model, t.file_scope, t.branch, t.worktree_path,
+	       t.dependencies, t.model, t.playbook, t.file_scope, t.branch, t.worktree_path,
 	       t.dispatch_error, t.retry_count, t.verify_verdict, t.verify_detail,
 	       t.column_moved_at, t.created_at
 	FROM tasks t JOIN projects p ON p.id = t.project_id`
@@ -194,7 +195,7 @@ func scanBoardTask(scan func(...any) error, d *boardTaskDTO) error {
 	)
 	if err := scan(&d.ID, &externalID, &d.ProjectID, &d.ProjectSlug, &d.Title, &d.Prompt,
 		&priority, &d.Status, &d.BoardColumn, &paused, &userPaused,
-		&deps, &d.Model, &scope, &d.Branch, &d.WorktreePath,
+		&deps, &d.Model, &d.Playbook, &scope, &d.Branch, &d.WorktreePath,
 		&d.DispatchError, &d.RetryCount, &d.VerifyVerdict, &d.VerifyDetail,
 		&d.ColumnMovedAt, &d.CreatedAt); err != nil {
 		return err
@@ -281,6 +282,7 @@ func (h *Handler) createBoardTask(w http.ResponseWriter, r *http.Request) {
 		Prompt       string   `json:"prompt"`
 		Priority     string   `json:"priority"`
 		Model        *string  `json:"model"`
+		Playbook     *string  `json:"playbook"`
 		FileScope    []string `json:"fileScope"`
 		Dependencies []string `json:"dependencies"`
 		BoardColumn  string   `json:"boardColumn"`
@@ -329,6 +331,13 @@ func (h *Handler) createBoardTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Playbook (fusion phase 13): optional recipe name; when set it must resolve
+	// in the registry for this project (built-in or project-local). NULL ⇒ the
+	// default 'standard' recipe. An unresolvable name is a client bug (400).
+	playbook, ok := h.resolvePlaybookName(w, body.ProjectID, body.Playbook)
+	if !ok {
+		return
+	}
 	extID, err := newBoardExternalID()
 	if err != nil {
 		writeErr(w, err)
@@ -341,11 +350,11 @@ func (h *Handler) createBoardTask(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.DB.Exec(`
 		INSERT INTO tasks (project_id, title, prompt, priority, status, created_at,
-		                   source, external_id, board_column, model, file_scope,
+		                   source, external_id, board_column, model, playbook, file_scope,
 		                   dependencies, column_moved_at)
-		VALUES (?, ?, ?, ?, 'queued', ?, 'queue', ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, 'queued', ?, 'queue', ?, ?, ?, ?, ?, ?, ?)`,
 		body.ProjectID, title, prompt, priority, now,
-		extID, column, body.Model, scopeJSON, depsJSON, movedAt)
+		extID, column, body.Model, playbook, scopeJSON, depsJSON, movedAt)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -380,6 +389,7 @@ func (h *Handler) patchBoardTask(w http.ResponseWriter, r *http.Request) {
 		Prompt       *string   `json:"prompt"`
 		Priority     *string   `json:"priority"`
 		Model        *string   `json:"model"`
+		Playbook     *string   `json:"playbook"`
 		FileScope    *[]string `json:"fileScope"`
 		Dependencies *[]string `json:"dependencies"`
 		Paused       *bool     `json:"paused"`
@@ -451,6 +461,16 @@ func (h *Handler) patchBoardTask(w http.ResponseWriter, r *http.Request) {
 	if body.Model != nil {
 		sets = append(sets, "model = ?")
 		args = append(args, nullableStr(*body.Model))
+	}
+	if body.Playbook != nil {
+		// A blank string clears the selection (→ default 'standard'); a non-blank
+		// name must resolve in the registry for this project.
+		playbook, ok := h.resolvePlaybookName(w, cur.ProjectID, body.Playbook)
+		if !ok {
+			return
+		}
+		sets = append(sets, "playbook = ?")
+		args = append(args, playbook)
 	}
 	if body.FileScope != nil {
 		scopeJSON, err := marshalStringList(*body.FileScope)

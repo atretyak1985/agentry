@@ -43,6 +43,7 @@ const BASE_NAV: WorkspaceNavItem[] = [
   { path: 'board', glyph: '▤', label: 'Board' },
   { path: 'planning', glyph: '✦', label: 'Planning' },
   { path: 'plans', glyph: '❐', label: 'Plans' },
+  { path: 'playbooks', glyph: '▤', label: 'Playbooks' },
   { path: 'sessions', glyph: '❯', label: 'Sessions' },
   { path: 'architecture', glyph: '▦', label: 'Architecture' },
 ];

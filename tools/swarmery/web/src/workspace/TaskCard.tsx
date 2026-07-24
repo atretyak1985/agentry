@@ -126,6 +126,14 @@ export function TaskCard({
             {task.model}
           </span>
         )}
+        {task.playbook !== null && (
+          <span
+            title={`playbook: ${task.playbook}`}
+            className="rounded border border-brand/40 bg-brand/5 px-1 py-[1px] font-mono text-[9px] text-brand"
+          >
+            ▤ {task.playbook}
+          </span>
+        )}
         {task.verifyVerdict !== null && <VerdictBadge verdict={task.verifyVerdict} />}
         {blocked && (
           <span className="rounded-full border border-amber/40 bg-amber/10 px-1.5 py-[1px] font-mono text-[9px] text-amber">

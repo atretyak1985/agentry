@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/playbooks"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/worktree"
 )
 
@@ -57,6 +58,13 @@ type Service struct {
 	// package and satisfied by *verify.Service, so verify imports dispatch's data
 	// deps without dispatch importing verify — no import cycle.
 	Verifier Verifier
+	// Playbooks, when attached, resolves a task's execution recipe (fusion phase
+	// 13): how many sequential stages to run in the task's single worktree and
+	// which verify strictness to hand Phase 6. nil ⇒ every task runs the classic
+	// single-stage flow (the `standard` recipe), so pre-playbook dispatch and all
+	// existing dispatch unit tests are unchanged. Resolved per admission through
+	// the candidate's project path (built-ins overlaid by project-local files).
+	Playbooks *playbooks.Registry
 
 	scheduling atomic.Bool // re-entrance guard: overlapping Schedule passes skip
 
@@ -261,6 +269,7 @@ type candidate struct {
 	ProjectPath  string // repo root for worktree.Acquire
 	Prompt       string
 	Model        sql.NullString
+	Playbook     sql.NullString // selected recipe name (NULL ⇒ default 'standard')
 	Priority     int
 	CreatedAt    string
 	FileScope    []string
@@ -274,7 +283,7 @@ type candidate struct {
 func (s *Service) candidates() ([]candidate, error) {
 	rows, err := s.DB.Query(`
 		SELECT t.id, COALESCE(t.external_id,''), t.project_id, p.slug, p.path,
-		       t.prompt, t.model, t.priority, t.created_at, t.file_scope, t.dependencies
+		       t.prompt, t.model, t.playbook, t.priority, t.created_at, t.file_scope, t.dependencies
 		  FROM tasks t JOIN projects p ON p.id = t.project_id
 		 WHERE t.source='queue' AND t.board_column='todo'
 		   AND t.paused=0 AND t.user_paused=0`)
@@ -288,7 +297,7 @@ func (s *Service) candidates() ([]candidate, error) {
 		var c candidate
 		var scopeJSON, depsJSON string
 		if err := rows.Scan(&c.ID, &c.ExternalID, &c.ProjectID, &c.ProjectSlug,
-			&c.ProjectPath, &c.Prompt, &c.Model, &c.Priority, &c.CreatedAt,
+			&c.ProjectPath, &c.Prompt, &c.Model, &c.Playbook, &c.Priority, &c.CreatedAt,
 			&scopeJSON, &depsJSON); err != nil {
 			return nil, err
 		}
@@ -470,11 +479,45 @@ func (s *Service) admit(c candidate) bool {
 
 	s.notify(c.ID)
 
+	// Resolve the playbook (fusion phase 13): NULL/unknown ⇒ the classic
+	// single-stage flow. The resolved stage list drives how many sequential
+	// headless runs execute in this one worktree. The first stage reuses the
+	// pre-generated uuid recorded above (so the task↔session link already points
+	// at stage 1); later stages mint their own uuids inside runPlaybook.
+	stages := s.resolvePlaybook(c)
+
 	// Spawn the run. The goroutine owns exit handling + slot release.
-	prompt := BuildPrompt(c.Prompt, acq.Branch, c.ExternalID, c.FileScope)
-	spec := RunSpec{Prompt: prompt, SessionUUID: uuid, Cwd: acq.Path, Model: c.Model.String}
-	s.spawn(func() { s.runAndHandle(c, spec) })
+	s.spawn(func() { s.runPlaybook(c, acq, stages, uuid) })
 	return true
+}
+
+// resolvedStage is one stage's rendered prompt plus its name (for a stage-fail
+// dispatch_error). The execution contract is appended at spawn time so a stage
+// body stays a pure template.
+type resolvedStage struct {
+	name string
+	body string // the playbook stage body (template vars unresolved except per-stage ones)
+}
+
+// resolvePlaybook returns the ordered stage list for a candidate. With no
+// registry attached, or a NULL/unknown playbook name, it degrades to a single
+// implicit stage whose body is the task's own prompt — byte-for-byte the
+// pre-playbook behavior. Stage bodies are returned unrendered; runPlaybook
+// renders each with the per-run var map (incl. previous_stage_output).
+func (s *Service) resolvePlaybook(c candidate) []resolvedStage {
+	single := []resolvedStage{{name: "implement", body: c.Prompt}}
+	if s.Playbooks == nil {
+		return single
+	}
+	pb, ok := s.Playbooks.Get(c.ProjectPath, c.Playbook.String)
+	if !ok || len(pb.Stages) == 0 {
+		return single
+	}
+	out := make([]resolvedStage, 0, len(pb.Stages))
+	for _, st := range pb.Stages {
+		out = append(out, resolvedStage{name: st.Name, body: st.Body})
+	}
+	return out
 }
 
 // failAdmission stamps dispatch_error on a task that could not be admitted,
@@ -488,64 +531,138 @@ func (s *Service) failAdmission(id int64, msg string) {
 	s.notify(id)
 }
 
-// ── run + exit handling ──
+// ── run + exit handling (multi-stage, fusion phase 13) ──
 
-// runAndHandle executes the run to completion, links the session, applies
-// sentinel/exit routing, and always releases the slot.
-func (s *Service) runAndHandle(c candidate, spec RunSpec) {
+// runPlaybook executes a task's resolved playbook stages SEQUENTIALLY in the
+// one acquired worktree and always releases the slot. Each stage is a separate
+// headless run with its own session UUID, all linked to the task via
+// task_sessions (the task card shows the latest). Stage 1 reuses firstUUID (the
+// pre-generated id already parked on dispatch_session_uuid); stages 2+ mint
+// their own. The chain stops early on: a sentinel (BLOCKED/done — honest exit,
+// authoritative), a stage start-failure, or a non-final stage's nonzero exit
+// (dispatch_error='stage <name> failed'). Only after the FINAL stage lands
+// cleanly does the classic no-sentinel routing run (in_review + pokeVerify).
+//
+// A single-stage playbook (the default) walks this loop exactly once, so its
+// behavior is byte-for-byte the pre-playbook runAndHandle: link → sentinel →
+// exit-code routing → pokeVerify.
+func (s *Service) runPlaybook(c candidate, acq worktree.Acquired, stages []resolvedStage, firstUUID string) {
 	defer s.clearActive(c.ID)
 
+	var prevOutput string
+	for i, st := range stages {
+		last := i == len(stages)-1
+
+		uuid := firstUUID
+		if i > 0 {
+			uuid = s.UUID()
+		}
+
+		// Render this stage's body with the per-run var map, then append the
+		// execution contract (appended to EVERY stage regardless of playbook).
+		vars := playbooks.Vars{
+			TaskPrompt:          c.Prompt,
+			StartPoint:          acq.StartPoint,
+			Branch:              acq.Branch,
+			TaskID:              c.ExternalID,
+			FileScope:           scopeText(c.FileScope),
+			PreviousStageOutput: prevOutput,
+		}
+		prompt := BuildStagePrompt(playbooks.Render(st.body, vars), acq.Branch, c.ExternalID, c.FileScope)
+		spec := RunSpec{Prompt: prompt, SessionUUID: uuid, Cwd: acq.Path, Model: c.Model.String}
+
+		run, err := s.runStage(spec)
+		if err != nil {
+			// Process never ran (PATH miss / fork failure) on this stage → surface +
+			// stop; keep the worktree for inspection. Name the stage on a multi-stage
+			// playbook so the error points at where the chain broke.
+			s.finishError(c.ID, s.stageErr(stages, st.name, "runner start: "+err.Error()))
+			s.Poke()
+			return
+		}
+
+		// Reconcile the explicit task↔session link for THIS stage's session (all
+		// stage sessions land in task_sessions; the primary session_id sticks to
+		// the first that ingests).
+		s.linkSession(c.ID, uuid)
+
+		// Sentinel classification runs FIRST on any stage exit — an honest BLOCKED /
+		// PREMISE-STALE / NO-OP reply is authoritative regardless of exit code and
+		// stops the chain immediately (no point running later stages).
+		sentinel := s.classifyLastTurn(uuid)
+		switch sentinel.Kind {
+		case "done":
+			s.finishDone(c, sentinel.Line)
+			s.Poke() // a completed task may unblock dependents (FN-3895)
+			return
+		case "blocked":
+			s.finishBlocked(c.ID, sentinel.Line)
+			s.Poke()
+			return
+		}
+
+		if !last {
+			// A non-final stage must succeed before the next one runs. A nonzero exit
+			// or timeout stops the chain with a stage-scoped error (the worktree is
+			// kept for review). Verification is NOT poked — the work is incomplete.
+			if run.ExitCode != 0 {
+				s.finishReview(c.ID, s.stageErr(stages, st.name, stageExitMsg(run, s.Cfg.RunTimeout)))
+				s.Poke()
+				return
+			}
+			// Carry this stage's last assistant text into the next stage as
+			// {previous_stage_output}. Missing transcript ⇒ empty (best-effort).
+			prevOutput = s.lastAssistantText(uuid)
+			continue
+		}
+
+		// FINAL stage, no sentinel: the classic exit-code routing. Exit 0 →
+		// in_review clean; nonzero/timeout → in_review with the error surfaced.
+		s.finishReview(c.ID, stageExitMsg(run, s.Cfg.RunTimeout))
+		// A no-sentinel landing produced gradeable work on the swarm/<id> branch:
+		// poke auto-verification NOW, while the worktree is still live. Non-blocking
+		// + nil-safe; a nonzero exit still gets graded (verify → INCONCLUSIVE if
+		// nothing gradeable). The verifier resolves this task's playbook verify knob
+		// itself (strict/normal/off) from the tasks.playbook column at grade time.
+		s.pokeVerify(c.ID)
+		s.Poke()
+		return
+	}
+}
+
+// runStage runs one stage's headless process to completion, bounded by the
+// per-run timeout, and returns its Run (a timeout is an outcome, not an error).
+func (s *Service) runStage(spec RunSpec) (*Run, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Cfg.RunTimeout)
 	defer cancel()
+	return s.Run.Start(ctx, spec)
+}
 
-	run, err := s.Run.Start(ctx, spec)
-	if err != nil {
-		// Process never ran (PATH miss / fork failure). Surface + leave in_review
-		// so the user sees it; keep the worktree for inspection.
-		s.finishError(c.ID, "runner start: "+err.Error())
-		s.Poke()
-		return
+// stageErr scopes an error message to the failing stage's name ONLY for a
+// multi-stage playbook — a single-stage run keeps the bare message so its
+// dispatch_error is identical to pre-playbook behavior.
+func (s *Service) stageErr(stages []resolvedStage, name, msg string) string {
+	if len(stages) <= 1 {
+		return msg
 	}
+	return "stage " + name + " failed: " + msg
+}
 
-	// Best-effort: reconcile the explicit task↔session link now that the
-	// transcript has (usually) been ingested.
-	s.linkSession(c.ID, spec.SessionUUID)
-
-	// Sentinel classification runs FIRST on any exit — an honest BLOCKED /
-	// PREMISE-STALE reply is authoritative regardless of exit code. Only if no
-	// sentinel matched do we apply exit-code routing.
-	sentinel := s.classifyLastTurn(spec.SessionUUID)
-	switch sentinel.Kind {
-	case "done":
-		s.finishDone(c, sentinel.Line)
-		s.Poke() // a completed task may unblock dependents (FN-3895)
-		return
-	case "blocked":
-		s.finishBlocked(c.ID, sentinel.Line)
-		s.Poke()
-		return
-	}
-
-	// No sentinel: exit-code routing. Exit 0 → in_review clean; nonzero/timeout →
-	// in_review with dispatch_error surfaced. Verification (Phase 6) owns retries,
-	// so retry_count is untouched here.
+// stageExitMsg renders the dispatch_error for a stage's exit ("" on clean exit 0,
+// a timeout note, or "session exited N: <stderr>"). Shared by the mid-chain and
+// final-stage routing so the wording matches the single-stage path exactly.
+func stageExitMsg(run *Run, timeout time.Duration) string {
 	if run.ExitCode == 0 {
-		s.finishReview(c.ID, "")
-	} else if run.TimedOut {
-		s.finishReview(c.ID, "run timed out after "+s.Cfg.RunTimeout.String())
-	} else {
-		msg := "session exited " + itoa(run.ExitCode)
-		if run.Stderr != "" {
-			msg += ": " + run.Stderr
-		}
-		s.finishReview(c.ID, msg)
+		return ""
 	}
-	// A no-sentinel landing produced gradeable work on the swarm/<id> branch: poke
-	// auto-verification NOW, while the worktree is still live (a terminal move
-	// would reclaim it via RemoveWorktreeFor). Non-blocking + nil-safe. A nonzero
-	// exit still gets graded — verify degrades to INCONCLUSIVE if nothing gradeable.
-	s.pokeVerify(c.ID)
-	s.Poke()
+	if run.TimedOut {
+		return "run timed out after " + timeout.String()
+	}
+	msg := "session exited " + itoa(run.ExitCode)
+	if run.Stderr != "" {
+		msg += ": " + run.Stderr
+	}
+	return msg
 }
 
 // pokeVerify triggers auto-verification for a task when a Verifier is attached.
@@ -679,6 +796,18 @@ func (s *Service) linkSession(taskID int64, uuid string) {
 // or its text is not available (no transcript yet ⇒ fall through to exit-code
 // routing).
 func (s *Service) classifyLastTurn(uuid string) Sentinel {
+	text := s.lastAssistantText(uuid)
+	if text == "" {
+		return Sentinel{}
+	}
+	return ClassifySentinel(text)
+}
+
+// lastAssistantText returns a session's final assistant turn text (by uuid), or
+// "" when the session/transcript is not (yet) ingested. It feeds both sentinel
+// classification and the {previous_stage_output} of the next playbook stage — a
+// missing transcript degrades gracefully to an empty carry-forward.
+func (s *Service) lastAssistantText(uuid string) string {
 	var text sql.NullString
 	err := s.DB.QueryRow(`
 		SELECT tr.text
@@ -686,9 +815,9 @@ func (s *Service) classifyLastTurn(uuid string) Sentinel {
 		 WHERE se.session_uuid=? AND tr.role='assistant' AND tr.text IS NOT NULL
 		 ORDER BY tr.seq DESC LIMIT 1`, uuid).Scan(&text)
 	if err != nil || !text.Valid {
-		return Sentinel{}
+		return ""
 	}
-	return ClassifySentinel(text.String)
+	return text.String
 }
 
 // ── startup heal ──

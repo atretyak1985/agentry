@@ -8,6 +8,7 @@ import type {
   DispatchStatus,
   DocDetail,
   DocMeta,
+  DuplicatePlaybookResponse,
   Epic,
   EpicPhase,
   Event,
@@ -15,6 +16,7 @@ import type {
   HealthResponse,
   PermissionRequest,
   PlanDoc,
+  Playbook,
   PlanningStart,
   PlanningStatus,
   Project,
@@ -1144,6 +1146,7 @@ function boardTask(p: Partial<BoardTask> & Pick<BoardTask, 'id' | 'externalId' |
     userPaused: false,
     dependencies: [],
     model: null,
+    playbook: null,
     fileScope: [],
     branch: null,
     worktreePath: null,
@@ -1168,7 +1171,7 @@ let mockBoard: BoardTask[] = [
   boardTask({
     id: 9104, externalId: 'T-j1k2l3', title: 'ProjectSwitcher dropdown', boardColumn: 'in_progress',
     status: 'running', branch: 'swarm/T-j1k2l3', worktreePath: '/Volumes/Work/swarmery-worktrees/T-j1k2l3',
-    model: 'opus',
+    model: 'opus', playbook: 'review-heavy',
   }),
   boardTask({
     id: 9105, externalId: 'T-m4n5o6', title: 'TaskDrawer edit fields', boardColumn: 'in_progress',
@@ -1241,6 +1244,43 @@ const mockEpics: Epic[] = [
       mockEpicPhase(4, 4, 'Epics rollup + graph', [2, 3], 0, 6),
     ],
     rollup: { done: 10, total: 25, pct: 40 },
+  },
+];
+
+/** fusion phase 13: the built-in playbooks (mirrors internal/playbooks/builtin). */
+const mockPlaybooks: Playbook[] = [
+  {
+    name: 'quick-fix',
+    description: 'One focused pass for a small, well-scoped change. Verification runs at the normal bar.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [{ name: 'implement', body: '{task_prompt}' }],
+  },
+  {
+    name: 'standard',
+    description: 'The default recipe — a single implementation pass with normal verification.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [{ name: 'implement', body: '{task_prompt}' }],
+  },
+  {
+    name: 'review-heavy',
+    description: 'Implement, then adversarially self-review the diff before handing to verification. Verification runs strict.',
+    model: '', verify: 'strict', source: 'builtin', path: '',
+    stages: [
+      { name: 'implement', body: '{task_prompt}' },
+      {
+        name: 'self-review',
+        body: 'Adversarially review the work just completed on this branch (diff vs {start_point}).\nFix everything you find. If nothing needs fixing, end with: NO-OP: review clean.',
+      },
+    ],
+  },
+  {
+    name: 'plan-first',
+    description: 'Produce a short step plan first, then implement it in a second stage. Verification runs at the normal bar.',
+    model: '', verify: 'normal', source: 'builtin', path: '',
+    stages: [
+      { name: 'plan', body: 'Do NOT edit any files. Produce a concise implementation plan.\n\n{task_prompt}' },
+      { name: 'implement', body: 'Implement by following the plan from the previous stage:\n\n{previous_stage_output}' },
+    ],
   },
 ];
 
@@ -1592,6 +1632,7 @@ export const mockApi = {
     prompt: string;
     priority?: string;
     model?: string;
+    playbook?: string;
     fileScope?: string[];
     dependencies?: string[];
     boardColumn?: BoardColumn;
@@ -1612,6 +1653,7 @@ export const mockApi = {
       priority: priority as BoardTask['priority'],
       boardColumn: input.boardColumn ?? 'triage',
       ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.playbook !== undefined && input.playbook !== '' ? { playbook: input.playbook } : {}),
       ...(input.fileScope !== undefined ? { fileScope: input.fileScope } : {}),
       ...(input.dependencies !== undefined ? { dependencies: input.dependencies } : {}),
       columnMovedAt: input.boardColumn !== undefined && input.boardColumn !== 'triage' ? iso(0) : null,
@@ -1627,6 +1669,7 @@ export const mockApi = {
     prompt?: string;
     priority?: string;
     model?: string | null;
+    playbook?: string | null;
     fileScope?: string[];
     dependencies?: string[];
     paused?: boolean;
@@ -1649,6 +1692,7 @@ export const mockApi = {
       ...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
       ...(patch.priority !== undefined ? { priority: patch.priority as BoardTask['priority'] } : {}),
       ...(patch.model !== undefined ? { model: patch.model } : {}),
+      ...(patch.playbook !== undefined ? { playbook: patch.playbook === '' ? null : patch.playbook } : {}),
       ...(patch.fileScope !== undefined ? { fileScope: patch.fileScope } : {}),
       ...(patch.dependencies !== undefined ? { dependencies: patch.dependencies } : {}),
       ...(patch.paused !== undefined ? { paused: patch.paused } : {}),
@@ -1673,6 +1717,19 @@ export const mockApi = {
       freeSlots: Math.max(0, 2 - running),
       pausedScopes: [],
     };
+  },
+
+  // --- fusion phase 13 — playbooks ---
+
+  async playbooks(_projectId?: number): Promise<Playbook[]> {
+    await delay(70);
+    return mockPlaybooks.map((p) => ({ ...p, stages: p.stages.map((s) => ({ ...s })) }));
+  },
+
+  async duplicatePlaybook(_projectId: number, name: string): Promise<DuplicatePlaybookResponse> {
+    await delay(120);
+    const path = `/Volumes/Work/demo/.claude/playbooks/${name}.md`;
+    return { name, path, hint: `edit ${path} — project files override built-ins` };
   },
 
   // --- fusion phase 8 — planning mode ---
