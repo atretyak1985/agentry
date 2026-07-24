@@ -4,6 +4,7 @@
 
 import type {
   AdviseStats,
+  AgentEvidence,
   AnalyticsDimension,
   AnalyticsMetric,
   ApprovalRule,
@@ -440,6 +441,15 @@ export function fetchProposals(status?: string): Promise<ProposalsResp> {
   if (MOCK) return mockApi.proposals();
   const qs = status !== undefined ? `?status=${encodeURIComponent(status)}` : '';
   return get(`/api/retro/proposals${qs}`);
+}
+
+/**
+ * GET /api/retro/agents/{agent}/evidence — read-only preview of the evidence
+ * bundle the rewriter would feed the model. A built-in agent answers
+ * in_registry:false with no bundle.
+ */
+export function fetchAgentEvidence(agent: string): Promise<AgentEvidence> {
+  return get(`/api/retro/agents/${encodeURIComponent(agent)}/evidence`);
 }
 
 /**
