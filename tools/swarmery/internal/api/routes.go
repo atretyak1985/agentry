@@ -71,6 +71,12 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/retro/recommendations", h.retroRecommendations)
 	mux.HandleFunc("PATCH /api/retro/recommendations/{id}", requireLocalOrigin(h.patchRecommendation))
 	mux.HandleFunc("POST /api/retro/advise", requireLocalOrigin(h.retroAdvise))
+	// self-improvement phase 3: internal/improve agent-rewriter proposals
+	// (improve.go). Validation is synchronous, generation async (202).
+	mux.HandleFunc("POST /api/retro/recommendations/{id}/improve", requireLocalOrigin(h.improveRecommendation))
+	mux.HandleFunc("POST /api/retro/agents/{agent}/improve", requireLocalOrigin(h.improveAgent))
+	mux.HandleFunc("GET /api/retro/proposals", h.listProposals)
+	mux.HandleFunc("POST /api/retro/proposals/{id}/retry", requireLocalOrigin(h.retryProposal))
 
 	// phase 3.5: workspaces
 	mux.HandleFunc("GET /api/tasks", h.listTasks)
@@ -140,6 +146,22 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// sessions/files/projects — powers the Cmd+K command palette.
 	mux.HandleFunc("GET /api/search", h.search)
 	mux.HandleFunc("GET /api/files/sessions", h.fileSessions)
+
+	// tool dashboards (step 02): sidebar feed + fenced serena process control
+	// (tools_dash.go). The POSTs carry the same D4 origin hardening as every
+	// other mutating endpoint; the roots fence lives in the handler.
+	mux.HandleFunc("GET /api/tools", h.toolsDash)
+	mux.HandleFunc("POST /api/projects/{id}/serena/start", requireLocalOrigin(h.serenaStart))
+	mux.HandleFunc("POST /api/projects/{id}/serena/stop", requireLocalOrigin(h.serenaStop))
+	// tool dashboards (step 03): same-origin embedding surfaces (tools_embed.go)
+	// — serena reverse proxy (incl. ws upgrade; start/stop above stay more
+	// specific and win) + the graphify/architecture static jails. The jails
+	// register method-less so the handler can 405 non-GET/HEAD itself: a
+	// "GET …" pattern would let other methods fall through to the "/" SPA
+	// catch-all instead.
+	mux.HandleFunc("/api/projects/{id}/serena/{rest...}", h.serenaProxy)
+	mux.HandleFunc("/api/projects/{id}/graphify/{rest...}", h.graphifyStatic)
+	mux.HandleFunc("/api/projects/{id}/architecture/{rest...}", h.architectureStatic)
 
 	// control-plane v2: notifications & auto-approve rules. Writes carry the
 	// same D4 origin hardening as every other mutating endpoint; evaluation

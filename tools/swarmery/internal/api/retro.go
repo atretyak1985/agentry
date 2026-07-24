@@ -29,10 +29,11 @@ package api
 // success rates from agentOutcomeRates, per-agent errors from the
 // parent_event_id attribution (statsTools grain — see tools.go), error
 // grouping from errorGroups (shared with /api/stats/errors). error_rate is
-// the FAILED-RUN share (distinct runs with ≥1 error / runs, clamped to ≤1 — a
-// run spanning the window start can contribute a failed run without
-// contributing to the run count), not raw error events per run — one run
-// spraying many tool errors counts once.
+// the BEHAVIOR-failed-run share (distinct runs with ≥1 behavior-fixable error
+// / runs, at the advisor.Classify grain, clamped to ≤1 — a run spanning the
+// window start can contribute a failed run without contributing to the run
+// count), not raw error events per run — one run spraying many tool errors
+// counts once, and harness/infra noise doesn't count at all.
 
 import (
 	"database/sql"
@@ -53,6 +54,8 @@ type retroMainDTO struct {
 	CostUSD   float64 `json:"cost_usd"`
 	TokensOut int64   `json:"tokens_out"`
 	Errors    int64   `json:"errors"`
+	// ErrorsByClass tallies raw error events per advisor.ErrClass key.
+	ErrorsByClass map[string]int64 `json:"errors_by_class"`
 }
 
 type retroPrevDTO struct {
@@ -76,10 +79,14 @@ type retroAgentDTO struct {
 	Sessions  int64   `json:"sessions"`
 	CostUSD   float64 `json:"cost_usd"`
 	TokensOut int64   `json:"tokens_out"`
-	// Errors is the raw error-event count; ErrorRate is the failed-run share
-	// (distinct runs with ≥1 error / runs) — see retroAgentWindow.
+	// Errors is the raw error-event count; ErrorRate is the BEHAVIOR-failed-
+	// run share (distinct runs with ≥1 behavior_fixable error / runs — infra
+	// noise and harness mechanics excluded) — see retroAgentWindow. The same
+	// grain the advisor's R2 fires on (behavior_failed_run_share).
 	Errors    int64   `json:"errors"`
 	ErrorRate float64 `json:"error_rate"`
+	// ErrorsByClass tallies raw error events per advisor.ErrClass key.
+	ErrorsByClass map[string]int64 `json:"errors_by_class"`
 	// avg/p95 over subagent_start durations; nil when no run carried one.
 	AvgMs *float64 `json:"avg_ms"`
 	P95Ms *int64   `json:"p95_ms"`
@@ -114,26 +121,44 @@ type retroAgentWin struct {
 	// subagent_start event id when the error row is parented to one, else by
 	// the (unparented) subagent_stop's own event id. len() = failed runs.
 	failedRunKeys map[int64]struct{}
-	durations     []int64
+	// behaviorFailedRunKeys is the same dedupe restricted to errors whose
+	// group key classifies as behavior_fixable (advisor.Classify) — the share
+	// error_rate reports, matching what the advisor's R2 fires on.
+	behaviorFailedRunKeys map[int64]struct{}
+	// byClass tallies raw error events per advisor.ErrClass key
+	// (advisor.Classify over the normalizeErrKey fold).
+	byClass   map[string]int64
+	durations []int64
 }
 
 // failedRuns is the number of distinct runs with at least one error.
 func (a *retroAgentWin) failedRuns() int64 { return int64(len(a.failedRunKeys)) }
 
+// behaviorFailedRuns is the number of distinct runs with at least one
+// behavior-fixable error.
+func (a *retroAgentWin) behaviorFailedRuns() int64 { return int64(len(a.behaviorFailedRunKeys)) }
+
 // retroAgentWindow computes one [dr.start, dr.end) window's per-agent map:
 // runs/sessions/durations from subagent_start events (breakdownRuns grain),
 // cost/tokens_out from turns (agentTurnTotals), errors from status='error'
 // events attributed through parent_event_id (the statsTools grain). Errors
-// are additionally folded into failedRunKeys — the DISTINCT runs with ≥1
-// error — which backs error_rate as a failed-run share (clamped to ≤1 — a run
-// spanning the window start can contribute a failed run without contributing
-// to the run count) instead of raw error events per run.
+// are additionally classified (advisor.Classify over the normalizeErrKey
+// fold) into byClass and folded into failedRunKeys / behaviorFailedRunKeys —
+// the DISTINCT runs with ≥1 (behavior-fixable) error — the latter backing
+// error_rate as a behavior-failed-run share (clamped to ≤1 — a run spanning
+// the window start can contribute a failed run without contributing to the
+// run count) instead of raw error events per run.
 func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[string]*retroAgentWin, error) {
 	acc := map[string]*retroAgentWin{}
 	get := func(key string) *retroAgentWin {
 		a := acc[key]
 		if a == nil {
-			a = &retroAgentWin{sessions: map[int64]struct{}{}, failedRunKeys: map[int64]struct{}{}}
+			a = &retroAgentWin{
+				sessions:              map[int64]struct{}{},
+				failedRunKeys:         map[int64]struct{}{},
+				behaviorFailedRunKeys: map[int64]struct{}{},
+				byClass:               map[string]int64{},
+			}
 			acc[key] = a
 		}
 		return a
@@ -215,7 +240,8 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		SELECT e.id, e.parent_event_id, e.type,
 		       json_extract(e.payload, '$.agentType'),
 		       COALESCE(pe.type, ''),
-		       json_extract(pe.payload, '$.subagent_type')
+		       json_extract(pe.payload, '$.subagent_type'),
+		       e.tool_name, e.payload
 		  FROM events e
 		  JOIN sessions s ON s.id = e.session_id
 		  JOIN projects p ON p.id = s.project_id
@@ -232,8 +258,8 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		var id int64
 		var parentID sql.NullInt64
 		var typ, parentType string
-		var ownType, subType sql.NullString
-		if err := erows.Scan(&id, &parentID, &typ, &ownType, &parentType, &subType); err != nil {
+		var ownType, subType, toolName, payload sql.NullString
+		if err := erows.Scan(&id, &parentID, &typ, &ownType, &parentType, &subType, &toolName, &payload); err != nil {
 			return nil, err
 		}
 		key := "main"
@@ -247,12 +273,19 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		}
 		a := get(key)
 		a.errors++
+		// api's own normalizeErrKey stays the key producer; only the class
+		// table lives in advisor (single source — never fork it here).
+		class := advisor.Classify(normalizeErrKey(extractErrMsg(typ, toolName, payload)))
+		a.byClass[string(class)]++
 		if key != "main" {
 			runKey := id // unparented subagent_stop: the stop IS the run's proxy
 			if parentType == "subagent_start" && parentID.Valid {
 				runKey = parentID.Int64
 			}
 			a.failedRunKeys[runKey] = struct{}{}
+			if class == advisor.BehaviorFixable {
+				a.behaviorFailedRunKeys[runKey] = struct{}{}
+			}
 		}
 	}
 	return acc, erows.Err()
@@ -270,10 +303,10 @@ func prevWindow(dr dateRange) dateRange {
 	return dateRange{start: start, end: dr.start}
 }
 
-// errRate is failedRuns/runs — the failed-run share — 0 when the agent had no
-// counted run. Clamped to ≤1: an error inside the window whose parent run
-// STARTED before the window adds a failed-run key absent from the in-window
-// run count.
+// errRate is failedRuns/runs — the failed-run share (call sites pass the
+// BEHAVIOR-failed-run count) — 0 when the agent had no counted run. Clamped
+// to ≤1: an error inside the window whose parent run STARTED before the
+// window adds a failed-run key absent from the in-window run count.
 func errRate(failedRuns, runs int64) float64 {
 	if runs == 0 {
 		return 0
@@ -425,19 +458,21 @@ func (h *Handler) retroAgents(w http.ResponseWriter, r *http.Request) {
 
 	out := retroAgentsDTO{
 		From: dr.days[0], To: dr.days[len(dr.days)-1],
+		Main:   retroMainDTO{ErrorsByClass: map[string]int64{}},
 		Agents: make([]retroAgentDTO, 0, len(cur)),
 	}
 	for key, a := range cur {
 		if key == "main" {
 			// The orchestrator never has a subagent_start of its own, so a
 			// "runs" figure would always be 0 — deliberately not exposed.
-			out.Main = retroMainDTO{CostUSD: a.cost, TokensOut: a.tokensOut, Errors: a.errors}
+			out.Main = retroMainDTO{CostUSD: a.cost, TokensOut: a.tokensOut, Errors: a.errors, ErrorsByClass: a.byClass}
 			continue
 		}
 		row := retroAgentDTO{
 			Agent: key, Runs: a.runs, Sessions: int64(len(a.sessions)),
 			CostUSD: a.cost, TokensOut: a.tokensOut,
-			Errors: a.errors, ErrorRate: errRate(a.failedRuns(), a.runs),
+			Errors: a.errors, ErrorRate: errRate(a.behaviorFailedRuns(), a.runs),
+			ErrorsByClass: a.byClass,
 		}
 		if n := len(a.durations); n > 0 {
 			// Same avg/p95 aggregation as statsTools.
@@ -465,7 +500,7 @@ func (h *Handler) retroAgents(w http.ResponseWriter, r *http.Request) {
 			row.Eval = &ee
 		}
 		if p, ok := prev[key]; ok {
-			row.Prev = retroPrevDTO{Runs: p.runs, Errors: p.errors, ErrorRate: errRate(p.failedRuns(), p.runs), CostUSD: p.cost}
+			row.Prev = retroPrevDTO{Runs: p.runs, Errors: p.errors, ErrorRate: errRate(p.behaviorFailedRuns(), p.runs), CostUSD: p.cost}
 		}
 		out.Agents = append(out.Agents, row)
 	}
@@ -922,10 +957,25 @@ type recommendationDTO struct {
 	Title      string `json:"title"`
 	Detail     string `json:"detail"`
 	// Evidence is the advisor's evidence JSON passed through verbatim.
-	Evidence  json.RawMessage `json:"evidence"`
+	Evidence json.RawMessage `json:"evidence"`
+	// Baseline is the advisor's metric snapshot (written on accept, extended
+	// with adopted_at on adoption) passed through verbatim; null before accept.
+	// The UI derives the "verifying in N days" countdown and the metric-vs-
+	// baseline progress from it.
+	Baseline  json.RawMessage `json:"baseline"`
 	Status    string          `json:"status"`
 	CreatedAt string          `json:"created_at"`
 	UpdatedAt string          `json:"updated_at"`
+}
+
+// scanBaseline folds a nullable recommendations.baseline column into the DTO:
+// NULL stays a JSON null, anything else passes through verbatim.
+func (d *recommendationDTO) scanBaseline(base sql.NullString) {
+	if base.Valid {
+		d.Baseline = json.RawMessage(base.String)
+	} else {
+		d.Baseline = json.RawMessage("null")
+	}
 }
 
 type recommendationsDTO struct {
@@ -943,8 +993,8 @@ var recStatuses = map[string]bool{
 // rail" set (proposed,accepted,adopted); status=all disables filtering (the
 // UI fetches status=verified lazily for its history section).
 func (h *Handler) retroRecommendations(w http.ResponseWriter, r *http.Request) {
-	q := `SELECT id, rule, target_kind, target, title, detail, evidence, status,
-	             created_at, updated_at
+	q := `SELECT id, rule, target_kind, target, title, detail, evidence, baseline,
+	             status, created_at, updated_at
 	        FROM recommendations`
 	var args []any
 
@@ -978,12 +1028,14 @@ func (h *Handler) retroRecommendations(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d recommendationDTO
 		var evidence string
+		var base sql.NullString
 		if err := rows.Scan(&d.ID, &d.Rule, &d.TargetKind, &d.Target, &d.Title,
-			&d.Detail, &evidence, &d.Status, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&d.Detail, &evidence, &base, &d.Status, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			writeErr(w, err)
 			return
 		}
 		d.Evidence = json.RawMessage(evidence)
+		d.scanBaseline(base)
 		out.Recommendations = append(out.Recommendations, d)
 	}
 	writeJSON(w, out, rows.Err())
@@ -1087,16 +1139,18 @@ func (h *Handler) patchRecommendation(w http.ResponseWriter, r *http.Request) {
 
 	var d recommendationDTO
 	var evidence string
+	var base sql.NullString
 	err = h.DB.QueryRow(`SELECT id, rule, target_kind, target, title, detail,
-			evidence, status, created_at, updated_at
+			evidence, baseline, status, created_at, updated_at
 		 FROM recommendations WHERE id = ?`, id).
 		Scan(&d.ID, &d.Rule, &d.TargetKind, &d.Target, &d.Title, &d.Detail,
-			&evidence, &d.Status, &d.CreatedAt, &d.UpdatedAt)
+			&evidence, &base, &d.Status, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	d.Evidence = json.RawMessage(evidence)
+	d.scanBaseline(base)
 	writeJSON(w, d, nil)
 }
 

@@ -114,30 +114,101 @@ function ruleHue(rule: string): string {
   return RULE_HUES[rule] ?? 'border-line-strong text-ink-dim';
 }
 
+/** Display-only mirrors of the advisor engine's verification thresholds —
+ * twin: internal/advisor/advisor.go VerifyAfterDays / VerifyImprovement,
+ * keep in lockstep. */
+const VERIFY_AFTER_DAYS = 7;
+const VERIFY_IMPROVEMENT = 0.2;
+
+/** Whole days until the verification window opens (≤0 = already open). */
+function daysUntilVerify(anchor: string): number {
+  const elapsedDays = (Date.now() - new Date(anchor).getTime()) / 86_400_000;
+  return Math.ceil(VERIFY_AFTER_DAYS - elapsedDays);
+}
+
+/** Post-verify observations the advisor folds into the evidence JSON. */
+function verifyObservation(ev: unknown): { note: string | null; postValue: number | null } {
+  if (typeof ev !== 'object' || ev === null) return { note: null, postValue: null };
+  const o = ev as Record<string, unknown>;
+  const note = typeof o.note === 'string' ? o.note : null;
+  const post = o.post_adoption;
+  const v =
+    typeof post === 'object' && post !== null
+      ? (post as Record<string, unknown>).value
+      : undefined;
+  return { note, postValue: typeof v === 'number' ? v : null };
+}
+
+/** Compact metric value: 2 significant digits (rates like 0.43, 0.071). */
+function fmtMetric(v: number): string {
+  return String(Number(v.toPrecision(2)));
+}
+
+/** Metric-vs-baseline progress line for a rec whose verification clock is
+ * running: baseline value → latest observed value (when a verify pass has
+ * recorded one) and the ≥20%-better target the engine checks against. Every
+ * rule metric improves downward except R6's cache hit rate. */
+function VerifyProgress({ rec }: { rec: Recommendation }): JSX.Element | null {
+  const b = rec.baseline;
+  if (b === null || b.value === 0) return null;
+  const { note, postValue } = verifyObservation(rec.evidence);
+  const target =
+    rec.rule === 'R6' ? b.value * (1 + VERIFY_IMPROVEMENT) : b.value * (1 - VERIFY_IMPROVEMENT);
+  return (
+    <span
+      className="font-mono text-[10px] text-ink-faint"
+      title={`verified when ${b.metric} is ≥${String(VERIFY_IMPROVEMENT * 100)}% better than the baseline snapshot`}
+    >
+      {b.metric} {fmtMetric(b.value)}
+      {postValue !== null ? ` → ${fmtMetric(postValue)}` : ''}
+      {` (target ${rec.rule === 'R6' ? '≥' : '≤'}${fmtMetric(target)})`}
+      {note === 'insufficient post-adoption traffic' ? ' · insufficient traffic so far' : ''}
+    </span>
+  );
+}
+
 /** Lifecycle chip for in-flight statuses (accepted/adopted). The accepted
  * copy is per target kind: agent/tool/process recs have a detectable adoption
  * signal to wait for; error_group/config verify straight from accepted, so
- * "waiting for adoption" would promise a step that never happens. */
-function RecStatusChip({
-  status,
-  kind,
-}: {
-  status: Recommendation['status'];
-  kind: Recommendation['target_kind'];
-}): JSX.Element | null {
-  if (status === 'accepted') {
+ * their chip counts down to the verification check instead ("waiting for
+ * adoption" would promise a step that never happens). Adopted recs count down
+ * from the detected change. */
+function RecStatusChip({ rec }: { rec: Recommendation }): JSX.Element | null {
+  const countdown = (anchor: string): string => {
+    const d = daysUntilVerify(anchor);
+    return d > 0
+      ? `verify check in ${String(d)}d`
+      : `awaiting ≥${String(VERIFY_IMPROVEMENT * 100)}% improvement`;
+  };
+  if (rec.status === 'accepted') {
+    const kind = rec.target_kind;
     const adoptable = kind === 'agent' || kind === 'tool' || kind === 'process';
+    const anchor = rec.baseline?.accepted_at;
+    const showCountdown = !adoptable && anchor !== undefined;
     return (
-      <span className="rounded-[7px] border border-amber/40 bg-amber/10 px-1.5 py-[2px] font-mono text-[10px] text-amber">
-        {adoptable ? 'accepted — waiting for adoption' : 'accepted'}
-      </span>
+      <>
+        <span className="rounded-[7px] border border-amber/40 bg-amber/10 px-1.5 py-[2px] font-mono text-[10px] text-amber">
+          {adoptable
+            ? 'accepted — waiting for adoption'
+            : showCountdown
+              ? `accepted — ${countdown(anchor)}`
+              : 'accepted'}
+        </span>
+        {showCountdown && <VerifyProgress rec={rec} />}
+      </>
     );
   }
-  if (status === 'adopted') {
+  if (rec.status === 'adopted') {
+    const anchor = rec.baseline?.adopted_at;
     return (
-      <span className="rounded-[7px] border border-blue/40 bg-blue/10 px-1.5 py-[2px] font-mono text-[10px] text-blue">
-        change detected — verifying
-      </span>
+      <>
+        <span className="rounded-[7px] border border-blue/40 bg-blue/10 px-1.5 py-[2px] font-mono text-[10px] text-blue">
+          {anchor !== undefined
+            ? `change detected — ${countdown(anchor)}`
+            : 'change detected — verifying'}
+        </span>
+        {anchor !== undefined && <VerifyProgress rec={rec} />}
+      </>
     );
   }
   return null;
@@ -168,7 +239,7 @@ function RecCard({
       </div>
       <p className="mt-1.5 font-mono text-[10.5px] leading-relaxed text-ink-3">{rec.detail}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <RecStatusChip status={rec.status} kind={rec.target_kind} />
+        <RecStatusChip rec={rec} />
         {rec.status === 'proposed' && (
           <button
             type="button"
@@ -428,6 +499,19 @@ function errRateClass(rate: number): string {
   return 'text-ink-dim';
 }
 
+/** Fold errors_by_class into the three rendered buckets (absent → zeroes). */
+function errClassSplit(byClass: Record<string, number> | undefined): {
+  behavior: number;
+  harness: number;
+  infra: number;
+} {
+  return {
+    behavior: byClass?.['behavior_fixable'] ?? 0,
+    harness: byClass?.['harness_recoverable'] ?? 0,
+    infra: byClass?.['infra_noise'] ?? 0,
+  };
+}
+
 function runsDelta(row: RetroAgentRow): string {
   const d = row.runs - row.prev.runs;
   if (d === 0) return '';
@@ -435,6 +519,7 @@ function runsDelta(row: RetroAgentRow): string {
 }
 
 function Scorecard({ row }: { row: RetroAgentRow }): JSX.Element {
+  const split = errClassSplit(row.errors_by_class);
   return (
     <div className="rounded-[14px] border border-line bg-surface px-4 py-3.5">
       <div className="flex items-baseline gap-2">
@@ -443,11 +528,23 @@ function Scorecard({ row }: { row: RetroAgentRow }): JSX.Element {
         </span>
         <span
           className={`font-mono text-[11px] ${errRateClass(row.error_rate)}`}
-          title={`share of runs with ≥1 error (${String(row.errors)} error events)`}
+          title={`share of runs with ≥1 behavior-fixable error (${String(row.errors)} error events total)`}
         >
           {(row.error_rate * 100).toFixed(1)}% err
         </span>
       </div>
+      {row.errors > 0 && row.errors_by_class && (
+        <div
+          className="mt-1 font-mono text-[10px] text-ink-faint"
+          title="error events by class — behavior: prompt-fixable agent behavior · harness: harness rule hit, self-recovered · infra: network/API noise (not the agent's fault)"
+        >
+          <span className={split.behavior > 0 ? 'text-amber' : ''}>behavior {split.behavior}</span>
+          {' · '}
+          <span>harness {split.harness}</span>
+          {' · '}
+          <span>infra {split.infra}</span>
+        </div>
+      )}
       <div className="mt-2 flex items-baseline gap-1.5">
         <span className="font-display text-[20px] font-semibold text-ink">{row.runs}</span>
         <span className="font-mono text-[10.5px] text-ink-dim">

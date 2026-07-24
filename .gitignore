@@ -21,3 +21,4 @@ node_modules/
 .idea/
 .claude/worktrees/
 .claude/settings.json.bak
+architecture-out/

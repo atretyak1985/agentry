@@ -1,8 +1,9 @@
 // App shell: a full-width top header (SW◆RMERY wordmark at left, a mono
 // scope filter + contextual search/filters, and a live daemon status at
 // right) with a bottom border. Below it, a static labelled sidebar (248px,
-// desktop only) carries the glyph nav items and a live daemon-health footer;
-// <main> owns the scroll. Mobile drops the sidebar for a fixed bottom nav.
+// desktop only) carries the glyph nav items grouped into labelled sections
+// (work / insights / tools / system) and a live daemon-health footer; <main>
+// owns the scroll. Mobile drops the sidebar for a flat fixed bottom nav.
 //
 // The Docs nav item appears only when /api/docs has entries; the Sessions item
 // carries a today-count badge (/api/stats/overview); the Approvals item carries
@@ -12,7 +13,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import type { WSMessage } from './api/types';
-import { fetchApprovals, fetchDocs, fetchRecommendations, fetchStatsOverview, MOCK } from './api';
+import {
+  fetchApprovals,
+  fetchDocs,
+  fetchRecommendations,
+  fetchStatsOverview,
+  fetchTools,
+  MOCK,
+} from './api';
 import { fetchSystemSummary } from './api/system';
 import { CommandPalette } from './components/CommandPalette';
 import { NewProjectButton } from './components/NewProjectButton';
@@ -40,7 +48,17 @@ interface NavItem {
   alert?: boolean;
 }
 
+/** Desktop sidebar group — `label: null` renders items with no header
+ * (Command deck). A section whose items are all hidden renders nothing. */
+interface NavSection {
+  label: string | null;
+  items: NavItem[];
+}
+
 const DOCS_NAV: NavItem = { to: '/docs', glyph: '❐', label: 'Docs' };
+const SERENA_NAV: NavItem = { to: '/serena', glyph: '◎', label: 'Serena' };
+const GRAPHIFY_NAV: NavItem = { to: '/graphify', glyph: '⬡', label: 'Graphify' };
+const ARCHITECTURE_NAV: NavItem = { to: '/architecture', glyph: '▦', label: 'Architecture' };
 
 /** Global project scope switcher (header) — GitHub-org-switcher pattern.
  * Projects come from the ScopeProvider's shared fetch. */
@@ -135,6 +153,39 @@ function AppShell(): JSX.Element {
   const [notifyPrefs, setNotifyPrefs] = useState<NotifyPrefs>(loadPrefs);
   useBrowserNotifications(notifyPrefs);
   const { health, unreachable } = useHealth();
+
+  // Tool-dashboard nav items (serena / graphify): each is visible only while
+  // /api/tools reports at least one project for that tool. Polled on the same
+  // 60s cadence as daemon health (lib/health.ts) so items appear/disappear as
+  // lsp-pack gets toggled or graphify builds land, without a reload.
+  const [hasSerena, setHasSerena] = useState(false);
+  const [hasGraphify, setHasGraphify] = useState(false);
+  const [hasArchitecture, setHasArchitecture] = useState(false);
+  useEffect(() => {
+    let disposed = false;
+    const poll = (): void => {
+      fetchTools()
+        .then((t) => {
+          if (disposed) return;
+          setHasSerena(t.serena.projects.length > 0);
+          setHasGraphify(t.graphify.projects.length > 0);
+          setHasArchitecture(t.architecture.projects.length > 0);
+        })
+        .catch(() => {
+          // endpoint absent / daemon unreachable → hide all tool items
+          if (disposed) return;
+          setHasSerena(false);
+          setHasGraphify(false);
+          setHasArchitecture(false);
+        });
+    };
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, []);
   useEffect(() => {
     fetchDocs()
       .then((docs) => setHasDocs(docs.length > 0))
@@ -234,21 +285,48 @@ function AppShell(): JSX.Element {
   useLiveUpdates(onMessage, resyncBadges);
 
   const pendingCount = pendingIds.size;
-  const items: NavItem[] = [
-    { to: '/', glyph: '◉', label: 'Command deck' },
-    { to: '/sessions', glyph: '❯', label: 'Sessions', ...badgeFor(sessionsToday) },
-    { to: '/projects', glyph: '▤', label: 'Projects' },
-    { to: '/analytics', glyph: '▦', label: 'Analytics' },
-    { to: '/retro', glyph: '↺', label: 'Retro', ...badgeFor(proposedRecs) },
+  const sections: NavSection[] = [
+    { label: null, items: [{ to: '/', glyph: '◉', label: 'Command deck' }] },
     {
-      to: '/approvals',
-      glyph: '⧗',
-      label: 'Approvals',
-      ...(pendingCount > 0 ? { badge: String(pendingCount), alert: true } : {}),
+      label: 'Work',
+      items: [
+        { to: '/sessions', glyph: '❯', label: 'Sessions', ...badgeFor(sessionsToday) },
+        { to: '/projects', glyph: '▤', label: 'Projects' },
+        {
+          to: '/approvals',
+          glyph: '⧗',
+          label: 'Approvals',
+          ...(pendingCount > 0 ? { badge: String(pendingCount), alert: true } : {}),
+        },
+      ],
     },
-    { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
-    ...(hasDocs ? [DOCS_NAV] : []),
+    {
+      label: 'Insights',
+      items: [
+        { to: '/analytics', glyph: '▦', label: 'Analytics' },
+        { to: '/retro', glyph: '↺', label: 'Retro', ...badgeFor(proposedRecs) },
+      ],
+    },
+    {
+      // Tool dashboards are conditional — when none is available the section
+      // has no items and the label is skipped with it.
+      label: 'Tools',
+      items: [
+        ...(hasSerena ? [SERENA_NAV] : []),
+        ...(hasGraphify ? [GRAPHIFY_NAV] : []),
+        ...(hasArchitecture ? [ARCHITECTURE_NAV] : []),
+      ],
+    },
+    {
+      label: 'System',
+      items: [
+        { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
+        ...(hasDocs ? [DOCS_NAV] : []),
+      ],
+    },
   ];
+  // Mobile bottom nav stays flat — sections flattened in order, no labels.
+  const items: NavItem[] = sections.flatMap((s) => s.items);
 
   const daemonOk = !unreachable;
 
@@ -299,40 +377,51 @@ function AppShell(): JSX.Element {
 
       <div className="flex min-h-0 flex-1">
         {/* Desktop sidebar — static labelled panel (248px), no collapse. */}
-        <nav className="hidden w-[248px] shrink-0 flex-col gap-0.5 border-r border-line px-3 py-4 desk:flex">
-          <div className="flex flex-col gap-0.5">
-            {items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  `flex h-[38px] items-center gap-3 rounded-[10px] border px-3 transition-colors ${
-                    isActive
-                      ? 'border-line-strong bg-surface2 text-brand'
-                      : 'border-transparent text-ink-dim hover:bg-surface2/50 hover:text-ink'
-                  }`
-                }
-              >
-                <span
-                  className="w-[16px] shrink-0 text-center text-[16px] leading-none"
-                  aria-hidden="true"
-                >
-                  {item.glyph}
-                </span>
-                <span className="truncate text-[13.5px] font-medium">{item.label}</span>
-                {item.badge !== undefined && (
-                  <span
-                    className={`ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] font-mono text-[10px] font-bold ${
-                      item.alert === true ? 'bg-amber text-bg' : 'bg-line-strong text-ink-dim'
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
+        <nav className="hidden w-[248px] shrink-0 flex-col border-r border-line px-3 py-4 desk:flex">
+          {sections
+            .filter((section) => section.items.length > 0)
+            .map((section) => (
+              <div key={section.label ?? 'top'} className="flex flex-col gap-0.5">
+                {section.label !== null && (
+                  /* Sidebar group eyebrow — SectionTitle's mono uppercase idiom
+                   * scaled down for the rail (10px, faint, tighter rhythm). */
+                  <div className="mt-4 mb-1 px-3 font-mono text-[10px] font-medium tracking-[0.14em] text-ink-faint uppercase">
+                    {section.label}
+                  </div>
                 )}
-              </NavLink>
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    className={({ isActive }) =>
+                      `flex h-[38px] items-center gap-3 rounded-[10px] border px-3 transition-colors ${
+                        isActive
+                          ? 'border-line-strong bg-surface2 text-brand'
+                          : 'border-transparent text-ink-dim hover:bg-surface2/50 hover:text-ink'
+                      }`
+                    }
+                  >
+                    <span
+                      className="w-[16px] shrink-0 text-center text-[16px] leading-none"
+                      aria-hidden="true"
+                    >
+                      {item.glyph}
+                    </span>
+                    <span className="truncate text-[13.5px] font-medium">{item.label}</span>
+                    {item.badge !== undefined && (
+                      <span
+                        className={`ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-[5px] font-mono text-[10px] font-bold ${
+                          item.alert === true ? 'bg-amber text-bg' : 'bg-line-strong text-ink-dim'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
             ))}
-          </div>
         </nav>
 
         <main className="min-w-0 flex-1 overflow-y-auto pb-[72px] [-webkit-overflow-scrolling:touch] desk:pb-0">

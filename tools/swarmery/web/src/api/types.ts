@@ -554,11 +554,15 @@ export interface RetroAgentRow {
   /** Raw error-event count (a single run can carry many). */
   errors: number;
   /**
-   * Failed-run share: runs with ≥1 error / runs (clamped to ≤1 — a run
-   * spanning the window start can contribute a failed run without
-   * contributing to the run count); 0 when no counted run.
+   * Behavior-failed-run share: runs with ≥1 behavior-fixable error / runs
+   * (clamped to ≤1 — a run spanning the window start can contribute a failed
+   * run without contributing to the run count); 0 when no counted run.
+   * Infra noise and harness mechanics are excluded — the same grain the
+   * advisor's R2 (behavior_failed_run_share) fires on.
    */
   error_rate: number;
+  /** Raw error events per class: behavior_fixable / harness_recoverable / infra_noise. */
+  errors_by_class?: Record<string, number>;
   /** avg/p95 over subagent run durations; null when no run carried one. */
   avg_ms: number | null;
   p95_ms: number | null;
@@ -576,6 +580,8 @@ export interface RetroMain {
   cost_usd: number;
   tokens_out: number;
   errors: number;
+  /** Raw error events per class: behavior_fixable / harness_recoverable / infra_noise. */
+  errors_by_class?: Record<string, number>;
 }
 
 export interface RetroAgentsResp {
@@ -672,6 +678,19 @@ export type RecommendationStatus =
 /** recommendations.target_kind — what the recommendation is about. */
 export type RecommendationTargetKind = 'tool' | 'agent' | 'error_group' | 'process' | 'config';
 
+/** The advisor's metric snapshot written when a recommendation is accepted
+ * (internal/advisor baseline JSON) — the verification comparison anchor. */
+export interface RecommendationBaseline {
+  metric: string;
+  value: number;
+  per_day: boolean;
+  window_days: number;
+  window: { from: string; to: string };
+  accepted_at?: string;
+  /** Stamped when adoption is auto-detected (agent/tool/process kinds). */
+  adopted_at?: string;
+}
+
 /** One advisor recommendation (deterministic rule engine, R1..R6). */
 export interface Recommendation {
   id: number;
@@ -682,8 +701,12 @@ export interface Recommendation {
   title: string;
   /** Human-readable rationale with the numbers baked in. */
   detail: string;
-  /** Raw evidence JSON passthrough: {window:{from,to}, counts, session_ids[], …}. */
+  /** Raw evidence JSON passthrough: {window:{from,to}, counts, session_ids[], …}.
+   * After a verify pass it may also carry note ("no measurable improvement
+   * yet" / "insufficient post-adoption traffic") and post_adoption {value}. */
   evidence: unknown;
+  /** Metric snapshot written on accept; null before that. */
+  baseline: RecommendationBaseline | null;
   status: RecommendationStatus;
   created_at: string;
   updated_at: string;
@@ -1330,4 +1353,49 @@ export interface ProjectPluginToggleResponse {
   enabled: boolean;
   changed: boolean;
   backup?: string;
+}
+
+// --- Tool dashboards (GET /api/tools) -----------------------------------------
+
+/** GET /api/tools — sidebar feed for daemon-managed tool dashboards. */
+export interface ToolsSerenaProject {
+  id: number;
+  slug: string;
+  name: string | null;
+  state: 'stopped' | 'starting' | 'running' | 'failed';
+  dashboardPath: string;
+  /**
+   * Raw serena dashboard origin (e.g. "http://127.0.0.1:24282/dashboard/index.html").
+   * "" unless state === 'running'. The iframe uses this, not dashboardPath:
+   * serena's dashboard.js makes root-absolute ajax calls that escape the proxy.
+   */
+  dashboardUrl: string;
+  startedAt: string | null;
+  logTail: string[];
+  error: string;
+}
+
+export interface ToolsGraphifyProject {
+  id: number;
+  slug: string;
+  name: string | null;
+  hasViz: boolean;
+  hasGraph: boolean;
+  builtAt: string | null;
+  vizPath: string;
+}
+
+export interface ArchitectureProject {
+  id: number;
+  slug: string;
+  name: string | null;
+  hasMap: boolean;
+  builtAt: string | null;
+  mapPath: string;
+}
+
+export interface ToolsResponse {
+  serena: { available: boolean; projects: ToolsSerenaProject[] };
+  graphify: { projects: ToolsGraphifyProject[] };
+  architecture: { projects: ArchitectureProject[] };
 }
