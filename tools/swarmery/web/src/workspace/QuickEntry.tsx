@@ -4,7 +4,7 @@
 // editor is the drawer). No modal (Fusion's intake-column pattern). Phase 13
 // adds a compact playbook selector so a task can pick a recipe at intake.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BoardTask } from '../api/types';
 import { createBoardTask } from '../api';
 import { PlaybookSelect, usePlaybooks } from './PlaybookPicker';
@@ -12,16 +12,32 @@ import { PlaybookSelect, usePlaybooks } from './PlaybookPicker';
 export function QuickEntry({
   projectId,
   onCreated,
+  initialTitle = '',
 }: {
   projectId: number;
   /** Called with the created row so the board can insert it optimistically. */
   onCreated: (task: BoardTask) => void;
+  /** Seed value (Agent Hub "Run now" prefills `@<agent>: `); autofocuses when
+   * non-empty. Uncontrolled after mount — editing/submitting clears it. */
+  initialTitle?: string;
 }): JSX.Element {
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(initialTitle);
   const [playbook, setPlaybook] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { playbooks } = usePlaybooks(projectId);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // A prefilled entry (Run now) focuses with the caret at the end so the user
+  // types the request right after "@agent: ". One-shot on mount.
+  useEffect(() => {
+    if (initialTitle !== '' && inputRef.current !== null) {
+      const el = inputRef.current;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = (): void => {
     const t = title.trim();
@@ -45,6 +61,7 @@ export function QuickEntry({
   return (
     <div>
       <input
+        ref={inputRef}
         type="text"
         value={title}
         disabled={busy}

@@ -12,6 +12,7 @@
 // (VITE_MOCK) renders a full board from fixtures.
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { BoardColumn, BoardTask } from '../api/types';
 import { fetchBoardTasks } from '../api';
 import { useProjectWorkspace } from '../workspace/ProjectContext';
@@ -32,6 +33,10 @@ const EAGER_COLUMNS: BoardColumn[] = ['triage', 'todo', 'in_progress', 'in_revie
 export function Board(): JSX.Element {
   const { project, projectId, loading: projLoading } = useProjectWorkspace();
   const board = useWorkspaceBoard();
+  // Agent Hub "Run now" deep-links here with ?compose=@<agent>: — the Triage
+  // QuickEntry seeds from it so a task can be dispatched to that agent in one hop.
+  const [searchParams] = useSearchParams();
+  const compose = searchParams.get('compose') ?? '';
   const [openId, setOpenId] = useState<number | null>(null);
   const [view, setView] = useState<BoardView>('board');
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -158,7 +163,7 @@ export function Board(): JSX.Element {
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
                   {col === 'triage' && projectId !== null && (
-                    <QuickEntry projectId={projectId} onCreated={board.addTask} />
+                    <QuickEntry projectId={projectId} onCreated={board.addTask} initialTitle={compose} />
                   )}
                   {tasks.map((t) => (
                     <TaskCard

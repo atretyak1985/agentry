@@ -27,6 +27,10 @@ const Analytics = lazy(() => import('./pages/Analytics').then((m) => ({ default:
 // Retro follows the same lazy pattern — fetched only when visited.
 const Retro = lazy(() => import('./pages/Retro').then((m) => ({ default: m.Retro })));
 
+// Agent Hub (fusion phase 17) — lazy like Analytics/Retro so the fleet initial
+// bundle stays unchanged. Serves both /agents (fleet) and /p/:slug/agents.
+const AgentHub = lazy(() => import('./pages/AgentHub').then((m) => ({ default: m.AgentHub })));
+
 // Project-workspace mode (/p/:slug/…) is a whole subtree — lazy-load it so the
 // fleet-mode initial bundle is unchanged (board/drawer weight loads on demand).
 const WorkspaceShell = lazy(() =>
@@ -101,6 +105,24 @@ const router = createBrowserRouter([
               </Suspense>
             ),
           },
+          // Agent Hub — roster (/agents) + selected agent (/agents/:id). One
+          // component serves both; the :id is the selected registry agent.
+          {
+            path: 'agents',
+            element: (
+              <Suspense fallback={<Loading label="agents…" />}>
+                <AgentHub />
+              </Suspense>
+            ),
+          },
+          {
+            path: 'agents/:id',
+            element: (
+              <Suspense fallback={<Loading label="agents…" />}>
+                <AgentHub />
+              </Suspense>
+            ),
+          },
           { path: 'system', element: <System /> },
           { path: 'routines', element: <Routines /> },
           { path: 'serena', element: <Serena /> },
@@ -140,6 +162,9 @@ const router = createBrowserRouter([
               </Suspense>
             ),
           },
+          // Agent Hub, project-scoped (rollups narrowed to :slug via the route).
+          { path: 'agents', element: ws(<AgentHub />) },
+          { path: 'agents/:id', element: ws(<AgentHub />) },
           { path: 'architecture', element: ws(<ScopedArchitecture />) },
           { path: 'serena', element: ws(<ScopedSerena />) },
           { path: 'graphify', element: ws(<ScopedGraphify />) },
