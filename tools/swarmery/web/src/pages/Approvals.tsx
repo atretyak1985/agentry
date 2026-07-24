@@ -47,6 +47,7 @@ import { applyPermissionMessage, useLiveUpdates } from '../lib/ws';
 import { Empty, ErrorBox, Loading } from '../components/ui';
 import { ProjectName } from '../components/ProjectName';
 import { ApprovalContext } from '../components/ApprovalContext';
+import { QuestionBlock } from '../components/QuestionForm';
 
 const HISTORY_LIMIT = 50;
 
@@ -245,69 +246,6 @@ function AddRuleForm({
 
 const ACTION_BTN =
   'flex-1 rounded-lg border px-4 py-[7px] text-center font-mono text-[11.5px] transition-colors disabled:opacity-50 desk:flex-none';
-
-/* ----- one AskUserQuestion question: options + «own answer» free text ----- */
-
-function QuestionBlock({
-  question,
-  index,
-  draft,
-  group,
-  onToggle,
-  onFreeText,
-}: {
-  question: ParsedQuestion;
-  index: number;
-  draft: AnswerDraft;
-  /** Radio/checkbox group namespace — unique per card and question. */
-  group: string;
-  onToggle: (label: string) => void;
-  onFreeText: (text: string) => void;
-}): JSX.Element {
-  return (
-    <fieldset className="rounded-[10px] border border-line px-3 py-2.5">
-      <legend className="px-1 font-mono text-[10px] tracking-[0.1em] text-ink-faint uppercase">
-        {question.header !== '' ? question.header : `question ${String(index + 1)}`}
-        {question.multiSelect ? ' · multi' : ''}
-      </legend>
-      <div className="mt-[5px] text-[13px] leading-snug text-ink">{question.question}</div>
-      <div className="mt-2 flex flex-col gap-[3px]">
-        {question.options.map((opt) => (
-          <label
-            key={opt.label}
-            className="flex min-h-11 cursor-pointer items-baseline gap-[9px] rounded-[7px] px-[7px] py-[5px] transition-colors hover:bg-surface2"
-          >
-            <input
-              type={question.multiSelect ? 'checkbox' : 'radio'}
-              name={group}
-              checked={draft.selected.includes(opt.label)}
-              onChange={() => onToggle(opt.label)}
-              className="translate-y-px accent-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-            />
-            <span className="font-mono text-[11.5px] whitespace-nowrap text-ink">{opt.label}</span>
-            {opt.description !== '' && (
-              <span className="min-w-0 flex-1 text-[11.5px] leading-snug text-ink-dim">
-                {opt.description}
-              </span>
-            )}
-          </label>
-        ))}
-      </div>
-      <input
-        type="text"
-        value={draft.freeText}
-        onChange={(e) => onFreeText(e.target.value)}
-        placeholder={
-          question.multiSelect
-            ? 'own answer — added to the selection'
-            : 'own answer — overrides the selection'
-        }
-        aria-label={`own answer for “${question.question}”`}
-        className="mt-1.5 w-full rounded-lg border border-line bg-field px-2.5 py-[5px] font-mono text-[11.5px] text-ink transition-colors outline-none placeholder:text-ink-faint focus:border-green/40"
-      />
-    </fieldset>
-  );
-}
 
 function PendingCard({
   request,

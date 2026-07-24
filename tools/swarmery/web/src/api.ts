@@ -29,6 +29,8 @@ import type {
   PermissionPresetView,
   PermissionRequest,
   PermissionRequestStatus,
+  PlanningStart,
+  PlanningStatus,
   ProjectDetail,
   ProjectMeta,
   ProjectMetaPatch,
@@ -603,6 +605,44 @@ export async function patchBoardTask(id: number, patch: PatchBoardTaskInput): Pr
 export function fetchDispatchStatus(): Promise<DispatchStatus> {
   if (MOCK) return mockApi.dispatch();
   return get('/api/dispatch');
+}
+
+// --- fusion phase 8: planning mode --------------------------------------------
+
+/** GET /api/projects/{id}/planning — the planner status for a project. */
+export function fetchPlanning(projectId: number): Promise<PlanningStatus> {
+  if (MOCK) return mockApi.planning(projectId);
+  return get(`/api/projects/${String(projectId)}/planning`);
+}
+
+/**
+ * POST /api/projects/{id}/planning {idea} — spawn a headless planner run.
+ * Returns 202 with the pre-generated session uuid. Non-2xx (400 empty idea,
+ * 404 unknown project, 409 a run is already active, 503 not attached) throws the
+ * server's {error} text for inline display.
+ */
+export async function startPlanning(projectId: number, idea: string): Promise<PlanningStart> {
+  if (MOCK) return mockApi.startPlanning(projectId, idea);
+  const res = await fetch(`/api/projects/${String(projectId)}/planning`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idea }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `start planning failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as PlanningStart;
+}
+
+/** POST /api/projects/{id}/planning/cancel — abort the in-flight planner run. */
+export async function cancelPlanning(projectId: number): Promise<void> {
+  if (MOCK) return; // no-op in mock mode
+  const res = await fetch(`/api/projects/${String(projectId)}/planning/cancel`, { method: 'POST' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `cancel planning failed: ${String(res.status)}`);
+  }
 }
 
 /** POST /api/dispatch/pause — global or per-project pause toggle. */

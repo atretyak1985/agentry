@@ -42,6 +42,9 @@ const ProjectSettings = lazy(() =>
 const PlansPlaceholder = lazy(() =>
   import('./pages/PlansPlaceholder').then((m) => ({ default: m.PlansPlaceholder })),
 );
+const PlanningMode = lazy(() =>
+  import('./pages/PlanningMode').then((m) => ({ default: m.PlanningMode })),
+);
 const ScopedSerena = lazy(() =>
   import('./workspace/ScopedPages').then((m) => ({ default: m.ScopedSerena })),
 );
@@ -116,6 +119,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: ws(<ProjectOverview />) },
           { path: 'board', element: ws(<Board />) },
+          { path: 'planning', element: ws(<PlanningMode />) },
           { path: 'plans', element: ws(<PlansPlaceholder />) },
           { path: 'sessions', element: <Sessions /> },
           { path: 'sessions/:id', element: <SessionDetailPage /> },

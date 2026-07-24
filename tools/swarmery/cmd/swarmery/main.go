@@ -42,6 +42,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/logbuf"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/planning"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/prune"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/routines"
@@ -962,6 +963,16 @@ func cmdServe(args []string) error {
 		log.Printf("warning: routines heal on startup: %v", err)
 	}
 	api.AttachRoutines(routinesSvc)
+
+	// fusion phase 8: planning mode. A headless `claude -p --session-id <uuid>`
+	// planner run per project (single-flight, in-memory — no new tables) turns an
+	// idea into a plan in the private workspace; the run asks clarifying questions
+	// as reply text (the spike proved AskUserQuestion does not fire the permission
+	// hook under `-p`), answered via the existing session-resume chat. No heal on
+	// startup: in-flight planning is in-memory only, so a restart simply forgets
+	// any orphaned run (the plan it wrote is still picked up by wsingest).
+	planningSvc := planning.NewService(db, planning.ClaudeRunner{})
+	api.AttachPlanning(planningSvc)
 
 	buildStart := time.Now()
 	handler, err := api.NewServer(db, !*noIngest)

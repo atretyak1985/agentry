@@ -110,6 +110,14 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	// async seam; a headless spawn write, so the same D4 origin hardening.
 	mux.HandleFunc("POST /api/tasks/{id}/verify", requireLocalOrigin(h.verifyTask))
 
+	// fusion phase 8: planning mode — turn an idea into a plan. POST spawns a
+	// headless planner run in the project dir (202 + async seam), GET reads its
+	// live status, cancel aborts it. The writes carry the same D4 origin
+	// hardening; POST 409s when a run is already active for the project.
+	mux.HandleFunc("GET /api/projects/{id}/planning", h.getPlanning)
+	mux.HandleFunc("POST /api/projects/{id}/planning", requireLocalOrigin(h.startPlanning))
+	mux.HandleFunc("POST /api/projects/{id}/planning/cancel", requireLocalOrigin(h.cancelPlanning))
+
 	// phase 2: approvals (frozen contract — docs/hooks-protocol.md).
 	// All write endpoints reject foreign browser Origins (D4); requests
 	// without an Origin (the swarmery hook shim, curl) pass.

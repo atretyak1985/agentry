@@ -12,6 +12,8 @@ import type {
   FileChange,
   HealthResponse,
   PermissionRequest,
+  PlanningStart,
+  PlanningStatus,
   Project,
   ProjectComponents,
   ProjectDetail,
@@ -1195,6 +1197,10 @@ let mockBoard: BoardTask[] = [
 const MOCK_PRIORITIES = new Set(['urgent', 'high', 'normal', 'low']);
 let mockBoardSeq = 9200;
 
+// fusion phase 8: planner state per project id — startPlanning flips a project
+// to active so the demo shows the running-planner panel.
+const mockPlanning: Record<number, PlanningStatus> = {};
+
 // --- Mock API ----------------------------------------------------------------
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -1561,6 +1567,25 @@ export const mockApi = {
       freeSlots: Math.max(0, 2 - running),
       pausedScopes: [],
     };
+  },
+
+  // --- fusion phase 8 — planning mode ---
+
+  async planning(projectId: number): Promise<PlanningStatus> {
+    await delay(60);
+    return mockPlanning[projectId] ?? { active: false, sessionUuid: '', sessionId: null, startedAt: null };
+  },
+
+  async startPlanning(projectId: number, _idea: string): Promise<PlanningStart> {
+    await delay(120);
+    const uuid = `mock-plan-${String(projectId)}-${String(Date.now())}`;
+    mockPlanning[projectId] = {
+      active: true,
+      sessionUuid: uuid,
+      sessionId: 9001, // a canned session so the demo shows the active panel
+      startedAt: new Date().toISOString(),
+    };
+    return { sessionUuid: uuid };
   },
 
   // --- phase 2 — approvals (mutable store in ./approvals.ts) ---
