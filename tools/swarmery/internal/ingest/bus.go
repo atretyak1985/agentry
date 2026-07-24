@@ -58,6 +58,15 @@ func (b *Bus) remove(ch chan Notification) {
 	}
 }
 
+// SubscriberCount reports the number of live subscribers (WS clients attached
+// to the fan-out). Additive read used by GET /api/health's wsClients field
+// (fusion phase 9); the mutex keeps it consistent with Subscribe/Publish.
+func (b *Bus) SubscriberCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs)
+}
+
 // Subscribe registers a buffered subscriber channel. Call cancel to
 // unsubscribe; the channel is closed by cancel (or by Publish on overflow —
 // consumers must treat a closed channel as "lost sync, resync via REST").
