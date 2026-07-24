@@ -7,7 +7,7 @@
 // tab + summary (payload carries ids only — clients refetch, ws-protocol.md).
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { LintSeverity, Project, SystemItem, SystemSummary, WSMessage } from '../api/types';
 import { fetchProjects } from '../api';
 import {
@@ -335,13 +335,23 @@ function ItemsTab({
                 onReadonly={onReadonly}
               />
             ) : (
-              <button
-                type="button"
-                onClick={() => setCreating(true)}
-                className="rounded-lg border border-line-strong bg-field px-3 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-surface2"
-              >
-                + new agent
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreating(true)}
+                  className="rounded-lg border border-line-strong bg-field px-3 py-1.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-surface2"
+                >
+                  + new agent
+                </button>
+                {/* Create/delete stay here; the agent-centric profile (roster,
+                    runs, cost, insights) lives in the Agent Hub. */}
+                <Link
+                  to="/agents"
+                  className="rounded-lg border border-line px-3 py-1.5 text-[12px] font-medium text-ink-dim transition-colors hover:border-line-strong hover:text-ink"
+                >
+                  Open Agent Hub →
+                </Link>
+              </div>
             )}
           </div>
         )}

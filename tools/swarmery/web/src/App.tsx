@@ -323,6 +323,7 @@ function AppShell(): JSX.Element {
     {
       label: 'System',
       items: [
+        { to: '/agents', glyph: '☰', label: 'Agents' },
         { to: '/system', glyph: '⚙', label: 'System', ...badgeFor(insightCount) },
         ...(hasDocs ? [DOCS_NAV] : []),
       ],

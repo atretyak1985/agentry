@@ -267,4 +267,12 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/stats/funnel", h.statsFunnel)
 	mux.HandleFunc("GET /api/stats/playbooks", h.statsPlaybooks)
 	mux.HandleFunc("GET /api/usage", h.usage)
+
+	// fusion phase 17: agent hub — agent-centric READ-ONLY aggregation over the
+	// registry + retro scorecards + analytics cost + sessions (agent_hub.go).
+	// Two GETs, no new tables, no new write paths: the roster and the per-agent
+	// profile bundle. Definition editing stays on the existing versioned System
+	// write surface (/api/system/agents/{id} + rollback) — the Hub UI calls it.
+	mux.HandleFunc("GET /api/agents/hub", h.agentsHub)
+	mux.HandleFunc("GET /api/agents/{id}/hub", h.agentHub)
 }

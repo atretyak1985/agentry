@@ -1917,3 +1917,104 @@ export interface PlanDoc {
   /** On-disk backup path a write created (absent on GET). */
   backup?: string;
 }
+
+// --- fusion phase 17: agent hub ----------------------------------------------
+// Agent-centric READ-ONLY aggregation. Go DTOs live in internal/api/agent_hub.go.
+// Reuses Recommendation / AgentChangeProposal / RetroLesson for the Insights tab
+// (same shapes the Retro page renders) — no forked contracts.
+
+/** One roster card: a registry identity + its 30-day rollups (folded by
+ * normalised agent name). Go: agentRosterRow. */
+export interface AgentRosterRow {
+  id: number;
+  name: string;
+  scope: 'global' | 'project';
+  projectSlug: string | null;
+  origin: 'local' | 'plugin';
+  pluginName: string | null;
+  model: string | null;
+  path: string;
+  description: string | null;
+  /** The agent resolves to a live registry row the rewriter can act on. */
+  improvable: boolean;
+  runs30d: number;
+  /** success/(success+fail) over judged sessions; null when none in range. */
+  successRate: number | null;
+  /** Behaviour-failed-run share (0..1) — the roster health dot thresholds it. */
+  failedShare: number;
+  cost30d: number;
+  lastActiveAt: string | null;
+}
+
+export interface AgentRosterResp {
+  agents: AgentRosterRow[];
+}
+
+/** One runs/day sparkline bucket (local day). Go: agentDayCount. */
+export interface AgentDayCount {
+  day: string;
+  runs: number;
+}
+
+/** Profile Overview tab. Go: agentOverviewDTO. */
+export interface AgentOverview {
+  runs30d: number;
+  successRate: number | null;
+  failedShare: number;
+  cost30d: number;
+  tokensOut30d: number;
+  lastActiveAt: string | null;
+  avgMs: number | null;
+  p95Ms: number | null;
+  runsByDay: AgentDayCount[];
+  errors: number;
+  errorsByClass: Record<string, number>;
+}
+
+/** One Runs-tab row (a subagent run in a session). Go: agentRunRow. */
+export interface AgentRun {
+  ts: string;
+  projectSlug: string;
+  sessionUuid: string;
+  sessionTitle: string;
+  description: string;
+  status: string;
+  durationMs: number;
+}
+
+/** One Activity-tab event. Go: agentActivityRow. */
+export interface AgentActivity {
+  ts: string;
+  type: string;
+  toolName: string | null;
+  status: string | null;
+  sessionUuid: string;
+  projectSlug: string;
+}
+
+/** One Tasks-tab row (a board task or delegation ledger row). Go: agentTaskRow. */
+export interface AgentTask {
+  externalId: string;
+  title: string;
+  status: string;
+  source: 'session' | 'delegation';
+  phase: string | null;
+  verdict: string | null;
+  startedAt: string | null;
+}
+
+/** Insights tab — the retro/improve rows filtered to the agent. */
+export interface AgentInsights {
+  recommendations: Recommendation[];
+  proposals: AgentChangeProposal[];
+  lessons: RetroLesson[];
+}
+
+/** GET /api/agents/{id}/hub — the full profile bundle (identity + all tabs). */
+export interface AgentProfile extends AgentRosterRow {
+  overview: AgentOverview;
+  runs: AgentRun[];
+  activity: AgentActivity[];
+  tasks: AgentTask[];
+  insights: AgentInsights;
+}

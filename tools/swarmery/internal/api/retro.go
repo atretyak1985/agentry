@@ -134,6 +134,10 @@ type retroAgentWin struct {
 	// (advisor.Classify over the normalizeErrKey fold).
 	byClass   map[string]int64
 	durations []int64
+	// lastActive is the newest subagent_start ts seen for the agent in the
+	// window (RFC3339 UTC as stored). "" when the agent had no run. The Agent
+	// Hub roster surfaces it as "last active"; retroAgents ignores it.
+	lastActive string
 }
 
 // failedRuns is the number of distinct runs with at least one error.
@@ -173,7 +177,7 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 	// same attribution as breakdownRuns/statsTools.
 	rk := runKind["agent"]
 	rows, err := h.DB.Query(
-		`SELECT `+rk.nameExpr+` AS n, e.session_id, e.duration_ms
+		`SELECT `+rk.nameExpr+` AS n, e.session_id, e.duration_ms, e.ts
 		   FROM events e
 		   JOIN sessions s ON s.id = e.session_id
 		   JOIN projects p ON p.id = s.project_id
@@ -188,7 +192,8 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		var name sql.NullString
 		var sess int64
 		var durMs sql.NullInt64
-		if err := rows.Scan(&name, &sess, &durMs); err != nil {
+		var ts sql.NullString
+		if err := rows.Scan(&name, &sess, &durMs, &ts); err != nil {
 			return nil, err
 		}
 		key := normAgentType(name.String)
@@ -200,6 +205,9 @@ func (h *Handler) retroAgentWindow(dr dateRange, pf string, pargs []any) (map[st
 		a.sessions[sess] = struct{}{}
 		if durMs.Valid {
 			a.durations = append(a.durations, durMs.Int64)
+		}
+		if ts.Valid && ts.String > a.lastActive {
+			a.lastActive = ts.String
 		}
 	}
 	if err := rows.Err(); err != nil {
