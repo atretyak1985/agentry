@@ -43,6 +43,7 @@ const Plans = lazy(() => import('./pages/Plans').then((m) => ({ default: m.Plans
 const PlanningMode = lazy(() =>
   import('./pages/PlanningMode').then((m) => ({ default: m.PlanningMode })),
 );
+const Playbooks = lazy(() => import('./pages/Playbooks').then((m) => ({ default: m.Playbooks })));
 const ScopedSerena = lazy(() =>
   import('./workspace/ScopedPages').then((m) => ({ default: m.ScopedSerena })),
 );
@@ -119,6 +120,7 @@ const router = createBrowserRouter([
           { path: 'board', element: ws(<Board />) },
           { path: 'planning', element: ws(<PlanningMode />) },
           { path: 'plans', element: ws(<Plans />) },
+          { path: 'playbooks', element: ws(<Playbooks />) },
           { path: 'sessions', element: <Sessions /> },
           { path: 'sessions/:id', element: <SessionDetailPage /> },
           {

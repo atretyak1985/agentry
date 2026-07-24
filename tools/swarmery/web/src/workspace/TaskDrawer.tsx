@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BoardTask, TaskPriority } from '../api/types';
 import type { PatchBoardTaskInput } from '../api';
 import { fmtAgo } from '../lib/format';
+import { PlaybookHint, PlaybookSelect, usePlaybooks } from './PlaybookPicker';
 
 const PRIORITIES: TaskPriority[] = ['urgent', 'high', 'normal', 'low'];
 // Model tokens the dispatcher passes to `claude --model`; default = inherit.
@@ -105,11 +106,13 @@ export function TaskDrawer({
   const [prompt, setPrompt] = useState(task.prompt);
   const [priority, setPriority] = useState<TaskPriority>(task.priority);
   const [model, setModel] = useState<string>(task.model ?? 'default');
+  const [playbook, setPlaybook] = useState<string>(task.playbook ?? '');
   const [fileScope, setFileScope] = useState<string[]>(task.fileScope);
   const [dependencies, setDependencies] = useState<string[]>(task.dependencies);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const { playbooks } = usePlaybooks(task.projectId);
 
   // Re-seed local edit state when a different task is opened into the drawer.
   useEffect(() => {
@@ -117,6 +120,7 @@ export function TaskDrawer({
     setPrompt(task.prompt);
     setPriority(task.priority);
     setModel(task.model ?? 'default');
+    setPlaybook(task.playbook ?? '');
     setFileScope(task.fileScope);
     setDependencies(task.dependencies);
     setSaveError(null);
@@ -137,9 +141,10 @@ export function TaskDrawer({
       prompt.trim() !== task.prompt ||
       priority !== task.priority ||
       (model === 'default' ? task.model !== null : model !== task.model) ||
+      playbook !== (task.playbook ?? '') ||
       JSON.stringify(fileScope) !== JSON.stringify(task.fileScope) ||
       JSON.stringify(dependencies) !== JSON.stringify(task.dependencies),
-    [title, prompt, priority, model, fileScope, dependencies, task],
+    [title, prompt, priority, model, playbook, fileScope, dependencies, task],
   );
 
   const run = (patch: PatchBoardTaskInput): void => {
@@ -160,6 +165,7 @@ export function TaskDrawer({
       prompt: prompt.trim(),
       priority,
       model: model === 'default' ? null : model,
+      playbook, // "" clears back to the default recipe
       fileScope,
       dependencies,
     });
@@ -246,6 +252,12 @@ export function TaskDrawer({
                 ))}
               </select>
             </div>
+          </div>
+
+          <div>
+            <FieldLabel>playbook</FieldLabel>
+            <PlaybookSelect playbooks={playbooks} value={playbook} onChange={setPlaybook} />
+            <PlaybookHint playbooks={playbooks} value={playbook} />
           </div>
 
           <ChipEditor

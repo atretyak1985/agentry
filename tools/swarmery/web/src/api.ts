@@ -22,9 +22,11 @@ import type {
   FileSessionsResponse,
   HealthResponse,
   MatrixResp,
+  DuplicatePlaybookResponse,
   OnboardConfig,
   OnboardRequest,
   OnboardResponse,
+  Playbook,
   PermissionEscalation,
   PermissionPresetInput,
   PermissionPresetView,
@@ -551,6 +553,8 @@ export interface CreateBoardTaskInput {
   prompt: string;
   priority?: string;
   model?: string;
+  /** Selected execution recipe name (fusion phase 13); omit/empty = default. */
+  playbook?: string;
   fileScope?: string[];
   dependencies?: string[];
   boardColumn?: BoardColumn;
@@ -582,6 +586,8 @@ export interface PatchBoardTaskInput {
   prompt?: string;
   priority?: string;
   model?: string | null;
+  /** Selected recipe name; "" clears the selection back to the default. */
+  playbook?: string | null;
   fileScope?: string[];
   dependencies?: string[];
   paused?: boolean;
@@ -607,6 +613,41 @@ export async function patchBoardTask(id: number, patch: PatchBoardTaskInput): Pr
 export function fetchDispatchStatus(): Promise<DispatchStatus> {
   if (MOCK) return mockApi.dispatch();
   return get('/api/dispatch');
+}
+
+// --- fusion phase 13: playbooks (selectable workflows) ------------------------
+
+/**
+ * GET /api/playbooks?projectId= — the playbooks visible to a project (built-ins
+ * overlaid by the project's own .claude/playbooks files), sorted by name. Omit
+ * projectId for built-ins only.
+ */
+export function fetchPlaybooks(projectId?: number): Promise<Playbook[]> {
+  if (MOCK) return mockApi.playbooks(projectId);
+  const qs = projectId !== undefined ? `?projectId=${String(projectId)}` : '';
+  return get(`/api/playbooks${qs}`);
+}
+
+/**
+ * POST /api/projects/{id}/playbooks/{name}/duplicate — copy a built-in's
+ * markdown into the project so its prompts become editable. Non-2xx (404 unknown
+ * built-in/project, 409 the project file already exists, 503 not attached)
+ * throws the server's {error} text for inline display.
+ */
+export async function duplicatePlaybook(
+  projectId: number,
+  name: string,
+): Promise<DuplicatePlaybookResponse> {
+  if (MOCK) return mockApi.duplicatePlaybook(projectId, name);
+  const res = await fetch(
+    `/api/projects/${String(projectId)}/playbooks/${encodeURIComponent(name)}/duplicate`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `duplicate playbook failed: ${String(res.status)}`);
+  }
+  return (await res.json()) as DuplicatePlaybookResponse;
 }
 
 // --- fusion phase 8: planning mode --------------------------------------------

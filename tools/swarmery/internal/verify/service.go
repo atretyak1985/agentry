@@ -38,6 +38,13 @@ type Service struct {
 	// Notify emits task_updated (wired to api.publishTaskUpdated) so a stamped
 	// verdict reaches the board over the FROZEN WS bus — no new message type.
 	Notify func(taskID int64)
+	// PlaybookVerify resolves a task's verify strictness knob (fusion phase 13)
+	// from its playbook name + project path: "strict" | "normal" | "off". nil ⇒
+	// every task verifies at the normal bar (pre-playbook behavior; keeps verify
+	// unit tests hermetic). Wired at the composition root from the playbook
+	// registry so `verify` stays decoupled from `playbooks`. "off" skips the run
+	// entirely (no verdict stamped — the task keeps whatever verdict it had).
+	PlaybookVerify func(projectPath, playbookName string) string
 
 	sem chan struct{} // verification concurrency cap (Cfg.Concurrency)
 }
@@ -138,6 +145,16 @@ func (s *Service) VerifyTask(ctx context.Context, taskID int64) error {
 		return ErrNoWorktree
 	}
 
+	// Step 1 gate: the playbook verify knob (fusion phase 13). A task whose
+	// playbook sets verify:off is never graded — no run row, no verdict stamp
+	// (the task keeps whatever verdict it had). strict/normal fall through and
+	// tighten the prompt bar in Step 3. Resolved via the injected seam so verify
+	// stays decoupled from the playbook registry; nil seam ⇒ everything is normal.
+	strictness := s.strictness(tk)
+	if strictness == strictnessOff {
+		return nil
+	}
+
 	// Step 1 gate: single-flight. Insert a `running` row; the partial unique
 	// index (idx_verification_running) rejects a second in-flight run for the
 	// same task, so this INSERT IS the lock (durable, survives restart — the
@@ -174,7 +191,7 @@ func (s *Service) VerifyTask(ctx context.Context, taskID int64) error {
 	uuid := s.UUID()
 	s.linkVerifySession(runID, uuid)
 	spec := RunSpec{
-		Prompt:      BuildPrompt(tk.title, tk.prompt, tk.branch),
+		Prompt:      BuildPrompt(tk.title, tk.prompt, tk.branch, strictness),
 		SessionUUID: uuid,
 		Cwd:         tk.worktreePath,
 		Model:       tk.model,
@@ -206,6 +223,29 @@ func (s *Service) VerifyTask(ctx context.Context, taskID int64) error {
 	}
 }
 
+// strictnessOff is the internal marker for a task whose playbook disables
+// verification (verify:off). It is NOT a valid BuildPrompt Strictness — the
+// service returns before building a prompt when it resolves.
+const strictnessOff Strictness = "off"
+
+// strictness resolves a task's verify knob through the injected PlaybookVerify
+// seam: "strict" | "normal" | "off". A nil seam, an unresolved playbook, or any
+// unrecognized value defaults to normal (pre-playbook behavior). This is the one
+// place the phase-13 knob is read for auto AND manual verification.
+func (s *Service) strictness(tk task) Strictness {
+	if s.PlaybookVerify == nil {
+		return StrictnessNormal
+	}
+	switch s.PlaybookVerify(tk.projectPath, tk.playbook) {
+	case "off":
+		return strictnessOff
+	case "strict":
+		return StrictnessStrict
+	default:
+		return StrictnessNormal
+	}
+}
+
 // ── task load ──
 
 type task struct {
@@ -220,17 +260,19 @@ type task struct {
 	worktreePath string
 	fileScope    string // raw JSON, copied verbatim to a fix task
 	retryCount   int
+	playbook     string // selected recipe name ("" ⇒ default); drives the verify knob
+	projectPath  string // repo root, for the playbook registry lookup
 }
 
 func (s *Service) loadTask(id int64) (task, error) {
 	var t task
-	var extID, model, branch, wtpath sql.NullString
+	var extID, model, branch, wtpath, playbook sql.NullString
 	err := s.DB.QueryRow(`
-		SELECT id, COALESCE(external_id,''), project_id, title, prompt, model,
-		       source, branch, worktree_path, file_scope, retry_count
-		  FROM tasks WHERE id=?`, id).
+		SELECT t.id, COALESCE(t.external_id,''), t.project_id, t.title, t.prompt, t.model,
+		       t.source, t.branch, t.worktree_path, t.file_scope, t.retry_count, t.playbook, p.path
+		  FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id=?`, id).
 		Scan(&t.id, &extID, &t.projectID, &t.title, &t.prompt, &model,
-			&t.source, &branch, &wtpath, &t.fileScope, &t.retryCount)
+			&t.source, &branch, &wtpath, &t.fileScope, &t.retryCount, &playbook, &t.projectPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return task{}, fmt.Errorf("verify: task %d not found", id)
 	}
@@ -241,6 +283,7 @@ func (s *Service) loadTask(id int64) (task, error) {
 	t.model = model.String
 	t.branch = branch.String
 	t.worktreePath = wtpath.String
+	t.playbook = playbook.String
 	return t, nil
 }
 

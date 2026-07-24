@@ -43,6 +43,7 @@ import (
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/notify"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/onboard"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/planning"
+	"github.com/atretyak1985/swarmery/tools/swarmery/internal/playbooks"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/procwatch"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/prune"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/routines"
@@ -925,9 +926,22 @@ func cmdServe(args []string) error {
 	// remove/tree) and auto-verification (tree-hash). Shared so both agree on the
 	// worktree root and git boundary.
 	wtMgr := &worktree.Manager{Git: worktree.ExecGit{}}
+
+	// fusion phase 13: the playbook registry (embedded built-ins + per-project
+	// .claude/playbooks overrides). Shared read-only by the dispatcher (multi-stage
+	// execution) and the verifier (verify strictness knob) and the api layer (list
+	// + duplicate). A malformed built-in fails startup loudly (they ship in the
+	// binary); project files are rescanned lazily on mtime change.
+	playbookReg, err := playbooks.New()
+	if err != nil {
+		return fmt.Errorf("playbooks registry: %w", err)
+	}
+	api.AttachPlaybooks(playbookReg)
+
 	dispatchSvc := dispatch.NewService(
 		db, dispatch.ConfigFromEnv(), dispatch.ClaudeRunner{}, wtMgr,
 	)
+	dispatchSvc.Playbooks = playbookReg
 	if err := dispatchSvc.HealStale(); err != nil {
 		log.Printf("warning: dispatch heal on startup: %v", err)
 	}
@@ -943,6 +957,16 @@ func cmdServe(args []string) error {
 	// attach — to the api layer AND, as the dispatcher's Verifier seam, to the
 	// dispatcher so a no-sentinel exit pokes verification while the worktree lives.
 	verifySvc := verify.NewService(db, verify.ConfigFromEnv(), verify.ClaudeRunner{}, wtMgr)
+	// fusion phase 13: resolve each task's verify strictness knob (strict|normal|
+	// off) from its playbook via the shared registry — off skips the run, strict
+	// tightens the prompt bar. The seam keeps verify decoupled from the playbook
+	// package (wired here at the composition root).
+	verifySvc.PlaybookVerify = func(projectPath, name string) string {
+		if pb, ok := playbookReg.Get(projectPath, name); ok {
+			return pb.Verify
+		}
+		return "normal"
+	}
 	if err := verifySvc.HealStale(); err != nil {
 		log.Printf("warning: verify heal on startup: %v", err)
 	}

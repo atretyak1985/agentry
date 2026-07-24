@@ -935,6 +935,8 @@ export interface BoardTask {
   userPaused: boolean;
   dependencies: string[];
   model: string | null;
+  /** Selected execution recipe name (fusion phase 13); null = default 'standard'. */
+  playbook: string | null;
   fileScope: string[];
   branch: string | null;
   worktreePath: string | null;
@@ -944,6 +946,43 @@ export interface BoardTask {
   verifyDetail: string | null;
   columnMovedAt: string | null;
   createdAt: string;
+}
+
+// --- fusion phase 13: playbooks (selectable workflows) ------------------------
+
+/** One stage of a playbook: a name + its prompt-template body. */
+export interface PlaybookStage {
+  name: string;
+  body: string;
+}
+
+/** Verify strictness knob a playbook hands to auto-verification (Phase 6). */
+export type PlaybookVerify = 'strict' | 'normal' | 'off';
+
+/** Where a resolved playbook came from (built-in vs project-local override). */
+export type PlaybookSource = 'builtin' | 'project';
+
+/**
+ * A playbook — item of GET /api/playbooks. Mirrors playbookDTO in
+ * internal/api/playbooks.go. Structure is read-only in the UI; a project makes
+ * a built-in's prompts editable by duplicating it (POST …/duplicate).
+ */
+export interface Playbook {
+  name: string;
+  description: string;
+  model: string;
+  verify: PlaybookVerify;
+  source: PlaybookSource;
+  stages: PlaybookStage[];
+  /** On-disk path of a project playbook (""/absent for a built-in). */
+  path: string;
+}
+
+/** Response of POST /api/projects/{id}/playbooks/{name}/duplicate. */
+export interface DuplicatePlaybookResponse {
+  name: string;
+  path: string;
+  hint: string;
 }
 
 /**

@@ -238,4 +238,11 @@ func Routes(mux *http.ServeMux, h *Handler) {
 	mux.HandleFunc("GET /api/epics/{taskId}/docs", h.getPlanDoc)
 	mux.HandleFunc("PUT /api/epics/{taskId}/docs", requireLocalOrigin(h.putPlanDoc))
 	mux.HandleFunc("PATCH /api/epics/{taskId}/docs", requireLocalOrigin(h.patchPlanDoc))
+
+	// fusion phase 13: playbooks — selectable execution recipes. GET lists the
+	// registry (built-ins overlaid by a project's own files); the duplicate POST
+	// copies a built-in's markdown into the project so its prompts become editable
+	// (O_EXCL → 409 on repeat). The write carries the same D4 origin hardening.
+	mux.HandleFunc("GET /api/playbooks", h.listPlaybooks)
+	mux.HandleFunc("POST /api/projects/{id}/playbooks/{name}/duplicate", requireLocalOrigin(h.duplicatePlaybook))
 }

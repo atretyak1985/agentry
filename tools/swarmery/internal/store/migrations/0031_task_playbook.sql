@@ -1,0 +1,18 @@
+-- task_playbook (fusion phase 13 — playbooks): the selectable execution recipe
+-- a board task runs under. NULL means the default recipe ('standard': one
+-- implementation stage, normal verification) — identical to pre-playbook
+-- dispatch. A non-null value names a built-in (quick-fix | standard |
+-- review-heavy | plan-first) or a project-local playbook
+-- (<project>/.claude/playbooks/<name>.md); the dispatcher resolves it at
+-- admission and runs its stages sequentially in the task's single worktree,
+-- and auto-verification (Phase 6) honors its `verify` strictness knob.
+--
+-- Additive, nullable column — every existing row keeps default behavior. The
+-- registry (internal/playbooks) is the source of truth for which names are
+-- valid; the column carries only the name, so no CHECK constraint (project
+-- playbooks are open-ended).
+--
+-- Migration numbering: the program ledger reserves 0031 for this phase; 0030
+-- (P12, conditional) may land later — the applied-version-set runner tolerates
+-- the gap.
+ALTER TABLE tasks ADD COLUMN playbook TEXT;

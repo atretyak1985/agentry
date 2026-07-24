@@ -41,13 +41,16 @@ func scopeText(scope []string) string {
 	return strings.Join(clean, ", ")
 }
 
-// BuildPrompt assembles the full dispatched prompt: the task's own prompt
-// (the workspace step-doc / board card body) followed by a blank line and the
-// execution contract block. taskID is the external card id (T-xxxxxx); branch
-// is the worktree branch (swarm/<id>).
-func BuildPrompt(taskPrompt, branch, taskID string, fileScope []string) string {
+// BuildStagePrompt assembles the full dispatched prompt for ONE stage: the
+// stage's (already template-rendered) body followed by a blank line and the
+// execution contract block, which is appended to EVERY stage regardless of
+// playbook (fusion phase 13). taskID is the external card id (T-xxxxxx); branch
+// is the worktree branch (swarm/<id>). For the default single-stage recipe the
+// stage body IS the task's own prompt, so this reproduces the pre-playbook
+// prompt exactly.
+func BuildStagePrompt(stageBody, branch, taskID string, fileScope []string) string {
 	var b strings.Builder
-	b.WriteString(strings.TrimRight(taskPrompt, "\n"))
+	b.WriteString(strings.TrimRight(stageBody, "\n"))
 	b.WriteString("\n\n")
 	// template execution on a fixed template with string data cannot fail; the
 	// error is ignored deliberately (belt-and-braces: a failure would leave the
@@ -59,6 +62,13 @@ func BuildPrompt(taskPrompt, branch, taskID string, fileScope []string) string {
 		FileScope: scopeText(fileScope),
 	})
 	return b.String()
+}
+
+// BuildPrompt is the single-stage convenience wrapper (task body + contract),
+// retained for the pre-playbook call shape and its contract-verbatim tests. It
+// is BuildStagePrompt with the task prompt as the sole stage body.
+func BuildPrompt(taskPrompt, branch, taskID string, fileScope []string) string {
+	return BuildStagePrompt(taskPrompt, branch, taskID, fileScope)
 }
 
 // Sentinel classification of a dispatched session's final assistant text.
