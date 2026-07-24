@@ -962,6 +962,28 @@ export interface DispatchStatus {
   pausedScopes: string[];
 }
 
+// --- fusion phase 8: planning mode -------------------------------------------
+
+/**
+ * Go `planning.Status` (internal/planning/service.go) — GET
+ * /api/projects/{id}/planning. `sessionUuid` is the pre-generated planner
+ * session id (present while active, so the page links to /sessions/{uuid} and
+ * matches the transcript before the numeric row is minted); `sessionId` is that
+ * numeric row once ingest/the hook mints it (null until then — the page filters
+ * approvals + reads turns by it); `startedAt` is the RFC3339 run start.
+ */
+export interface PlanningStatus {
+  active: boolean;
+  sessionUuid: string;
+  sessionId: number | null;
+  startedAt: string | null;
+}
+
+/** POST /api/projects/{id}/planning → 202 body. */
+export interface PlanningStart {
+  sessionUuid: string;
+}
+
 // --- Phase 4: system registry (Stage 1) — additive contracts ------------------
 
 /**
