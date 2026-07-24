@@ -855,6 +855,11 @@ func cmdServe(args []string) error {
 	// dir the sys scanner/editor uses so --claude-dir overrides apply here too.
 	api.AttachPluginCatalog(sysCfg.ClaudeDir)
 
+	// self-improvement phase 4: the apply/PR pipeline fetches + worktrees from
+	// the marketplace clone under <claude-dir>/plugins/marketplaces/swarmery.
+	// Wire the same resolved dir so --claude-dir applies here too.
+	api.AttachImproveRepo(sysCfg.ClaudeDir)
+
 	// phase 4: system, Stage 2 (step-09) — the write surface for agents and
 	// skills. Every write goes through the sysedit pipeline; the editor reuses
 	// the live scanner for its post-write rescan (under --no-ingest a private

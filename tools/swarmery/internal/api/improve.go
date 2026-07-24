@@ -12,23 +12,57 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/advisor"
 	"github.com/atretyak1985/swarmery/tools/swarmery/internal/improve"
 )
 
-// spawnImprove runs one generation pipeline asynchronously; the improveGo
-// seam (nil in production) lets tests run it inline for determinism.
-func (h *Handler) spawnImprove(fn func()) {
-	if h.improveGo != nil {
-		h.improveGo(fn)
+// improveRepoRoot is the git checkout the apply/PR pipeline fetches and
+// worktrees from — the marketplace clone Claude Code keeps under
+// <claudeDir>/plugins/marketplaces/swarmery. Attached once at startup; empty
+// disables the apply pipeline's git ops (generation still works). Mirrors
+// AttachPluginCatalog (project_plugins.go:36).
+var improveRepoRoot string
+
+// AttachImproveRepo points the apply/PR pipeline at the marketplace clone under
+// claudeDir. Call with the same resolved --claude-dir the sys scanner uses.
+func AttachImproveRepo(claudeDir string) {
+	if claudeDir == "" {
 		return
 	}
-	go fn()
+	improveRepoRoot = filepath.Join(claudeDir, "plugins", "marketplaces", pluginMarketplace)
+}
+
+// spawnImprove runs one pipeline asynchronously; the improveGo seam (nil in
+// production) lets tests run it inline for determinism. label names the
+// proposal/agent the closure operates on, so a recovered panic can be
+// correlated to the (possibly wedged) row.
+func (h *Handler) spawnImprove(label string, fn func()) {
+	// A panic in the long-running Generate/Apply pipeline must never take the
+	// daemon down — recover, log (with the row label so the wedged proposal is
+	// identifiable), and let the row stay in whatever state it reached (a stuck
+	// 'approved'/'proposed' is re-runnable from the dashboard).
+	wrapped := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("error: improve: async pipeline panic recovered (%s): %v", label, r)
+			}
+		}()
+		fn()
+	}
+	if h.improveGo != nil {
+		h.improveGo(wrapped)
+		return
+	}
+	go wrapped()
 }
 
 // improveAccepted is the shared tail of both improve triggers: open-proposal
@@ -46,7 +80,7 @@ func (h *Handler) improveAccepted(w http.ResponseWriter, agent string, recID *in
 		})
 		return
 	}
-	h.spawnImprove(func() {
+	h.spawnImprove("generate agent "+agent, func() {
 		if _, err := h.Improve.Generate(context.Background(), improve.GenerateReq{
 			Agent: agent, RecommendationID: recID,
 		}); err != nil {
@@ -214,12 +248,131 @@ func (h *Handler) retryProposal(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	h.spawnImprove(func() {
+	h.spawnImprove(fmt.Sprintf("retry proposal %d (agent %s)", rowID, agent), func() {
 		if err := h.Improve.Retry(context.Background(), rowID); err != nil {
 			log.Printf("error: improve: retry %d: %v", rowID, err)
 		}
 	})
 	writeJSONStatus(w, http.StatusAccepted, map[string]any{
 		"status": "generating", "id": rowID, "agent": agent,
+	})
+}
+
+// legalProposalTransition guards the human decision on a proposal: a proposed
+// row may be approved or rejected; nothing else is a PATCH (applied/failed are
+// pipeline outcomes, retry has its own endpoint).
+func legalProposalTransition(from, to string) bool {
+	return from == "proposed" && (to == "approved" || to == "rejected")
+}
+
+// spawnApply fires the async apply/PR pipeline for an approved proposal,
+// reusing the improveGo test seam so httptest runs it inline.
+func (h *Handler) spawnApply(id int64) {
+	h.spawnImprove(fmt.Sprintf("apply proposal %d", id), func() {
+		if err := h.Improve.Apply(context.Background(), id); err != nil {
+			log.Printf("error: improve: apply %d: %v", id, err)
+		}
+	})
+}
+
+// PATCH /api/retro/proposals/{id} — body {"status":"approved"|"rejected"}.
+// 422 unless the current status is 'proposed' (mirrors the recommendations
+// PATCH). Approving stamps decided_at and fires the apply/PR pipeline async;
+// rejecting only stamps decided_at.
+func (h *Handler) patchProposal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeClientErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Status != "approved" && body.Status != "rejected" {
+		writeClientErr(w, http.StatusUnprocessableEntity,
+			"status must be approved or rejected")
+		return
+	}
+
+	var rowID int64
+	var status string
+	err := h.DB.QueryRow(
+		`SELECT id, status FROM agent_change_proposals WHERE id = ?`, id).
+		Scan(&rowID, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeClientErr(w, http.StatusNotFound, "proposal not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !legalProposalTransition(status, body.Status) {
+		writeClientErr(w, http.StatusUnprocessableEntity,
+			"illegal transition "+status+" -> "+body.Status)
+		return
+	}
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	// Guarded write: the status predicate re-checks the value we validated
+	// against, so a concurrent decision can't be silently overwritten.
+	res, err := h.DB.Exec(`
+		UPDATE agent_change_proposals SET status = ?, decided_at = ?
+		 WHERE id = ? AND status = ?`, body.Status, now, rowID, status)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if n, aerr := res.RowsAffected(); aerr != nil {
+		writeErr(w, aerr)
+		return
+	} else if n == 0 {
+		var cur string
+		if rerr := h.DB.QueryRow(
+			`SELECT status FROM agent_change_proposals WHERE id = ?`, id).Scan(&cur); rerr != nil {
+			writeErr(w, rerr)
+			return
+		}
+		writeJSONStatus(w, http.StatusConflict, map[string]string{
+			"error":  "status changed concurrently: now " + cur,
+			"status": cur,
+		})
+		return
+	}
+
+	if body.Status == "approved" {
+		h.spawnApply(rowID)
+	}
+	writeJSONStatus(w, http.StatusOK, map[string]any{
+		"id": rowID, "status": body.Status,
+	})
+}
+
+// POST /api/retro/proposals/{id}/apply — manual re-run of the apply/PR
+// pipeline for a proposal stuck in 'approved' (e.g. a prior gh outage). 404
+// unknown id; 422 unless the row is currently 'approved'.
+func (h *Handler) applyProposal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var rowID int64
+	var status string
+	err := h.DB.QueryRow(
+		`SELECT id, status FROM agent_change_proposals WHERE id = ?`, id).
+		Scan(&rowID, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeClientErr(w, http.StatusNotFound, "proposal not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if status != "approved" {
+		writeClientErr(w, http.StatusUnprocessableEntity,
+			"only approved proposals can be applied (status "+status+")")
+		return
+	}
+	h.spawnApply(rowID)
+	writeJSONStatus(w, http.StatusAccepted, map[string]any{
+		"status": "applying", "id": rowID,
 	})
 }

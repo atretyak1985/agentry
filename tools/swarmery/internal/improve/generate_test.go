@@ -168,6 +168,126 @@ func TestGenerateContractViolationThenRegenerate(t *testing.T) {
 	}
 }
 
+// barrierRunner releases its Run only after n callers have entered — forcing
+// concurrent Generate calls to overlap past the placeholder INSERT before any
+// model run completes, so the partial unique index is the only thing
+// serializing them.
+type barrierRunner struct {
+	entered chan struct{}
+	release chan struct{}
+	out     string
+}
+
+func (b *barrierRunner) Run(ctx context.Context, _ string) (string, error) {
+	b.entered <- struct{}{}
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	return b.out, nil
+}
+
+// Two concurrent Generate calls for the same agent must yield exactly one open
+// row and one ErrOpenProposal — the partial unique index (migration 0022)
+// closes the TOCTOU gap the OpenProposalID check alone left open.
+func TestGenerateConcurrentSerializesToOneOpen(t *testing.T) {
+	db := openDB(t)
+	seedAgent(t, db, 1, "tech-lead", "local", "/x/tech-lead.md", "body")
+	runner := &barrierRunner{entered: make(chan struct{}, 2), release: make(chan struct{}), out: validOut}
+	svc := newService(t, db, runner)
+
+	type res struct {
+		id  int64
+		err error
+	}
+	results := make(chan res, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			id, err := svc.Generate(context.Background(), GenerateReq{Agent: "tech-lead"})
+			results <- res{id, err}
+		}()
+	}
+
+	// Whichever goroutine won the placeholder insert reaches the runner; the
+	// loser conflicts before ever calling Run. Release once the winner is in.
+	<-runner.entered
+	close(runner.release)
+
+	var okCount, conflictCount int
+	for i := 0; i < 2; i++ {
+		r := <-results
+		switch {
+		case r.err == nil:
+			okCount++
+		case errors.Is(r.err, ErrOpenProposal):
+			conflictCount++
+		default:
+			t.Fatalf("unexpected Generate error: %v", r.err)
+		}
+	}
+	if okCount != 1 || conflictCount != 1 {
+		t.Fatalf("got ok=%d conflict=%d, want exactly one of each", okCount, conflictCount)
+	}
+
+	var open int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_change_proposals
+		WHERE agent = 'tech-lead' AND status IN ('proposed','approved')`).Scan(&open); err != nil {
+		t.Fatal(err)
+	}
+	if open != 1 {
+		t.Fatalf("open proposals = %d, want exactly 1", open)
+	}
+}
+
+// panicRunner panics on Run, simulating a Runner/pipeline blow-up mid-flight.
+type panicRunner struct{}
+
+func (panicRunner) Run(context.Context, string) (string, error) { panic("kaboom") }
+
+// If the model run panics, the placeholder row must NOT stay 'proposed' (which
+// the migration-0022 partial index would then wedge forever). Generate flips it
+// to 'failed' via a deferred recover, re-panics so the outer recover still
+// logs, and a subsequent Generate for the same agent is allowed (no 409).
+func TestGeneratePanicReleasesSlot(t *testing.T) {
+	db := openDB(t)
+	seedAgent(t, db, 1, "tech-lead", "local", "/x/tech-lead.md", "body")
+	svc := newService(t, db, panicRunner{})
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("Generate must re-panic so the outer recover logs it")
+			}
+		}()
+		_, _ = svc.Generate(context.Background(), GenerateReq{Agent: "tech-lead"})
+	}()
+
+	// The placeholder must be released to 'failed', not stuck 'proposed'.
+	var status string
+	var errCol sql.NullString
+	if err := db.QueryRow(
+		`SELECT status, error FROM agent_change_proposals WHERE agent = 'tech-lead'`).
+		Scan(&status, &errCol); err != nil {
+		t.Fatalf("read placeholder: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed (slot released after panic)", status)
+	}
+	if !errCol.Valid || !strings.Contains(errCol.String, "pipeline panic") {
+		t.Errorf("error = %+v, want the pipeline-panic text", errCol)
+	}
+
+	// A fresh Generate for the same agent must be allowed (no open row).
+	if open, err := svc.OpenProposalID("tech-lead"); err != nil || open != 0 {
+		t.Fatalf("OpenProposalID = %d (err %v), want 0 — panic must release the slot", open, err)
+	}
+	svc.Runner = &mockRunner{out: validOut}
+	if _, err := svc.Generate(context.Background(), GenerateReq{Agent: "tech-lead"}); err != nil {
+		t.Fatalf("Generate after a panicked run must be allowed, got %v", err)
+	}
+}
+
 func TestGenerateUnknownAgent(t *testing.T) {
 	db := openDB(t)
 	svc := newService(t, db, &mockRunner{out: validOut})
