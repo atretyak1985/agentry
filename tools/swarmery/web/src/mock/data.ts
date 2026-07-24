@@ -3,6 +3,9 @@
 // testdata/fixtures/*.jsonl (simple, tool-heavy, and subagent sessions).
 
 import type {
+  BoardColumn,
+  BoardTask,
+  DispatchStatus,
   DocDetail,
   DocMeta,
   Event,
@@ -1119,6 +1122,76 @@ function mockTaskDetail(id: number | string): TaskDetail {
   return { ...summary, goal: 'mock goal line from the README card', sessionLinks: links };
 }
 
+// --- Fusion phase 1/3: board tasks (demo board for project 3 = swarmery) ------
+
+/** Build one mock board task; unset dispatcher-owned fields default to null/0. */
+function boardTask(p: Partial<BoardTask> & Pick<BoardTask, 'id' | 'externalId' | 'title' | 'boardColumn'>): BoardTask {
+  return {
+    projectId: 3,
+    projectSlug: 'swarmery',
+    prompt: p.title,
+    priority: 'normal',
+    status: 'queued',
+    paused: false,
+    userPaused: false,
+    dependencies: [],
+    model: null,
+    fileScope: [],
+    branch: null,
+    worktreePath: null,
+    dispatchError: null,
+    retryCount: 0,
+    verifyVerdict: null,
+    verifyDetail: null,
+    columnMovedAt: iso(30 * MIN),
+    createdAt: iso(60 * MIN),
+    ...p,
+  };
+}
+
+/** Mutable in-memory board so create/patch/drag demo interactively (VITE_MOCK). */
+let mockBoard: BoardTask[] = [
+  boardTask({ id: 9101, externalId: 'T-a1b2c3', title: 'Add keyboard nav to the board', boardColumn: 'triage', priority: 'high' }),
+  boardTask({ id: 9102, externalId: 'T-d4e5f6', title: 'Wire status bar to /api/dispatch', boardColumn: 'triage' }),
+  boardTask({
+    id: 9103, externalId: 'T-g7h8i9', title: 'Optimistic column moves with revert', boardColumn: 'todo',
+    priority: 'urgent', model: 'sonnet', fileScope: ['web/src/pages/Board.tsx', 'web/src/workspace/'],
+  }),
+  boardTask({
+    id: 9104, externalId: 'T-j1k2l3', title: 'ProjectSwitcher dropdown', boardColumn: 'in_progress',
+    status: 'running', branch: 'swarm/T-j1k2l3', worktreePath: '/Volumes/Work/swarmery-worktrees/T-j1k2l3',
+    model: 'opus',
+  }),
+  boardTask({
+    id: 9105, externalId: 'T-m4n5o6', title: 'TaskDrawer edit fields', boardColumn: 'in_progress',
+    status: 'running', paused: true, userPaused: true, branch: 'swarm/T-m4n5o6',
+    dispatchError: 'file-scope overlap with T-j1k2l3 — parked until it lands',
+  }),
+  boardTask({
+    id: 9106, externalId: 'T-p7q8r9', title: 'Board WS cache patch in place', boardColumn: 'in_review',
+    status: 'in_review', verifyVerdict: 'pass', verifyDetail: 'all 6 acceptance criteria met; build green',
+    branch: 'swarm/T-p7q8r9',
+  }),
+  boardTask({
+    id: 9107, externalId: 'T-s1t2u3', title: 'Lazy-load the /p/:slug subtree', boardColumn: 'in_review',
+    status: 'in_review', verifyVerdict: 'fail',
+    verifyDetail: 'bundle grew 40KB — Board pulled into the initial chunk; re-split needed',
+    branch: 'swarm/T-s1t2u3', retryCount: 1,
+  }),
+  boardTask({
+    id: 9108, externalId: 'T-v4w5x6', title: 'Add DispatchStatus to the frozen contract', boardColumn: 'done',
+    status: 'completed', verifyVerdict: 'pass', columnMovedAt: iso(10 * MIN),
+  }),
+  boardTask({
+    id: 9109, externalId: 'T-y7z8a9', title: 'Rehome ProjectDetail into Overview', boardColumn: 'archived',
+    status: 'completed', columnMovedAt: iso(6 * 60 * MIN),
+  }),
+];
+
+/** Priority strings accepted by the create/patch mock (mirrors normalizePriority). */
+const MOCK_PRIORITIES = new Set(['urgent', 'high', 'normal', 'low']);
+let mockBoardSeq = 9200;
+
 // --- Mock API ----------------------------------------------------------------
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -1386,6 +1459,105 @@ export const mockApi = {
     await delay(140);
     const numeric = typeof id === 'number' ? id : Number.parseInt(id, 10);
     return mockTaskDetail(Number.isNaN(numeric) ? id : numeric);
+  },
+
+  // --- fusion phase 1/3 — task board + dispatcher (mutable in-memory board) ---
+
+  async boardTasks(projectId?: number, boardColumn?: BoardColumn): Promise<BoardTask[]> {
+    await delay(90);
+    return mockBoard
+      .filter((t) => (projectId === undefined || t.projectId === projectId))
+      .filter((t) => (boardColumn === undefined || t.boardColumn === boardColumn))
+      .map((t) => ({ ...t }));
+  },
+
+  async createBoardTask(input: {
+    projectId: number;
+    title: string;
+    prompt: string;
+    priority?: string;
+    model?: string;
+    fileScope?: string[];
+    dependencies?: string[];
+    boardColumn?: BoardColumn;
+  }): Promise<BoardTask> {
+    await delay(120);
+    const title = input.title.trim();
+    const prompt = input.prompt.trim();
+    if (title === '' || prompt === '') throw new Error('title and prompt are required');
+    const priority = input.priority ?? 'normal';
+    if (!MOCK_PRIORITIES.has(priority)) throw new Error(`invalid priority ${priority}`);
+    mockBoardSeq += 1;
+    const created = boardTask({
+      id: mockBoardSeq,
+      externalId: `T-${mockBoardSeq.toString(36)}`,
+      projectId: input.projectId,
+      title,
+      prompt,
+      priority: priority as BoardTask['priority'],
+      boardColumn: input.boardColumn ?? 'triage',
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.fileScope !== undefined ? { fileScope: input.fileScope } : {}),
+      ...(input.dependencies !== undefined ? { dependencies: input.dependencies } : {}),
+      columnMovedAt: input.boardColumn !== undefined && input.boardColumn !== 'triage' ? iso(0) : null,
+      createdAt: iso(0),
+    });
+    mockBoard = [created, ...mockBoard];
+    return { ...created };
+  },
+
+  async patchBoardTask(id: number, patch: {
+    boardColumn?: BoardColumn;
+    title?: string;
+    prompt?: string;
+    priority?: string;
+    model?: string | null;
+    fileScope?: string[];
+    dependencies?: string[];
+    paused?: boolean;
+    userPaused?: boolean;
+  }): Promise<BoardTask> {
+    await delay(90);
+    const cur = mockBoard.find((t) => t.id === id);
+    if (cur === undefined) throw new Error('task not found');
+    // Mirror the Go legalTransition guard so the demo surfaces the same 4xx.
+    if (patch.boardColumn !== undefined && cur.boardColumn === 'done' && patch.boardColumn === 'in_progress') {
+      throw new Error('illegal transition done→in_progress (recovery is dispatcher-owned)');
+    }
+    if (patch.priority !== undefined && !MOCK_PRIORITIES.has(patch.priority)) {
+      throw new Error(`invalid priority ${patch.priority}`);
+    }
+    const next: BoardTask = {
+      ...cur,
+      ...(patch.boardColumn !== undefined ? { boardColumn: patch.boardColumn } : {}),
+      ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
+      ...(patch.priority !== undefined ? { priority: patch.priority as BoardTask['priority'] } : {}),
+      ...(patch.model !== undefined ? { model: patch.model } : {}),
+      ...(patch.fileScope !== undefined ? { fileScope: patch.fileScope } : {}),
+      ...(patch.dependencies !== undefined ? { dependencies: patch.dependencies } : {}),
+      ...(patch.paused !== undefined ? { paused: patch.paused } : {}),
+      ...(patch.userPaused !== undefined ? { userPaused: patch.userPaused } : {}),
+      ...(patch.boardColumn !== undefined && patch.boardColumn !== cur.boardColumn
+        ? { columnMovedAt: iso(0) }
+        : {}),
+    };
+    mockBoard = mockBoard.map((t) => (t.id === id ? next : t));
+    return { ...next };
+  },
+
+  async dispatch(): Promise<DispatchStatus> {
+    await delay(70);
+    const running = mockBoard.filter((t) => t.boardColumn === 'in_progress' && !t.paused).length;
+    return {
+      enabled: true,
+      globalPaused: false,
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      activeRuns: running,
+      freeSlots: Math.max(0, 2 - running),
+      pausedScopes: [],
+    };
   },
 
   // --- phase 2 — approvals (mutable store in ./approvals.ts) ---

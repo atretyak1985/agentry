@@ -34,7 +34,7 @@ import {
   pageSearchPlaceholder,
   usePageSearchControl,
 } from './lib/pageSearch';
-import { ScopeProvider, useScope } from './lib/scope';
+import { useScope } from './lib/scope';
 import { useTheme } from './lib/theme';
 import { useLiveUpdates } from './lib/ws';
 
@@ -76,12 +76,13 @@ function ScopeSwitcher(): JSX.Element {
 }
 
 export function App(): JSX.Element {
+  // ScopeProvider now lives one level up (RootProviders in main.tsx) so the
+  // fleet App and the project-workspace shell share one project store; App only
+  // adds the page-search context the fleet header needs.
   return (
-    <ScopeProvider>
-      <PageSearchProvider>
-        <AppShell />
-      </PageSearchProvider>
-    </ScopeProvider>
+    <PageSearchProvider>
+      <AppShell />
+    </PageSearchProvider>
   );
 }
 

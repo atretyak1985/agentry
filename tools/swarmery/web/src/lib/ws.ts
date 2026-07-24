@@ -7,7 +7,7 @@
 // In mock mode a single fake socket emits fixture messages instead.
 
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import type { PermissionRequest, Session, WSMessage } from '../api/types';
+import type { BoardTask, PermissionRequest, Session, WSMessage } from '../api/types';
 import { MOCK } from '../api';
 import { createMockSocket, type MockSocket } from '../mock/ws';
 
@@ -155,4 +155,20 @@ export function applyPermissionMessage(
   const idx = requests.findIndex((r) => r.id === incoming.id);
   if (idx === -1) return [incoming, ...requests];
   return requests.map((r) => (r.id === incoming.id ? incoming : r));
+}
+
+/**
+ * Upsert a WS board-task payload into a board list (fusion phase 1 — task
+ * board). Every dispatcher transition emits `task_updated`; the board patches
+ * its query cache in place by id — NEVER a list refetch (no per-column
+ * refetch storms). Idempotent by `id`: the client's own optimistic column
+ * move reconciles against the authoritative frame that follows.
+ */
+export function applyBoardTaskMessage(tasks: BoardTask[], msg: WSMessage): BoardTask[] {
+  if (msg.type !== 'task_updated') return tasks;
+  const incoming = msg.payload;
+  if (!incoming.id) return tasks; // defensive: malformed frame
+  const idx = tasks.findIndex((t) => t.id === incoming.id);
+  if (idx === -1) return [incoming, ...tasks];
+  return tasks.map((t) => (t.id === incoming.id ? incoming : t));
 }

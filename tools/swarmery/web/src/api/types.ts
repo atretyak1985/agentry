@@ -900,6 +900,22 @@ export interface BoardTask {
   createdAt: string;
 }
 
+/**
+ * GET /api/dispatch — dispatcher runtime snapshot (fusion phase 3). Mirrors the
+ * Go `dispatch.Status` struct (internal/dispatch/service.go). Read-only; the
+ * status bar derives its pause chip + slot readout from it. `pausedScopes`
+ * lists every currently-paused scope key ("global" or "project:<id>").
+ */
+export interface DispatchStatus {
+  enabled: boolean;
+  globalPaused: boolean;
+  maxConcurrent: number;
+  maxWorktrees: number;
+  activeRuns: number;
+  freeSlots: number;
+  pausedScopes: string[];
+}
+
 // --- Phase 4: system registry (Stage 1) — additive contracts ------------------
 
 /**

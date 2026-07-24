@@ -33,12 +33,14 @@ function StatePill({ state }: { state: ToolsSerenaProject['state'] }): JSX.Eleme
   );
 }
 
-export function Serena(): JSX.Element {
+export function Serena({ scopedSlug }: { scopedSlug?: string } = {}): JSX.Element {
   const [data, setData] = useState<ToolsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Selection is kept by project id so it survives reloads; null → default
-  // (first running project, else the first entry).
+  // (first running project, else the first entry). In project-workspace mode
+  // (scopedSlug set) the workspace switcher owns the project, so the in-page
+  // dropdown is hidden and the selection is pinned to that slug.
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   // Unmount guard shared by load / actions / settle-polling (ProjectPlugins
@@ -102,10 +104,12 @@ export function Serena(): JSX.Element {
   );
 
   const projects = data?.serena.projects ?? [];
-  const project =
-    projects.find((p) => p.id === selectedId) ??
-    projects.find((p) => p.state === 'running') ??
-    projects[0];
+  const scoped = scopedSlug !== undefined;
+  const project = scoped
+    ? projects.find((p) => p.slug === scopedSlug)
+    : (projects.find((p) => p.id === selectedId) ??
+      projects.find((p) => p.state === 'running') ??
+      projects[0]);
 
   const toggle = (p: ToolsSerenaProject): void => {
     const stopping = p.state === 'starting' || p.state === 'running';
@@ -141,24 +145,28 @@ export function Serena(): JSX.Element {
           <Empty>serena binary not found on this machine</Empty>
         ) : project === undefined ? (
           <Empty>
-            no projects with lsp-pack enabled — enable it in a project&apos;s plugins card
+            {scoped
+              ? 'lsp-pack is not enabled for this project — enable it in Settings'
+              : 'no projects with lsp-pack enabled — enable it in a project’s plugins card'}
           </Empty>
         ) : (
           <>
             <Card>
               <div className="flex flex-wrap items-center gap-3">
-                <select
-                  value={String(project.id)}
-                  onChange={(e) => setSelectedId(Number(e.target.value))}
-                  aria-label="serena project"
-                  className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
-                >
-                  {projects.map((p) => (
-                    <option key={p.id} value={String(p.id)}>
-                      {p.name ?? p.slug}
-                    </option>
-                  ))}
-                </select>
+                {!scoped && (
+                  <select
+                    value={String(project.id)}
+                    onChange={(e) => setSelectedId(Number(e.target.value))}
+                    aria-label="serena project"
+                    className="rounded-[9px] border border-line-strong bg-field px-2.5 py-[6px] font-mono text-[12px] text-ink transition-colors outline-none focus:border-ink-dim"
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {p.name ?? p.slug}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <StatePill state={project.state} />
                 {project.startedAt !== null && (
                   <span className="font-mono text-[10.5px] text-ink-faint">
