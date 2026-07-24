@@ -47,7 +47,17 @@ func termTestServer(t *testing.T) (srv *httptest.Server, projectDir, worktreeDir
 		t.Fatalf("seed task: %v", err)
 	}
 
-	mgr := term.NewManager(term.Config{Shell: "/bin/cat", MaxSessions: 5})
+	// The PTY starter always launches `<shell> -l`. A bare `/bin/cat -l` is a
+	// VALID flag on BSD cat (macOS, advisory lock) but an INVALID option on GNU
+	// cat (Linux CI), where it makes cat exit immediately — freeing the session
+	// slot and breaking the concurrency-cap assertion. Use a tiny script that
+	// ignores its login-flag arg and execs cat, so every platform gets the same
+	// never-exiting, PTY-echoing child.
+	shellPath := filepath.Join(t.TempDir(), "fakeshell.sh")
+	if err := os.WriteFile(shellPath, []byte("#!/bin/sh\nexec cat\n"), 0o755); err != nil {
+		t.Fatalf("write fake shell: %v", err)
+	}
+	mgr := term.NewManager(term.Config{Shell: shellPath, MaxSessions: 5})
 	AttachTermManager(mgr)
 	t.Cleanup(func() { mgr.CloseAll(); AttachTermManager(nil) })
 
